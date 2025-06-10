@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { Command } from "commander";
 import { FuzzySearcher } from "./searcher.js";
 import { TreeSitterIndexer } from "./tree-sitter-indexer.js";
+import { InteractiveInterface } from "./interactive.js";
 import type { SearchOptions, SymbolType } from "./types.js";
 
 const program = new Command();
@@ -51,7 +52,26 @@ program
 			console.log(`📚 Found ${symbols.length} symbols`);
 
 			if (!query) {
-				console.log("💡 Use 'sfs <query>' to search for symbols");
+				// Start interactive mode with existing symbols
+				const interactive = new InteractiveInterface(
+					indexer,
+					{
+						directory,
+						patterns,
+						includeFiles: options.files,
+						includeDirs: options.dirs,
+						limit: Number.parseInt(options.limit),
+						threshold: Number.parseFloat(options.threshold),
+						types: options.types
+							? options.types.split(",").map((t: string) => t.trim() as SymbolType)
+							: [],
+					},
+					symbols, // Pass existing symbols to avoid re-indexing
+				);
+
+				// Clear console and start interactive mode
+				console.clear();
+				await interactive.start();
 				return;
 			}
 
