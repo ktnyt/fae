@@ -12,6 +12,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io;
+use arboard::Clipboard;
 
 use crate::{
     indexer::TreeSitterIndexer,
@@ -78,10 +79,10 @@ impl TuiApp {
         }
     }
 
-    pub async fn initialize(&mut self, directory: &std::path::Path) -> anyhow::Result<()> {
+    pub async fn initialize(&mut self, directory: &std::path::Path, verbose: bool) -> anyhow::Result<()> {
         self.status_message = "Indexing files...".to_string();
         
-        let mut indexer = TreeSitterIndexer::new();
+        let mut indexer = TreeSitterIndexer::with_verbose(verbose);
         indexer.initialize().await?;
         
         let patterns = vec!["**/*.ts".to_string(), "**/*.js".to_string(), "**/*.py".to_string()];
@@ -210,9 +211,41 @@ impl TuiApp {
                 result.symbol.column
             );
             
-            // In a real implementation, copy to clipboard using arboard
-            // For now, just show the location in status
-            self.status_message = format!("📋 Copied: {}", location);
+            // Temporarily disable raw mode and restore normal terminal state for clipboard operation
+            let clipboard_result = {
+                // Disable raw mode temporarily
+                if let Err(e) = disable_raw_mode() {
+                    Some(format!("❌ Failed to disable raw mode: {}", e))
+                } else {
+                    // Perform clipboard operation in normal mode
+                    let result = match Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            match clipboard.set_text(&location) {
+                                Ok(_) => None, // Success
+                                Err(e) => Some(format!("❌ Failed to copy: {}", e)),
+                            }
+                        }
+                        Err(e) => Some(format!("❌ Failed to access clipboard: {}", e)),
+                    };
+                    
+                    // Re-enable raw mode
+                    if let Err(e) = enable_raw_mode() {
+                        Some(format!("❌ Failed to re-enable raw mode: {}", e))
+                    } else {
+                        result
+                    }
+                }
+            };
+            
+            // Set status message based on result
+            match clipboard_result {
+                Some(error_msg) => {
+                    self.status_message = error_msg;
+                }
+                None => {
+                    self.status_message = format!("📋 Copied: {}", location);
+                }
+            }
             
             // Clear search box
             self.query.clear();
@@ -402,7 +435,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-pub async fn run_tui(directory: std::path::PathBuf) -> anyhow::Result<()> {
+pub async fn run_tui(directory: std::path::PathBuf, verbose: bool) -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -412,7 +445,7 @@ pub async fn run_tui(directory: std::path::PathBuf) -> anyhow::Result<()> {
 
     // Create and initialize app
     let mut app = TuiApp::new();
-    app.initialize(&directory).await?;
+    app.initialize(&directory, verbose).await?;
 
     // Main loop
     let result = run_app(&mut terminal, &mut app).await;

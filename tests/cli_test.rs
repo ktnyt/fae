@@ -379,12 +379,113 @@ const SIMPLE_CONSTANT = 42;
                 "test",
                 "--directory", 
                 empty_dir.to_str().unwrap(),
+                "--verbose",  // Add verbose flag to see detailed messages
             ]);
             
             assert_eq!(exit_code, 0);
             
-            // Should handle empty directory gracefully
+            // Should handle empty directory gracefully with verbose output
             assert!(stdout.contains("Indexing") || stdout.contains("0 symbols") || stdout.contains("Found"));
+        }
+    }
+
+    mod verbose_output_control {
+        use super::*;
+        use std::fs;
+        use tempfile::TempDir;
+
+        #[test]
+        fn should_show_detailed_output_with_verbose_flag() {
+            let temp_dir = TempDir::new().expect("Failed to create temp dir");
+            let test_file = temp_dir.path().join("test.js");
+            fs::write(&test_file, "function testFunc() { return 42; }").expect("Failed to write test file");
+
+            let (exit_code, stdout, _stderr) = run_cli(&[
+                "testFunc",
+                "--directory",
+                temp_dir.path().to_str().unwrap(),
+                "--verbose",
+            ]);
+
+            assert_eq!(exit_code, 0);
+
+            // Should show detailed indexing information with --verbose
+            assert!(stdout.contains("Indexing files"));
+            assert!(stdout.contains("Found") && stdout.contains("symbols"));
+            assert!(stdout.contains("testFunc"));
+        }
+
+        #[test]
+        fn should_show_minimal_output_without_verbose_flag() {
+            let temp_dir = TempDir::new().expect("Failed to create temp dir");
+            let test_file = temp_dir.path().join("test.js");
+            fs::write(&test_file, "function testFunc() { return 42; }").expect("Failed to write test file");
+
+            let (exit_code, stdout, _stderr) = run_cli(&[
+                "testFunc",
+                "--directory",
+                temp_dir.path().to_str().unwrap(),
+                // No --verbose flag
+            ]);
+
+            assert_eq!(exit_code, 0);
+
+            // Should NOT show detailed indexing information without --verbose
+            assert!(!stdout.contains("Indexing files"));
+            assert!(!stdout.contains("Found") || !stdout.contains("symbols") || stdout.contains("Found 1 results"));
+            // Should still show search results
+            assert!(stdout.contains("testFunc"));
+        }
+
+        #[test]
+        fn should_handle_verbose_flag_with_no_results() {
+            let temp_dir = TempDir::new().expect("Failed to create temp dir");
+            let test_file = temp_dir.path().join("test.js");
+            fs::write(&test_file, "function testFunc() { return 42; }").expect("Failed to write test file");
+
+            let (exit_code, stdout, _stderr) = run_cli(&[
+                "nonexistentfunction",
+                "--directory",
+                temp_dir.path().to_str().unwrap(),
+                "--verbose",
+            ]);
+
+            assert_eq!(exit_code, 0);
+
+            // Should show indexing info even when no results found
+            assert!(stdout.contains("Indexing files"));
+            assert!(stdout.contains("Found") && stdout.contains("symbols"));
+            assert!(stdout.contains("No results found"));
+        }
+
+        #[test]
+        fn should_handle_empty_directory_with_and_without_verbose() {
+            let temp_dir = TempDir::new().expect("Failed to create temp dir");
+            let empty_dir = temp_dir.path().join("empty");
+            fs::create_dir_all(&empty_dir).expect("Failed to create empty dir");
+
+            // Test with verbose
+            let (exit_code, stdout_verbose, _stderr) = run_cli(&[
+                "test",
+                "--directory",
+                empty_dir.to_str().unwrap(),
+                "--verbose",
+            ]);
+            assert_eq!(exit_code, 0);
+            assert!(stdout_verbose.contains("Indexing files") || stdout_verbose.contains("Found"));
+
+            // Test without verbose
+            let (exit_code, stdout_minimal, _stderr) = run_cli(&[
+                "test",
+                "--directory",
+                empty_dir.to_str().unwrap(),
+                // No --verbose flag
+            ]);
+            assert_eq!(exit_code, 0);
+            // Should not contain detailed indexing info
+            assert!(!stdout_minimal.contains("Indexing files"));
+            // Should contain "No results found" message
+            assert!(stdout_minimal.contains("No results found"));
         }
     }
 }

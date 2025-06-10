@@ -37,6 +37,10 @@ struct Cli {
     /// Use TUI (Terminal User Interface) mode
     #[arg(long)]
     tui: bool,
+    
+    /// Enable verbose output (detailed progress information)
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -77,8 +81,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     
     if cli.tui {
-        // TUI mode
-        run_tui(cli.directory).await?;
+        // TUI mode  
+        run_tui(cli.directory, cli.verbose).await?;
     } else {
         let query = cli.query.clone();
         match query {
@@ -88,8 +92,10 @@ async fn main() -> anyhow::Result<()> {
             }
             None => {
                 // Interactive mode - fallback to TUI
-                println!("🖥️  Starting TUI mode...");
-                run_tui(cli.directory).await?;
+                if cli.verbose {
+                    println!("🖥️  Starting TUI mode...");
+                }
+                run_tui(cli.directory, cli.verbose).await?;
             }
         }
     }
@@ -98,10 +104,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn perform_search(cli: Cli, query: String) -> anyhow::Result<()> {
-    println!("🔍 Indexing files in {:?}...", cli.directory);
+    if cli.verbose {
+        println!("🔍 Indexing files in {:?}...", cli.directory);
+    }
     
     // Initialize indexer
-    let mut indexer = TreeSitterIndexer::new();
+    let mut indexer = TreeSitterIndexer::with_verbose(cli.verbose);
     indexer.initialize().await?;
     
     // Index directory
@@ -109,7 +117,9 @@ async fn perform_search(cli: Cli, query: String) -> anyhow::Result<()> {
     indexer.index_directory(&cli.directory, &patterns).await?;
     
     let all_symbols = indexer.get_all_symbols();
-    println!("📚 Found {} symbols", all_symbols.len());
+    if cli.verbose {
+        println!("📚 Found {} symbols", all_symbols.len());
+    }
     
     if all_symbols.is_empty() {
         println!("🤷 No results found");

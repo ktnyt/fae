@@ -7,6 +7,7 @@ use anyhow::{Result, anyhow};
 pub struct TreeSitterIndexer {
     symbols_cache: HashMap<PathBuf, Vec<CodeSymbol>>,
     initialized: bool,
+    verbose: bool,
 }
 
 impl TreeSitterIndexer {
@@ -14,6 +15,15 @@ impl TreeSitterIndexer {
         Self {
             symbols_cache: HashMap::new(),
             initialized: false,
+            verbose: false,
+        }
+    }
+    
+    pub fn with_verbose(verbose: bool) -> Self {
+        Self {
+            symbols_cache: HashMap::new(),
+            initialized: false,
+            verbose,
         }
     }
 
@@ -210,12 +220,16 @@ impl TreeSitterIndexer {
                         let path = dir_entry.path();
                         if path.is_file() {
                             if let Err(e) = self.index_file(path).await {
-                                eprintln!("Warning: Failed to index {}: {}", path.display(), e);
+                                if self.verbose {
+                                    eprintln!("Warning: Failed to index {}: {}", path.display(), e);
+                                }
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Warning: Failed to read directory entry: {}", e);
+                        if self.verbose {
+                            eprintln!("Warning: Failed to read directory entry: {}", e);
+                        }
                     }
                 }
             }
