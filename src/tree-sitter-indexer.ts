@@ -185,7 +185,7 @@ export class TreeSitterIndexer {
 
 		try {
 			// Language-specific queries - tested working patterns
-			if (languageName === "javascript" || languageName === "typescript") {
+			if (languageName === "javascript") {
 				// Comprehensive function queries
 				try {
 					// Function declarations
@@ -244,12 +244,100 @@ export class TreeSitterIndexer {
 					queries.push({
 						query: new Parser.Query(
 							language,
-							"(class_declaration (identifier) @name)",
+							"(class_declaration name: (identifier) @name)",
 						),
 						type: "class",
 					});
 				} catch (e) {
 					console.debug("Class query failed");
+				}
+
+				// All identifiers as fallback
+				queries.push({
+					query: new Parser.Query(language, "(identifier) @name"),
+					type: "variable",
+				});
+			}
+
+			// TypeScript-specific queries
+			if (languageName === "typescript") {
+				// TypeScript function queries
+				try {
+					// Function declarations
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(function_declaration name: (identifier) @name)",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("TS function declaration query failed");
+				}
+
+				try {
+					// Method definitions (class methods)
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(method_definition name: (property_identifier) @name)",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("TS method definition query failed");
+				}
+
+				try {
+					// Arrow functions assigned to variables
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(variable_declarator name: (identifier) @name value: (arrow_function))",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("TS arrow function query failed");
+				}
+
+				try {
+					// Function expressions assigned to variables
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(variable_declarator name: (identifier) @name value: (function_expression))",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("TS function expression query failed");
+				}
+
+				// TypeScript class declarations - use type_identifier for TS
+				try {
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(class_declaration name: (type_identifier) @name)",
+						),
+						type: "class",
+					});
+				} catch (e) {
+					console.debug("TS class declaration query failed");
+				}
+
+				// TypeScript interface declarations
+				try {
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(interface_declaration name: (type_identifier) @name)",
+						),
+						type: "interface",
+					});
+				} catch (e) {
+					console.debug("TS interface declaration query failed");
 				}
 
 				// All identifiers as fallback
@@ -266,7 +354,7 @@ export class TreeSitterIndexer {
 					queries.push({
 						query: new Parser.Query(
 							language,
-							"(function_definition (identifier) @name)",
+							"(function_definition name: (identifier) @name)",
 						),
 						type: "function",
 					});
@@ -279,7 +367,7 @@ export class TreeSitterIndexer {
 					queries.push({
 						query: new Parser.Query(
 							language,
-							"(class_definition (identifier) @name)",
+							"(class_definition name: (identifier) @name)",
 						),
 						type: "class",
 					});
