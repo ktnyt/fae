@@ -47,7 +47,7 @@ impl TuiApp {
     pub fn new() -> Self {
         let search_modes = vec![
             SearchMode {
-                name: "Fuzzy".to_string(),
+                name: "Content".to_string(),
                 prefix: "".to_string(),
                 icon: "🔍".to_string(),
             },
@@ -369,7 +369,7 @@ impl TuiApp {
         } else if query.starts_with('/') {
             return self.search_modes[3].clone(); // Regex
         }
-        self.search_modes[0].clone() // Fuzzy (default)
+        self.search_modes[0].clone() // Content (default)
     }
 
     fn extract_search_query(&self, query: &str) -> String {
@@ -545,26 +545,29 @@ impl TuiApp {
                     clean_query = clean_query.trim_end_matches('/').to_string();
                 }
                 
-                let search_options = match self.current_search_mode.name.as_str() {
-                    "Symbol" => SearchOptions {
-                        include_files: Some(false),
-                        include_dirs: Some(false),
-                        types: Some(vec![
-                            SymbolType::Function,
-                            SymbolType::Variable,
-                            SymbolType::Class,
-                            SymbolType::Interface,
-                            SymbolType::Type,
-                            SymbolType::Enum,
-                            SymbolType::Constant,
-                            SymbolType::Method,
-                            SymbolType::Property,
-                        ]),
-                        ..Default::default()
+                self.current_results = match self.current_search_mode.name.as_str() {
+                    "Symbol" => {
+                        let search_options = SearchOptions {
+                            include_files: Some(false),
+                            include_dirs: Some(false),
+                            types: Some(vec![
+                                SymbolType::Function,
+                                SymbolType::Variable,
+                                SymbolType::Class,
+                                SymbolType::Interface,
+                                SymbolType::Type,
+                                SymbolType::Enum,
+                                SymbolType::Constant,
+                                SymbolType::Method,
+                                SymbolType::Property,
+                            ]),
+                            ..Default::default()
+                        };
+                        searcher.search(&clean_query, &search_options)
                     },
                     "File" => {
                         // Check if the query ended with '/' for directory-only search
-                        if is_directory_search {
+                        let search_options = if is_directory_search {
                             SearchOptions {
                                 types: Some(vec![SymbolType::Dirname]),
                                 ..Default::default()
@@ -574,12 +577,20 @@ impl TuiApp {
                                 types: Some(vec![SymbolType::Filename, SymbolType::Dirname]),
                                 ..Default::default()
                             }
-                        }
+                        };
+                        searcher.search(&clean_query, &search_options)
                     },
-                    _ => SearchOptions::default(), // Fuzzy or Regex
+                    "Regex" => {
+                        // Regex search on file contents
+                        let search_options = SearchOptions::default();
+                        searcher.search_content(&clean_query, &search_options)
+                    },
+                    _ => {
+                        // Default "Content" mode: search file contents
+                        let search_options = SearchOptions::default();
+                        searcher.search_content(&clean_query, &search_options)
+                    }
                 };
-                
-                self.current_results = searcher.search(&clean_query, &search_options);
             }
             
             self.selected_index = 0;
@@ -837,11 +848,11 @@ impl TuiApp {
             Line::from("Symbol Fuzzy Search - Help"),
             Line::from(""),
             Line::from("Search Modes:"),
-            Line::from("  🔍 Fuzzy - Default fuzzy search"),
-            Line::from("  🏷️ #symbol - Search symbols only"),
-            Line::from("  📁 >file - Search files/directories"),
+            Line::from("  🔍 Content - Search file contents (default)"),
+            Line::from("  🏷️ #symbol - Search code symbols only"),
+            Line::from("  📁 >file - Search filenames/directories"),
             Line::from("  📁 >dir/ - Search directories only (with trailing /)"),
-            Line::from("  🔧 /regex - Regular expression search"),
+            Line::from("  🔧 /regex - Regular expression on file contents"),
             Line::from(""),
             Line::from("Navigation:"),
             Line::from("  ↑/↓ or Ctrl+P/Ctrl+N - Move selection"),

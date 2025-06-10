@@ -15,6 +15,14 @@ path = "src/bin/benchmark_indexing.rs"
 name = "profile_file"
 path = "src/bin/profile_file.rs"
 
+[[bin]]
+name = "benchmark_tree_sitter"
+path = "src/bin/benchmark_tree_sitter.rs"
+
+[[bin]]
+name = "test_tree_sitter_symbols"
+path = "src/bin/test_tree_sitter_symbols.rs"
+
 [dependencies]
 # TUI
 ratatui = "0.24"
