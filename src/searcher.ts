@@ -1,5 +1,5 @@
 import Fuse from "fuse.js";
-import type { SearchOptions, SearchResult, CodeSymbol } from "./types.js";
+import type { CodeSymbol, SearchOptions, SearchResult } from "./types.js";
 
 export class FuzzySearcher {
 	private fuse: Fuse<CodeSymbol>;

@@ -17,13 +17,7 @@
 		"typecheck": "tsc --noEmit",
 		"test": "echo \"Error: no test specified\" && exit 1"
 	},
-	"keywords": [
-		"fuzzy",
-		"search",
-		"code",
-		"symbols",
-		"cli"
-	],
+	"keywords": ["fuzzy", "search", "code", "symbols", "cli"],
 	"author": "ktnyt",
 	"license": "MIT",
 	"dependencies": {

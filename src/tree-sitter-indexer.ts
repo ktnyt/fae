@@ -1,10 +1,12 @@
-import Parser from "tree-sitter";
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname } from "node:path";
-import type { IndexedFile, CodeSymbol, SymbolType } from "./types.js";
+import Parser from "tree-sitter";
+import type { CodeSymbol, IndexedFile, SymbolType } from "./types.js";
 
 // Language imports
-let JavaScript: any, TypeScript: any, Python: any;
+let JavaScript: any;
+let TypeScript: any;
+let Python: any;
 
 // Lazy load languages to avoid import errors
 async function loadLanguages() {
@@ -13,7 +15,7 @@ async function loadLanguages() {
 			// Use require for CommonJS modules
 			const { createRequire } = await import("node:module");
 			const require = createRequire(import.meta.url);
-			
+
 			JavaScript = require("tree-sitter-javascript");
 			const tsModule = require("tree-sitter-typescript");
 			TypeScript = tsModule.typescript;
@@ -31,7 +33,7 @@ export class TreeSitterIndexer {
 
 	async initialize() {
 		await loadLanguages();
-		
+
 		// Initialize parsers for each language
 		const jsParser = new Parser();
 		jsParser.setLanguage(JavaScript);
@@ -87,7 +89,10 @@ export class TreeSitterIndexer {
 		}
 	}
 
-	private async extractSymbols(filePath: string, content: string): Promise<CodeSymbol[]> {
+	private async extractSymbols(
+		filePath: string,
+		content: string,
+	): Promise<CodeSymbol[]> {
 		const ext = extname(filePath).toLowerCase();
 		const language = this.getLanguageForExtension(ext);
 
@@ -124,24 +129,29 @@ export class TreeSitterIndexer {
 		}
 	}
 
-	private extractSymbolsFromTree(tree: Parser.Tree, filePath: string, content: string, language: string): CodeSymbol[] {
+	private extractSymbolsFromTree(
+		tree: Parser.Tree,
+		filePath: string,
+		content: string,
+		language: string,
+	): CodeSymbol[] {
 		const symbols: CodeSymbol[] = [];
 		const lines = content.split("\n");
 
 		// Define Tree-sitter queries for different symbol types
 		const queries = this.getQueriesForLanguage(language);
-		
+
 		for (const { query, type } of queries) {
 			try {
 				const matches = query.matches(tree.rootNode);
-				
+
 				for (const match of matches) {
 					for (const capture of match.captures) {
 						const node = capture.node;
 						const startPos = node.startPosition;
 						const text = node.text;
-						
-						if (text && text.trim()) {
+
+						if (text?.trim()) {
 							symbols.push({
 								name: text,
 								type,
@@ -161,10 +171,12 @@ export class TreeSitterIndexer {
 		return symbols;
 	}
 
-	private getQueriesForLanguage(languageName: string): Array<{ query: Parser.Query; type: SymbolType }> {
+	private getQueriesForLanguage(
+		languageName: string,
+	): Array<{ query: Parser.Query; type: SymbolType }> {
 		const queries: Array<{ query: Parser.Query; type: SymbolType }> = [];
 		const parser = this.parsers.get(languageName);
-		
+
 		if (!parser) {
 			return queries;
 		}
@@ -177,23 +189,33 @@ export class TreeSitterIndexer {
 				// Function declarations
 				try {
 					queries.push({
-						query: new Parser.Query(language, `(function_declaration (identifier) @name)`),
-						type: "function"
+						query: new Parser.Query(
+							language,
+							"(function_declaration (identifier) @name)",
+						),
+						type: "function",
 					});
-				} catch (e) { console.debug("Function query failed"); }
+				} catch (e) {
+					console.debug("Function query failed");
+				}
 
-				// Class declarations  
+				// Class declarations
 				try {
 					queries.push({
-						query: new Parser.Query(language, `(class_declaration (identifier) @name)`),
-						type: "class"
+						query: new Parser.Query(
+							language,
+							"(class_declaration (identifier) @name)",
+						),
+						type: "class",
 					});
-				} catch (e) { console.debug("Class query failed"); }
+				} catch (e) {
+					console.debug("Class query failed");
+				}
 
 				// All identifiers as fallback
 				queries.push({
-					query: new Parser.Query(language, `(identifier) @name`),
-					type: "variable"
+					query: new Parser.Query(language, "(identifier) @name"),
+					type: "variable",
 				});
 			}
 
@@ -202,23 +224,33 @@ export class TreeSitterIndexer {
 				// Function definitions
 				try {
 					queries.push({
-						query: new Parser.Query(language, `(function_definition (identifier) @name)`),
-						type: "function"
+						query: new Parser.Query(
+							language,
+							"(function_definition (identifier) @name)",
+						),
+						type: "function",
 					});
-				} catch (e) { console.debug("Python function query failed"); }
+				} catch (e) {
+					console.debug("Python function query failed");
+				}
 
 				// Class definitions
 				try {
 					queries.push({
-						query: new Parser.Query(language, `(class_definition (identifier) @name)`),
-						type: "class"
+						query: new Parser.Query(
+							language,
+							"(class_definition (identifier) @name)",
+						),
+						type: "class",
 					});
-				} catch (e) { console.debug("Python class query failed"); }
+				} catch (e) {
+					console.debug("Python class query failed");
+				}
 
 				// All identifiers as fallback
 				queries.push({
-					query: new Parser.Query(language, `(identifier) @name`),
-					type: "variable"
+					query: new Parser.Query(language, "(identifier) @name"),
+					type: "variable",
 				});
 			}
 		} catch (error) {

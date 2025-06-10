@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
 import { resolve } from "node:path";
-import { CodeIndexer } from "./indexer.js";
-import { TreeSitterIndexer } from "./tree-sitter-indexer.js";
+import { Command } from "commander";
 import { FuzzySearcher } from "./searcher.js";
+import { TreeSitterIndexer } from "./tree-sitter-indexer.js";
 import type { SearchOptions, SymbolType } from "./types.js";
 
 const program = new Command();
@@ -25,45 +24,29 @@ program
 	.option(
 		"--patterns <patterns>",
 		"File patterns to include",
-		"**/*.{ts,js,tsx,jsx,py,rs,go,java,cpp,c,h}",
+		"**/*.ts,**/*.js,**/*.tsx,**/*.jsx,**/*.py",
 	)
-	.option("--use-tree-sitter", "Use Tree-sitter for more accurate parsing")
 	.action(async (query, options) => {
 		try {
 			const directory = resolve(options.directory);
 			const patterns = options.patterns.split(",").map((p: string) => p.trim());
 
 			console.log(`🔍 Indexing ${directory}...`);
+			console.log("🌳 Using Tree-sitter for enhanced parsing");
 
-			let symbols;
+			const indexer = new TreeSitterIndexer();
+			await indexer.initialize();
 
-			if (options.useTreeSitter) {
-				console.log("🌳 Using Tree-sitter for enhanced parsing");
-				try {
-					const indexer = new TreeSitterIndexer();
-					await indexer.initialize();
-					
-					// Get files to index
-					const fg = await import("fast-glob");
-					const files = await fg.default(patterns, {
-						cwd: directory,
-						absolute: true,
-						ignore: ["node_modules/**", "dist/**", "build/**", ".git/**"],
-					});
-					
-					await Promise.all(files.map((file) => indexer.indexFile(file)));
-					symbols = indexer.getAllSymbols();
-				} catch (error) {
-					console.warn("⚠️ Tree-sitter failed, falling back to regex parsing:", error);
-					const indexer = new CodeIndexer();
-					await indexer.indexDirectory(directory, patterns);
-					symbols = indexer.getAllSymbols();
-				}
-			} else {
-				const indexer = new CodeIndexer();
-				await indexer.indexDirectory(directory, patterns);
-				symbols = indexer.getAllSymbols();
-			}
+			// Get files to index
+			const fg = await import("fast-glob");
+			const files = await fg.default(patterns, {
+				cwd: directory,
+				absolute: true,
+				ignore: ["node_modules/**", "dist/**", "build/**", ".git/**"],
+			});
+
+			await Promise.all(files.map((file) => indexer.indexFile(file)));
+			const symbols = indexer.getAllSymbols();
 
 			console.log(`📚 Found ${symbols.length} symbols`);
 
@@ -77,8 +60,8 @@ program
 			const searchOptions: SearchOptions = {
 				includeFiles: options.files,
 				includeDirs: options.dirs,
-				limit: parseInt(options.limit),
-				threshold: parseFloat(options.threshold),
+				limit: Number.parseInt(options.limit),
+				threshold: Number.parseFloat(options.threshold),
 			};
 
 			if (options.types) {
