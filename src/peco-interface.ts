@@ -2,6 +2,13 @@ import blessed from "blessed";
 import type { CodeSymbol, SearchResult } from "./types.js";
 import type { FuzzySearcher } from "./searcher.js";
 
+interface SearchMode {
+	prefix: string;
+	name: string;
+	description: string;
+	icon: string;
+}
+
 export class PecoInterface {
 	private screen: any;
 	private searchBox: any;
@@ -13,10 +20,38 @@ export class PecoInterface {
 	private selectedIndex = 0;
 	private query = "";
 	private searchTimeout?: NodeJS.Timeout;
+	private currentSearchMode: SearchMode;
+	private searchModes: SearchMode[] = [
+		{
+			prefix: "",
+			name: "Fuzzy",
+			description: "Default fuzzy search across all symbols",
+			icon: "🔍",
+		},
+		{
+			prefix: "#",
+			name: "Symbol",
+			description: "Search symbol names only",
+			icon: "🏷️",
+		},
+		{
+			prefix: ">",
+			name: "File",
+			description: "Search file and directory names",
+			icon: "📁",
+		},
+		{
+			prefix: "/",
+			name: "Regex",
+			description: "Regular expression search",
+			icon: "🔧",
+		},
+	];
 
 	constructor(searcher: FuzzySearcher, symbols: CodeSymbol[]) {
 		this.searcher = searcher;
 		this.symbols = symbols;
+		this.currentSearchMode = this.searchModes[0]!; // Default to fuzzy search
 
 		// Create screen
 		this.screen = blessed.screen({
@@ -44,7 +79,7 @@ export class PecoInterface {
 					},
 				},
 			},
-			label: " Search Query ",
+			label: ` ${this.currentSearchMode.icon} ${this.currentSearchMode.name} Search `,
 			inputOnFocus: true,
 		});
 
@@ -86,7 +121,7 @@ export class PecoInterface {
 			left: 0,
 			width: "100%",
 			height: 1,
-			content: `${this.symbols.length} symbols indexed | Ctrl+C: Exit | Enter: Select | ↑↓: Navigate | ?: Help`,
+			content: `${this.symbols.length} symbols | 🔍 Fuzzy Mode | Ctrl+C: Exit | Enter: Select | ↑↓: Navigate | ?: Help`,
 			style: {
 				bg: "blue",
 				fg: "white",
@@ -179,7 +214,17 @@ export class PecoInterface {
 	}
 
 	private performSearch(query: string): void {
-		if (query.trim() === "") {
+		// Detect search mode from query prefix
+		const detectedMode = this.detectSearchMode(query);
+		if (detectedMode !== this.currentSearchMode) {
+			this.currentSearchMode = detectedMode;
+			this.updateSearchBoxLabel();
+		}
+
+		// Extract actual search query (remove prefix)
+		const actualQuery = this.extractSearchQuery(query);
+
+		if (actualQuery.trim() === "") {
 			// Show all symbols when query is empty
 			this.currentResults = this.symbols.slice(0, 100).map((symbol) => ({
 				symbol,
@@ -187,12 +232,143 @@ export class PecoInterface {
 				matches: [],
 			}));
 		} else {
-			// Perform fuzzy search
-			this.currentResults = this.searcher.search(query, { limit: 100 });
+			// Perform search based on current mode
+			this.currentResults = this.performModeSpecificSearch(actualQuery);
 		}
 
 		this.selectedIndex = 0;
 		this.updateResultsDisplay();
+	}
+
+	private detectSearchMode(query: string): SearchMode {
+		for (const mode of this.searchModes) {
+			if (mode.prefix && query.startsWith(mode.prefix)) {
+				return mode;
+			}
+		}
+		return this.searchModes[0]!; // Default fuzzy search
+	}
+
+	private extractSearchQuery(query: string): string {
+		if (this.currentSearchMode.prefix && query.startsWith(this.currentSearchMode.prefix)) {
+			return query.slice(this.currentSearchMode.prefix.length);
+		}
+		return query;
+	}
+
+	private updateSearchBoxLabel(): void {
+		this.searchBox.setLabel(` ${this.currentSearchMode.icon} ${this.currentSearchMode.name} Search `);
+		this.screen.render();
+	}
+
+	private performModeSpecificSearch(query: string): SearchResult[] {
+		const limit = 100;
+
+		switch (this.currentSearchMode.name) {
+			case "Symbol":
+				// Search only symbol names (exclude files/dirs)
+				return this.searcher.search(query, {
+					limit,
+					includeFiles: false,
+					includeDirs: false,
+				});
+
+			case "File":
+				// Search only file and directory names with enhanced matching
+				return this.performFileSearch(query, limit);
+
+			case "Regex":
+				// Perform regex search
+				return this.performRegexSearch(query, limit);
+
+			case "Fuzzy":
+			default:
+				// Default fuzzy search
+				return this.searcher.search(query, { limit });
+		}
+	}
+
+	private performFileSearch(query: string, limit: number): SearchResult[] {
+		// Get file and directory symbols
+		const fileSymbols = this.symbols.filter(
+			s => s.type === "filename" || s.type === "dirname"
+		);
+
+		// First try exact fuzzy search on file symbols
+		const fuzzyResults = this.searcher.search(query, {
+			limit,
+			types: ["filename", "dirname"],
+		});
+
+		// If we have good fuzzy results, return them
+		if (fuzzyResults.length > 0) {
+			return fuzzyResults;
+		}
+
+		// If no fuzzy results, try partial matching for better UX
+		const partialMatches: SearchResult[] = [];
+		const queryLower = query.toLowerCase();
+
+		for (const symbol of fileSymbols) {
+			const symbolName = symbol.name.toLowerCase();
+			const baseName = symbol.name.replace(/\.[^/.]+$/, "").toLowerCase(); // Remove extension
+			
+			// Check if query matches filename (with or without extension)
+			if (symbolName.includes(queryLower) || baseName.includes(queryLower)) {
+				// Calculate a simple relevance score
+				let score = 0;
+				if (symbolName.startsWith(queryLower) || baseName.startsWith(queryLower)) {
+					score = 0.1; // Prefix match gets better score
+				} else {
+					score = 0.5; // Partial match gets lower score
+				}
+
+				partialMatches.push({
+					symbol,
+					score,
+					matches: [
+						{
+							indices: [0, symbol.name.length - 1],
+							value: symbol.name,
+						},
+					],
+				});
+			}
+
+			if (partialMatches.length >= limit) break;
+		}
+
+		// Sort by score (lower is better)
+		return partialMatches.sort((a, b) => a.score - b.score);
+	}
+
+	private performRegexSearch(pattern: string, limit: number): SearchResult[] {
+		try {
+			const regex = new RegExp(pattern, "i");
+			const matches: SearchResult[] = [];
+
+			for (const symbol of this.symbols) {
+				if (regex.test(symbol.name)) {
+					matches.push({
+						symbol,
+						score: 0,
+						matches: [
+							{
+								indices: [0, symbol.name.length - 1],
+								value: symbol.name,
+							},
+						],
+					});
+				}
+
+				if (matches.length >= limit) break;
+			}
+
+			return matches;
+		} catch (error) {
+			// Invalid regex, return empty results
+			return [];
+		}
 	}
 
 	private updateResultsDisplay(): void {
@@ -218,8 +394,9 @@ export class PecoInterface {
 			? ` | Selected: ${this.selectedIndex + 1}/${resultCount}`
 			: "";
 		
+		const modeInfo = `${this.currentSearchMode.icon} ${this.currentSearchMode.name} Mode`;
 		this.statusBar.setContent(
-			`${totalSymbols} symbols indexed | ${resultCount} results${selectedInfo} | Ctrl+C: Exit | Enter: Select | ↑↓: Navigate | ?: Help`,
+			`${totalSymbols} symbols | ${resultCount} results${selectedInfo} | ${modeInfo} | Ctrl+C: Exit | Enter: Select | ↑↓: Navigate | ?: Help`,
 		);
 
 		this.screen.render();
@@ -292,12 +469,19 @@ Enter                       - Select symbol
 Ctrl+C or Escape            - Exit
 ?                          - Show this help
 
+Search Modes:
+
+🔍 Default (fuzzy)          - Smart fuzzy search across all symbols
+🏷️  #symbol_name           - Search symbol names only
+📁 >file_name              - Search file and directory names only
+🔧 /regex_pattern          - Regular expression search
+
 Search Tips:
 
-- Type part of symbol name for fuzzy matching
-- Search works across all symbol types
 - Empty search shows all symbols
 - Results are sorted by relevance
+- Invalid regex patterns return no results
+- Prefix mode switches automatically
 
 Press any key to close help...`,
 			tags: true,

@@ -251,6 +251,42 @@ describe("CLI Integration Tests", () => {
 			expect(stdout).not.toContain("📄");
 			expect(stdout).not.toContain("📁");
 		});
+
+		test("should support symbol-only search simulation", async () => {
+			// Test symbol-only search by excluding files and directories
+			const { stdout } = await execFileAsync("node", [
+				cliPath,
+				"test",
+				"--directory", testDir,
+				"--patterns", "**/*.ts,**/*.js",
+				"--no-files",
+				"--no-dirs",
+				"--types", "function,class,variable"
+			]);
+
+			// Should find symbols but not files/directories
+			expect(stdout).toContain("🔍 Indexing");
+			expect(stdout).toContain("📚 Found");
+			
+			// Should not contain file/directory icons
+			expect(stdout).not.toContain("📄");
+			expect(stdout).not.toContain("📁");
+		});
+
+		test("should support file-only search simulation", async () => {
+			// Test file-only search by using filename and dirname types
+			const { stdout } = await execFileAsync("node", [
+				cliPath,
+				"test",
+				"--directory", testDir,
+				"--patterns", "**/*.ts,**/*.js",
+				"--types", "filename,dirname"
+			]);
+
+			// Should find files and directories
+			expect(stdout).toContain("🔍 Indexing");
+			expect(stdout).toContain("📚 Found");
+		});
 	});
 
 	describe("Error handling", () => {
