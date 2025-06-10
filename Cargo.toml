@@ -17,6 +17,17 @@ tree-sitter = "0.20"
 tree-sitter-typescript = "0.20"
 tree-sitter-javascript = "0.20"
 tree-sitter-python = "0.20"
+# Popular web/systems languages
+tree-sitter-php = "0.20"
+tree-sitter-ruby = "0.20"
+tree-sitter-go = "0.20"
+tree-sitter-rust = "0.20"
+tree-sitter-java = "0.20"
+# Additional languages
+tree-sitter-c = "0.20"
+tree-sitter-cpp = "0.20"
+tree-sitter-c-sharp = "0.20"
+tree-sitter-scala = "0.20"
 
 # 検索・ファイル操作
 fuzzy-matcher = "0.3"

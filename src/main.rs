@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser, Clone)]
 #[command(name = "sfs")]
 #[command(about = "Symbol Fuzzy Search - Fast code symbol search tool for developers")]
-#[command(long_about = "SFS (Symbol Fuzzy Search) is a high-performance code search tool that indexes\nand searches symbols (functions, classes, variables, etc.) across your codebase.\n\nBy default, SFS respects .gitignore files and excludes ignored files from search.\nUse --include-ignored to search all files regardless of .gitignore rules.\n\nSupported languages: TypeScript, JavaScript, Python")]
+#[command(long_about = "SFS (Symbol Fuzzy Search) is a high-performance code search tool that indexes\nand searches symbols (functions, classes, variables, etc.) across your codebase.\n\nBy default, SFS respects .gitignore files and excludes ignored files from search.\nUse --include-ignored to search all files regardless of .gitignore rules.\n\nSupported languages: TypeScript, JavaScript, Python, PHP, Ruby, Go, Rust, Java, C, C++, C#, Scala, Perl (via regex)\nAll file types are searchable by filename and directory name.")]
 #[command(version)]
 struct Cli {
     /// Search query
@@ -120,8 +120,8 @@ async fn perform_search(cli: Cli, query: String) -> anyhow::Result<()> {
     let mut indexer = TreeSitterIndexer::with_options(cli.verbose, !cli.include_ignored);
     indexer.initialize().await?;
     
-    // Index directory
-    let patterns = vec!["**/*.ts".to_string(), "**/*.js".to_string(), "**/*.py".to_string()];
+    // Index directory - now supports all file types
+    let patterns = vec!["**/*".to_string()];
     indexer.index_directory(&cli.directory, &patterns).await?;
     
     let all_symbols = indexer.get_all_symbols();

@@ -87,7 +87,7 @@ impl TuiApp {
         let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
         indexer.initialize().await?;
         
-        let patterns = vec!["**/*.ts".to_string(), "**/*.js".to_string(), "**/*.py".to_string()];
+        let patterns = vec!["**/*".to_string()];
         indexer.index_directory(directory, &patterns).await?;
         
         self.symbols = indexer.get_all_symbols();

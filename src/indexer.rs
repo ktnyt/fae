@@ -89,7 +89,20 @@ impl TreeSitterIndexer {
 
         // For supported extensions, parse the file using regex-based extraction
         match extension {
-            "ts" | "tsx" | "js" | "jsx" | "py" => {
+            // Web languages
+            "ts" | "tsx" | "js" | "jsx" | "py" | "php" | "rb" | "ruby" => {
+                if let Ok(source_code) = fs::read_to_string(file_path) {
+                    self.extract_symbols_from_source(&source_code, file_path, &mut symbols);
+                }
+            }
+            // Systems languages
+            "go" | "rs" | "java" | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp" => {
+                if let Ok(source_code) = fs::read_to_string(file_path) {
+                    self.extract_symbols_from_source(&source_code, file_path, &mut symbols);
+                }
+            }
+            // Additional languages (Perl supported via regex patterns)
+            "cs" | "scala" | "pl" | "pm" => {
                 if let Ok(source_code) = fs::read_to_string(file_path) {
                     self.extract_symbols_from_source(&source_code, file_path, &mut symbols);
                 }
