@@ -208,6 +208,18 @@ impl TuiApp {
                     self.selected_index += 1;
                 }
             }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+P: Move up (previous)
+                if self.selected_index > 0 {
+                    self.selected_index -= 1;
+                }
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+N: Move down (next)
+                if self.selected_index < self.current_results.len().saturating_sub(1) {
+                    self.selected_index += 1;
+                }
+            }
             KeyCode::Enter => {
                 self.copy_current_result();
             }
@@ -384,7 +396,7 @@ impl TuiApp {
             ]),
             Line::from(vec![
                 Span::styled("Keys: ", Style::default().fg(Color::Yellow)),
-                Span::raw("↑/↓ Navigate • Enter Copy • ? Help • Esc/Ctrl+C Quit"),
+                Span::raw("↑/↓/C-p/C-n Navigate • Enter Copy • ? Help • Esc/C-c Quit"),
             ]),
         ]);
 
@@ -413,7 +425,7 @@ impl TuiApp {
             Line::from("  🔧 /regex - Regular expression search"),
             Line::from(""),
             Line::from("Navigation:"),
-            Line::from("  ↑/↓ - Move selection"),
+            Line::from("  ↑/↓ or Ctrl+P/Ctrl+N - Move selection"),
             Line::from("  Enter - Copy location to clipboard"),
             Line::from("  Backspace - Delete character"),
             Line::from("  ? - Toggle this help"),

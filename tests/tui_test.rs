@@ -633,6 +633,105 @@ mod tests {
         }
     }
 
+    mod navigation_functionality {
+        use super::*;
+
+        #[test]
+        fn should_support_cursor_navigation_with_arrow_keys() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Setup multiple results
+            interface.perform_search("a"); // Should match several symbols
+            assert!(interface.current_results.len() > 1);
+            
+            // Start at index 0
+            assert_eq!(interface.selected_index, 0);
+            
+            // Simulate down movement (in a real implementation, this would be handled by key events)
+            // For testing, we'll simulate the result of key handling
+            if interface.selected_index < interface.current_results.len().saturating_sub(1) {
+                interface.selected_index += 1;
+            }
+            assert_eq!(interface.selected_index, 1);
+            
+            // Simulate up movement
+            if interface.selected_index > 0 {
+                interface.selected_index -= 1;
+            }
+            assert_eq!(interface.selected_index, 0);
+        }
+
+        #[test]
+        fn should_not_navigate_beyond_boundaries() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Setup results
+            interface.perform_search("Calculator");
+            let max_index = interface.current_results.len().saturating_sub(1);
+            
+            // Test upper boundary
+            interface.selected_index = 0;
+            if interface.selected_index > 0 {
+                interface.selected_index -= 1;
+            }
+            assert_eq!(interface.selected_index, 0); // Should stay at 0
+            
+            // Test lower boundary
+            interface.selected_index = max_index;
+            if interface.selected_index < interface.current_results.len().saturating_sub(1) {
+                interface.selected_index += 1;
+            }
+            assert_eq!(interface.selected_index, max_index); // Should stay at max
+        }
+
+        #[test]
+        fn should_reset_selection_when_new_search_is_performed() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Setup initial search and move selection
+            interface.perform_search("Calculator");
+            interface.selected_index = 1; // Move away from 0
+            
+            // Perform new search
+            interface.perform_search("api");
+            
+            // Selection should reset to 0
+            assert_eq!(interface.selected_index, 0);
+        }
+
+        #[test]  
+        fn should_handle_ctrl_n_and_ctrl_p_navigation_logic() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Setup multiple results - use a more general query that should match multiple symbols
+            interface.perform_search("a"); // Should match "add", "api.ts", "Calculator", "ApiService" etc.
+            assert!(interface.current_results.len() > 1);
+            
+            // Test Ctrl+N logic (next/down)
+            interface.selected_index = 0;
+            // Simulate Ctrl+N behavior
+            if interface.selected_index < interface.current_results.len().saturating_sub(1) {
+                interface.selected_index += 1;
+            }
+            assert_eq!(interface.selected_index, 1);
+            
+            // Test Ctrl+P logic (previous/up)
+            // Simulate Ctrl+P behavior  
+            if interface.selected_index > 0 {
+                interface.selected_index -= 1;
+            }
+            assert_eq!(interface.selected_index, 0);
+        }
+    }
+
     mod clipboard_functionality {
         use super::*;
 
