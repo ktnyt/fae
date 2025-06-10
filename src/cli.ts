@@ -27,6 +27,7 @@ program
 		"File patterns to include",
 		"**/*.ts,**/*.js,**/*.tsx,**/*.jsx,**/*.py",
 	)
+	.option("--peco", "Use peco-like interface for interactive search")
 	.action(async (query, options) => {
 		try {
 			const directory = resolve(options.directory);
@@ -52,7 +53,16 @@ program
 			console.log(`📚 Found ${symbols.length} symbols`);
 
 			if (!query) {
-				// Start interactive mode with existing symbols
+				// Default to peco mode for better UX (can be overridden with --no-peco in future)
+				if (!process.env.SFS_NO_PECO && (options.peco !== false)) {
+					const { PecoInterface } = await import("./peco-interface.js");
+					const searcher = new FuzzySearcher(symbols);
+					const peco = new PecoInterface(searcher, symbols);
+					await peco.start();
+					return;
+				}
+
+				// Start menu-based interactive mode with existing symbols
 				const interactive = new InteractiveInterface(
 					indexer,
 					{
