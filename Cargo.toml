@@ -1,0 +1,49 @@
+[package]
+name = "sfs-rs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sfs"
+path = "src/main.rs"
+
+[dependencies]
+# TUI
+ratatui = "0.24"
+crossterm = "0.27"
+
+# Tree-sitter
+tree-sitter = "0.20"
+tree-sitter-typescript = "0.20"
+tree-sitter-javascript = "0.20"
+tree-sitter-python = "0.20"
+
+# 検索・ファイル操作
+fuzzy-matcher = "0.3"
+globwalk = "0.8"
+ignore = "0.4"        # .gitignore対応
+
+# クリップボード
+arboard = "3.2"
+
+# CLI・設定
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 非同期・並列処理
+tokio = { version = "1.0", features = ["full"] }
+rayon = "1.8"
+
+# エラーハンドリング
+anyhow = "1.0"
+thiserror = "1.0"
+
+# 正規表現
+regex = "1.10"
+
+[dev-dependencies]
+criterion = "0.5"     # ベンチマーク
+tempfile = "3.8"      # テスト用
+mockall = "0.12"      # モック生成
+serial_test = "3.0"   # テスト実行順序制御

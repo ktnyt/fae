@@ -1,25 +1,68 @@
 # sfs - Symbol Fuzzy Search
 
-A fast fuzzy search tool for code symbols (functions, classes, variables, etc.) across your codebase.
+A blazingly fast fuzzy search tool for code symbols (functions, classes, variables, etc.) across your codebase. Written in Rust for maximum performance and portability.
 
 ## Features
 
 - 🔍 **Fuzzy Search**: Find symbols quickly with fuzzy matching
-- 🌳 **Tree-sitter Powered**: Accurate AST-based parsing for 50+ languages
-- 🚀 **Fast**: Lightning-fast search using optimized algorithms
-- 📁 **Multi-language**: Supports TypeScript, JavaScript, Python, Rust, Go, and more
-- 🎯 **Smart Filtering**: Filter by symbol type (function, class, interface, etc.)
-- 💡 **Precise**: Extract symbols with perfect syntax awareness
+- 🖥️ **Interactive TUI**: Beautiful terminal user interface with real-time search
+- 📋 **Clipboard Integration**: Copy symbol locations with Enter key
+- 🚀 **Lightning Fast**: Native Rust binary for maximum performance
+- 📁 **Multi-language**: Supports TypeScript, JavaScript, Python with regex-based parsing
+- 🎯 **Smart Filtering**: Filter by symbol type (function, class, variable, etc.)
+- 🔄 **Multiple Search Modes**: Fuzzy, Symbol-only, File-only, and Regex search
+- 🎨 **User-friendly**: Color-coded results with intuitive navigation
 
 ## Installation
 
+### From Binary (Recommended)
+
 ```bash
-npm install -g sfs
+# Build from source
+git clone https://github.com/ktnyt/sfs
+cd sfs
+cargo build --release
+
+# Binary will be available at target/release/sfs
+```
+
+### From Source
+
+```bash
+# Clone repository
+git clone https://github.com/ktnyt/sfs
+cd sfs
+
+# Build with Cargo
+cargo install --path .
 ```
 
 ## Usage
 
-### Basic Search
+### TUI Mode (Interactive)
+
+```bash
+# Start interactive mode
+sfs
+
+# Start interactive mode in specific directory
+sfs -d ./src
+```
+
+**TUI Controls:**
+- Type to search symbols in real-time
+- `↑/↓` or `Ctrl+p/n`: Navigate results
+- `Enter`: Copy symbol location to clipboard and clear search
+- `Esc`: Exit application
+- `F1` or `Ctrl+h`: Show help
+
+**Search Modes:**
+- **Fuzzy** (default): `query` - Fuzzy search across all symbols
+- **Symbol**: `#query` - Search only symbol names (exclude files/dirs)
+- **File**: `>query` - Search only file and directory names
+- **Regex**: `/query` - Regular expression search
+
+### CLI Mode
 
 ```bash
 # Search for symbols containing "function"
@@ -30,19 +73,12 @@ sfs "Component" -d ./src
 
 # Limit results
 sfs "parse" -l 10
-```
 
-### Advanced Search
-
-```bash
 # Filter by symbol types
-sfs "handler" -t "function,method"
+sfs "handler" --types function
 
 # Adjust fuzzy matching threshold (0-1, lower is more fuzzy)
 sfs "router" --threshold 0.2
-
-# Search specific file patterns
-sfs "Config" --patterns "**/*.ts,**/*.tsx"
 ```
 
 ### Options
@@ -53,39 +89,79 @@ sfs "Config" --patterns "**/*.ts,**/*.tsx"
 - `--no-dirs`: Exclude directory names from search
 - `-l, --limit <number>`: Maximum number of results (default: 50)
 - `--threshold <number>`: Fuzzy search threshold 0-1 (default: 0.4)
-- `--patterns <patterns>`: File patterns to include (default: TypeScript, JavaScript, Python)
+- `--tui`: Force TUI mode (default when no query provided)
 
 ### Symbol Types
 
-- `function`: Function declarations
-- `class`: Class declarations  
+- `function`: Function declarations, methods, getters, setters
+- `class`: Class declarations
 - `interface`: Interface declarations (TypeScript)
 - `type`: Type aliases (TypeScript)
-- `variable`: Variable declarations
-- `constant`: Constant declarations
-- `method`: Class methods
-- `property`: Object properties
+- `variable`: Variable declarations and constants
 - `filename`: File names
 - `dirname`: Directory names
+
+## Examples
+
+### TUI Mode Examples
+```bash
+# Interactive search with real-time results
+sfs
+
+# Start in specific directory
+sfs -d ./src/components
+
+# In TUI, try these searches:
+# - "user" - fuzzy search for user-related symbols
+# - "#Component" - find only Component symbols (no files)
+# - ">index" - find only files/dirs named index
+# - "/^get.*" - regex search for symbols starting with "get"
+```
+
+### CLI Mode Examples
+```bash
+# Find all functions
+sfs "" --types function
+
+# Find TypeScript interfaces
+sfs "User" --types interface
+
+# Search with high fuzzy threshold (more exact)
+sfs "handleClick" --threshold 0.8
+
+# Limit to top 5 results
+sfs "component" -l 5
+```
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
+# Run tests
+cargo test
 
-# Build
-npm run build
+# Build release version
+cargo build --release
 
-# Run in development
-npm run dev
+# Run in development mode
+cargo run
 
-# Type check
-npm run typecheck
+# Run with debug output
+RUST_LOG=debug cargo run
 
-# Lint & format
-npm run check
+# Format code
+cargo fmt
+
+# Lint code
+cargo clippy
 ```
+
+## Technical Details
+
+- **Parser**: Regex-based symbol extraction for reliability
+- **Search**: Uses `fuzzy-matcher` crate for fast fuzzy search
+- **TUI**: Built with `ratatui` for beautiful terminal interface
+- **Clipboard**: Cross-platform clipboard support with `arboard`
+- **Performance**: Concurrent file processing and caching
 
 ## License
 
