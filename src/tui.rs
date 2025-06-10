@@ -15,7 +15,6 @@ use std::io;
 use arboard::Clipboard;
 
 use crate::{
-    indexer::TreeSitterIndexer,
     searcher::FuzzySearcher,
     types::{CodeSymbol, DefaultDisplayStrategy, SearchOptions, SearchResult, SymbolType},
 };
@@ -82,21 +81,230 @@ impl TuiApp {
     }
 
     pub async fn initialize(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
-        self.status_message = "Indexing files...".to_string();
+        // Phase 1: Quick file discovery for immediate display
+        self.status_message = "Discovering files...".to_string();
+        let file_list = self.quick_file_discovery(directory, respect_gitignore).await?;
         
-        let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
-        indexer.initialize().await?;
-        
-        let patterns = vec!["**/*".to_string()];
-        indexer.index_directory(directory, &patterns).await?;
-        
-        self.symbols = indexer.get_all_symbols();
+        // Create initial file-only symbols for immediate display
+        self.symbols = self.create_file_symbols(&file_list);
         self.searcher = Some(FuzzySearcher::new(self.symbols.clone()));
         
-        self.status_message = format!("Indexed {} symbols", self.symbols.len());
-        
-        // Show default results on startup
+        // Show initial results immediately
         self.show_default_results();
+        self.status_message = format!("Found {} files, indexing symbols...", file_list.len());
+        
+        // Phase 2: Progressive symbol indexing in background
+        // This will be implemented in the next step
+        self.start_progressive_indexing(directory, verbose, respect_gitignore, file_list).await?;
+        
+        Ok(())
+    }
+    
+    // Quick file discovery without symbol extraction
+    async fn quick_file_discovery(&self, directory: &std::path::Path, respect_gitignore: bool) -> anyhow::Result<Vec<std::path::PathBuf>> {
+        use ignore::WalkBuilder;
+        
+        let mut builder = WalkBuilder::new(directory);
+        builder.git_ignore(respect_gitignore)
+               .git_global(respect_gitignore)
+               .git_exclude(respect_gitignore)
+               .require_git(false)
+               .hidden(false)
+               .parents(true)
+               .ignore(true)
+               .add_custom_ignore_filename(".ignore");
+        
+        let mut files_with_time = Vec::new();
+        
+        for entry in builder.build() {
+            match entry {
+                Ok(dir_entry) => {
+                    let path = dir_entry.path();
+                    
+                    // Skip .git directory
+                    if let Some(path_str) = path.to_str() {
+                        if path_str.contains("/.git/") || path_str.ends_with("/.git") {
+                            continue;
+                        }
+                    }
+                    
+                    if path.is_file() && self.should_include_file_quick(path) {
+                        if let Ok(metadata) = path.metadata() {
+                            if let Ok(modified) = metadata.modified() {
+                                files_with_time.push((path.to_path_buf(), modified));
+                            }
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        
+        // Sort by modification time (newest first)
+        files_with_time.sort_by(|a, b| b.1.cmp(&a.1));
+        
+        Ok(files_with_time.into_iter().map(|(path, _)| path).collect())
+    }
+    
+    // Quick file filtering without full indexer logic
+    fn should_include_file_quick(&self, path: &std::path::Path) -> bool {
+        // Basic file size check
+        const MAX_FILE_SIZE: u64 = 1024 * 1024; // 1MB
+        if let Ok(metadata) = path.metadata() {
+            if metadata.len() > MAX_FILE_SIZE {
+                return false;
+            }
+        }
+        
+        // Skip binary files
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            let binary_extensions = [
+                "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+                "zip", "tar", "gz", "bz2", "7z", "rar",
+                "exe", "bin", "so", "dylib", "dll", "app",
+                "mp3", "mp4", "avi", "mov", "wmv", "flv",
+                "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+                "db", "sqlite", "sqlite3",
+                "ttf", "otf", "woff", "woff2",
+                "o", "obj", "pyc", "class", "jar",
+                "lock"
+            ];
+            
+            if binary_extensions.contains(&extension.to_lowercase().as_str()) {
+                return false;
+            }
+        }
+        
+        true
+    }
+    
+    // Create basic file symbols for immediate display
+    fn create_file_symbols(&self, file_list: &[std::path::PathBuf]) -> Vec<CodeSymbol> {
+        let mut symbols = Vec::new();
+        
+        for file_path in file_list.iter().take(100) { // Limit for performance
+            // Add filename symbol
+            if let Some(filename) = file_path.file_name() {
+                symbols.push(CodeSymbol {
+                    name: filename.to_string_lossy().to_string(),
+                    symbol_type: SymbolType::Filename,
+                    file: file_path.clone(),
+                    line: 1,
+                    column: 1,
+                    context: None,
+                });
+            }
+            
+            // Add dirname symbol
+            if let Some(parent) = file_path.parent() {
+                if let Some(dirname) = parent.file_name() {
+                    symbols.push(CodeSymbol {
+                        name: dirname.to_string_lossy().to_string(),
+                        symbol_type: SymbolType::Dirname,
+                        file: file_path.clone(),
+                        line: 1,
+                        column: 1,
+                        context: None,
+                    });
+                }
+            }
+        }
+        
+        symbols
+    }
+    
+    // Progressive indexing in background while UI remains responsive
+    async fn start_progressive_indexing(&mut self, _directory: &std::path::Path, verbose: bool, _respect_gitignore: bool, file_list: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+        use crate::indexer::TreeSitterIndexer;
+        use std::sync::mpsc;
+        use std::thread;
+        
+        let (tx, rx) = mpsc::channel();
+        let indexer = TreeSitterIndexer::new();
+        let total_files = file_list.len();
+        
+        // Spawn background thread for symbol extraction
+        thread::spawn(move || {
+            let mut processed = 0;
+            
+            for file_path in file_list {
+                // Extract symbols for this file
+                match indexer.extract_symbols_sync(&file_path, verbose) {
+                    Ok(mut symbols) => {
+                        // Add file and directory symbols if they don't exist
+                        if let Some(filename) = file_path.file_name() {
+                            symbols.push(crate::types::CodeSymbol {
+                                name: filename.to_string_lossy().to_string(),
+                                symbol_type: crate::types::SymbolType::Filename,
+                                file: file_path.clone(),
+                                line: 1,
+                                column: 1,
+                                context: None,
+                            });
+                        }
+                        
+                        if let Some(parent) = file_path.parent() {
+                            if let Some(dirname) = parent.file_name() {
+                                symbols.push(crate::types::CodeSymbol {
+                                    name: dirname.to_string_lossy().to_string(),
+                                    symbol_type: crate::types::SymbolType::Dirname,
+                                    file: file_path.clone(),
+                                    line: 1,
+                                    column: 1,
+                                    context: None,
+                                });
+                            }
+                        }
+                        
+                        processed += 1;
+                        let progress = (processed as f32 / total_files as f32 * 100.0) as u32;
+                        
+                        // Send symbols and progress back to main thread
+                        if tx.send((symbols, progress, processed, total_files)).is_err() {
+                            break; // Main thread has dropped the receiver
+                        }
+                    }
+                    Err(_) => {
+                        // Continue with next file on error
+                        processed += 1;
+                        let progress = (processed as f32 / total_files as f32 * 100.0) as u32;
+                        if tx.send((Vec::new(), progress, processed, total_files)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Update status to indicate background indexing has started
+        self.status_message = format!("Indexing {} files in background...", total_files);
+        
+        // Note: In a real implementation, we would need to poll the receiver
+        // during the event loop to update symbols progressively. For now,
+        // we'll wait for completion to maintain the existing API.
+        let mut all_symbols = self.symbols.clone();
+        
+        while let Ok((new_symbols, progress, processed, total)) = rx.recv() {
+            // Add new symbols to our collection
+            all_symbols.extend(new_symbols);
+            
+            // Update status with progress
+            self.status_message = format!("Indexing progress: {}/{} files ({}%)", processed, total, progress);
+            
+            // Break when all files are processed
+            if processed >= total {
+                break;
+            }
+        }
+        
+        // Update symbols and searcher with complete index
+        self.symbols = all_symbols;
+        self.searcher = Some(crate::searcher::FuzzySearcher::new(self.symbols.clone()));
+        
+        // Update default results with newly indexed symbols
+        self.show_default_results();
+        
+        self.status_message = format!("Indexing complete! Found {} symbols", self.symbols.len());
         
         Ok(())
     }
