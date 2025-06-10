@@ -301,16 +301,26 @@ impl TuiApp {
             let mut finished = false;
             
             // Use try_recv to avoid blocking - this is key for non-spinning behavior
+            // Limit the number of updates per frame to maintain UI responsiveness
+            let mut updates_this_frame = 0;
+            const MAX_UPDATES_PER_FRAME: usize = 3;
+            
             while let Ok((new_symbols, progress, processed, total)) = receiver.try_recv() {
                 // Add new symbols to our collection
                 self.symbols.extend(new_symbols);
+                updates_this_frame += 1;
                 
-                // Update searcher with new symbols
-                self.searcher = Some(crate::searcher::FuzzySearcher::new(self.symbols.clone()));
+                // Only update expensive operations periodically or when finished
+                let should_update_searcher = processed >= total || updates_this_frame >= MAX_UPDATES_PER_FRAME;
                 
-                // Update default results if query is empty
-                if self.query.trim().is_empty() {
-                    self.show_default_results();
+                if should_update_searcher {
+                    // Update searcher with new symbols
+                    self.searcher = Some(crate::searcher::FuzzySearcher::new(self.symbols.clone()));
+                    
+                    // Update default results if query is empty
+                    if self.query.trim().is_empty() {
+                        self.show_default_results();
+                    }
                 }
                 
                 // Update status with progress
@@ -333,8 +343,14 @@ impl TuiApp {
                     self.indexing_start_time = None;
                     finished = true;
                     break;
-                } else {
+                } else if should_update_searcher {
+                    // Only update status message periodically to reduce UI churn
                     self.status_message = format!("Indexing progress: {}/{} files ({}%)", processed, total, progress);
+                }
+                
+                // Break early if we've hit our update limit for this frame
+                if updates_this_frame >= MAX_UPDATES_PER_FRAME && processed < total {
+                    break;
                 }
             }
             
@@ -371,7 +387,55 @@ impl TuiApp {
         }
 
         let default_symbols = self.sort_symbols_by_strategy(&self.default_strategy);
-        self.current_results = default_symbols
+        
+        // Deduplicate by file path, prioritizing filename symbols over code symbols
+        let mut file_representatives: std::collections::HashMap<std::path::PathBuf, CodeSymbol> = std::collections::HashMap::new();
+        let mut seen_dirs = std::collections::HashSet::new();
+        
+        // First pass: collect the best representative symbol for each file
+        for symbol in default_symbols {
+            match symbol.symbol_type {
+                SymbolType::Dirname => {
+                    // Always include unique directory names
+                    if seen_dirs.insert(symbol.name.clone()) {
+                        file_representatives.insert(symbol.file.clone(), symbol);
+                    }
+                }
+                SymbolType::Filename => {
+                    // Filename symbols are the best representatives for files
+                    file_representatives.insert(symbol.file.clone(), symbol);
+                }
+                _ => {
+                    // For code symbols, only use if we don't have a filename symbol yet
+                    file_representatives.entry(symbol.file.clone()).or_insert(symbol);
+                }
+            }
+        }
+        
+        // Convert back to sorted vector based on the original sort strategy
+        let mut unique_symbols: Vec<CodeSymbol> = file_representatives.into_values().collect();
+        
+        // Re-sort by modification time (since HashMap iteration order is not guaranteed)
+        if matches!(self.default_strategy, DefaultDisplayStrategy::RecentlyModified) {
+            use std::collections::HashMap;
+            let mut file_times: HashMap<std::path::PathBuf, std::time::SystemTime> = HashMap::new();
+            
+            for symbol in &unique_symbols {
+                if let Ok(metadata) = std::fs::metadata(&symbol.file) {
+                    if let Ok(modified) = metadata.modified() {
+                        file_times.insert(symbol.file.clone(), modified);
+                    }
+                }
+            }
+            
+            unique_symbols.sort_by(|a, b| {
+                let time_a = file_times.get(&a.file).copied().unwrap_or(std::time::UNIX_EPOCH);
+                let time_b = file_times.get(&b.file).copied().unwrap_or(std::time::UNIX_EPOCH);
+                time_b.cmp(&time_a) // Most recent first
+            });
+        }
+        
+        self.current_results = unique_symbols
             .into_iter()
             .take(100) // Limit to 100 results
             .map(|s| SearchResult {
@@ -454,20 +518,22 @@ impl TuiApp {
     }
 
     pub fn perform_search(&mut self) {
+        // If we're still indexing, defer heavy search operations
+        if self.is_indexing {
+            // Just update search mode and show a simple message during indexing
+            self.current_search_mode = self.detect_search_mode(&self.query);
+            self.current_results.clear();
+            self.selected_index = 0;
+            return;
+        }
+        
         if let Some(ref searcher) = self.searcher {
             // Detect and update search mode
             self.current_search_mode = self.detect_search_mode(&self.query);
             
             if self.query.trim().is_empty() {
-                // Show all symbols when query is empty (limit to 100)
-                self.current_results = self.symbols
-                    .iter()
-                    .take(100)
-                    .map(|s| SearchResult {
-                        symbol: s.clone(),
-                        score: 1.0,
-                    })
-                    .collect();
+                // Use the same deduplication logic as show_default_results
+                self.show_default_results();
             } else {
                 let mut clean_query = self.extract_search_query(&self.query);
                 
@@ -665,6 +731,22 @@ impl TuiApp {
     }
 
     fn render_results(&mut self, f: &mut Frame, area: Rect) {
+        // Show special message during indexing if no results and user has typed something
+        if self.is_indexing && !self.query.trim().is_empty() && self.current_results.is_empty() {
+            let indexing_message = ListItem::new(Line::from(vec![
+                Span::styled("⏳ ", Style::default().fg(Color::Yellow)),
+                Span::styled("Indexing in progress... Results will appear as files are processed", 
+                           Style::default().fg(Color::Gray)),
+            ]));
+            
+            let list = List::new(vec![indexing_message])
+                .block(Block::default().borders(Borders::ALL).title("Results"))
+                .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+            
+            f.render_widget(list, area);
+            return;
+        }
+        
         let items: Vec<ListItem> = self
             .current_results
             .iter()
@@ -850,7 +932,7 @@ async fn run_app<B: ratatui::backend::Backend>(
             break;
         }
 
-        if event::poll(std::time::Duration::from_millis(50))? {
+        if event::poll(std::time::Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
                 app.handle_key_event(key);
             }
