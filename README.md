@@ -12,6 +12,7 @@ A blazingly fast fuzzy search tool for code symbols (functions, classes, variabl
 - 🎯 **Smart Filtering**: Filter by symbol type (function, class, variable, etc.)
 - 🔄 **Multiple Search Modes**: Fuzzy, Symbol-only, File-only, and Regex search
 - 🎨 **User-friendly**: Color-coded results with intuitive navigation
+- 🚫 **Gitignore Support**: Respects .gitignore files by default, with option to include all files
 
 ## Installation
 
@@ -90,6 +91,8 @@ sfs "router" --threshold 0.2
 - `-l, --limit <number>`: Maximum number of results (default: 50)
 - `--threshold <number>`: Fuzzy search threshold 0-1 (default: 0.4)
 - `--tui`: Force TUI mode (default when no query provided)
+- `-v, --verbose`: Enable verbose output (detailed progress information)
+- `--include-ignored`: Include files normally ignored by .gitignore
 
 ### Symbol Types
 
@@ -131,6 +134,12 @@ sfs "handleClick" --threshold 0.8
 
 # Limit to top 5 results
 sfs "component" -l 5
+
+# Search including files ignored by .gitignore
+sfs "config" --include-ignored
+
+# Verbose mode to see indexing progress
+sfs "handler" -v
 ```
 
 ## Development

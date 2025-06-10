@@ -8,6 +8,7 @@ pub struct TreeSitterIndexer {
     symbols_cache: HashMap<PathBuf, Vec<CodeSymbol>>,
     initialized: bool,
     verbose: bool,
+    respect_gitignore: bool,
 }
 
 impl TreeSitterIndexer {
@@ -16,6 +17,7 @@ impl TreeSitterIndexer {
             symbols_cache: HashMap::new(),
             initialized: false,
             verbose: false,
+            respect_gitignore: true, // Default to respecting .gitignore
         }
     }
     
@@ -24,6 +26,16 @@ impl TreeSitterIndexer {
             symbols_cache: HashMap::new(),
             initialized: false,
             verbose,
+            respect_gitignore: true, // Default to respecting .gitignore
+        }
+    }
+
+    pub fn with_options(verbose: bool, respect_gitignore: bool) -> Self {
+        Self {
+            symbols_cache: HashMap::new(),
+            initialized: false,
+            verbose,
+            respect_gitignore,
         }
     }
 
@@ -207,6 +219,46 @@ impl TreeSitterIndexer {
     }
 
     pub async fn index_directory(&mut self, directory: &Path, patterns: &[String]) -> anyhow::Result<()> {
+        if self.respect_gitignore {
+            self.index_directory_with_gitignore(directory, patterns).await
+        } else {
+            self.index_directory_ignore_gitignore(directory, patterns).await
+        }
+    }
+
+    async fn index_directory_with_gitignore(&mut self, directory: &Path, patterns: &[String]) -> anyhow::Result<()> {
+        use ignore::WalkBuilder;
+        
+        let mut builder = WalkBuilder::new(directory);
+        builder.git_ignore(true)
+               .git_global(true)
+               .git_exclude(true)
+               .hidden(false); // Show hidden files but respect .gitignore
+        
+        for entry in builder.build() {
+            match entry {
+                Ok(dir_entry) => {
+                    let path = dir_entry.path();
+                    if path.is_file() && self.matches_patterns(path, patterns) {
+                        if let Err(e) = self.index_file(path).await {
+                            if self.verbose {
+                                eprintln!("Warning: Failed to index {}: {}", path.display(), e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if self.verbose {
+                        eprintln!("Warning: Failed to read directory entry: {}", e);
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    async fn index_directory_ignore_gitignore(&mut self, directory: &Path, patterns: &[String]) -> anyhow::Result<()> {
         use globwalk::GlobWalkerBuilder;
         
         for pattern in patterns {
@@ -236,6 +288,21 @@ impl TreeSitterIndexer {
         }
         
         Ok(())
+    }
+
+    fn matches_patterns(&self, path: &Path, patterns: &[String]) -> bool {
+        if patterns.is_empty() {
+            return true;
+        }
+        
+        for pattern in patterns {
+            if let Ok(glob) = glob::Pattern::new(pattern) {
+                if glob.matches_path(path) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn clear_cache(&mut self) {

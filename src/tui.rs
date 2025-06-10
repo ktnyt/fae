@@ -81,10 +81,10 @@ impl TuiApp {
         }
     }
 
-    pub async fn initialize(&mut self, directory: &std::path::Path, verbose: bool) -> anyhow::Result<()> {
+    pub async fn initialize(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
         self.status_message = "Indexing files...".to_string();
         
-        let mut indexer = TreeSitterIndexer::with_verbose(verbose);
+        let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
         indexer.initialize().await?;
         
         let patterns = vec!["**/*.ts".to_string(), "**/*.js".to_string(), "**/*.py".to_string()];
@@ -524,6 +524,9 @@ impl TuiApp {
             Line::from("  ? - Toggle this help"),
             Line::from("  Esc / Ctrl+C - Quit"),
             Line::from(""),
+            Line::from("Note: By default, files ignored by .gitignore are excluded."),
+            Line::from("      Use --include-ignored flag to search all files."),
+            Line::from(""),
             Line::from("Press any key to close help"),
         ]);
 
@@ -562,7 +565,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-pub async fn run_tui(directory: std::path::PathBuf, verbose: bool) -> anyhow::Result<()> {
+pub async fn run_tui(directory: std::path::PathBuf, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -572,7 +575,7 @@ pub async fn run_tui(directory: std::path::PathBuf, verbose: bool) -> anyhow::Re
 
     // Create and initialize app
     let mut app = TuiApp::new();
-    app.initialize(&directory, verbose).await?;
+    app.initialize(&directory, verbose, respect_gitignore).await?;
 
     // Main loop
     let result = run_app(&mut terminal, &mut app).await;

@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 #[derive(Parser, Clone)]
 #[command(name = "sfs")]
-#[command(about = "Symbol Fuzzy Search - Rust Implementation")]
+#[command(about = "Symbol Fuzzy Search - Fast code symbol search tool for developers")]
+#[command(long_about = "SFS (Symbol Fuzzy Search) is a high-performance code search tool that indexes\nand searches symbols (functions, classes, variables, etc.) across your codebase.\n\nBy default, SFS respects .gitignore files and excludes ignored files from search.\nUse --include-ignored to search all files regardless of .gitignore rules.\n\nSupported languages: TypeScript, JavaScript, Python")]
 #[command(version)]
 struct Cli {
     /// Search query
@@ -41,6 +42,13 @@ struct Cli {
     /// Enable verbose output (detailed progress information)
     #[arg(short, long)]
     verbose: bool,
+    
+    /// Include files normally ignored by .gitignore
+    /// 
+    /// By default, SFS respects .gitignore files and excludes ignored files from search.
+    /// Use this flag to search all files in the directory regardless of .gitignore rules.
+    #[arg(long)]
+    include_ignored: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -82,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     
     if cli.tui {
         // TUI mode  
-        run_tui(cli.directory, cli.verbose).await?;
+        run_tui(cli.directory, cli.verbose, !cli.include_ignored).await?;
     } else {
         let query = cli.query.clone();
         match query {
@@ -95,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
                 if cli.verbose {
                     println!("🖥️  Starting TUI mode...");
                 }
-                run_tui(cli.directory, cli.verbose).await?;
+                run_tui(cli.directory, cli.verbose, !cli.include_ignored).await?;
             }
         }
     }
@@ -109,7 +117,7 @@ async fn perform_search(cli: Cli, query: String) -> anyhow::Result<()> {
     }
     
     // Initialize indexer
-    let mut indexer = TreeSitterIndexer::with_verbose(cli.verbose);
+    let mut indexer = TreeSitterIndexer::with_options(cli.verbose, !cli.include_ignored);
     indexer.initialize().await?;
     
     // Index directory
