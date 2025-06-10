@@ -115,35 +115,31 @@ impl MockTuiInterface {
     }
 
     fn perform_file_search(&self, query: &str, limit: usize) -> Vec<MockSearchResult> {
-        // Include only files and directories
-        let file_symbols: Vec<CodeSymbol> = self.symbols
-            .iter()
-            .filter(|s| s.symbol_type == SymbolType::Variable && 
-                       (s.name.contains('.') || s.name.contains('/')))
-            .cloned()
-            .collect();
-
-        // First try fuzzy search
-        let searcher = FuzzySearcher::new(file_symbols.clone());
-        let options = SearchOptions {
-            limit: Some(limit),
-            ..Default::default()
+        // Check if the query ends with '/' for directory-only search
+        let is_directory_search = query.ends_with('/');
+        let clean_query = if is_directory_search {
+            query.trim_end_matches('/').to_string()
+        } else {
+            query.to_string()
         };
-        let results = searcher.search(query, &options);
 
-        // If no results, try partial match fallback
-        if results.is_empty() {
-            let partial_matches: Vec<MockSearchResult> = file_symbols
-                .into_iter()
-                .filter(|s| s.name.to_lowercase().contains(&query.to_lowercase()))
-                .map(|s| MockSearchResult {
-                    symbol: s,
-                    score: 0.5, // Default score for partial matches
-                    })
-                .take(limit)
-                .collect();
-            return partial_matches;
-        }
+        // Filter symbols based on directory search flag
+        let search_options = if is_directory_search {
+            SearchOptions {
+                types: Some(vec![SymbolType::Dirname]),
+                limit: Some(limit),
+                ..Default::default()
+            }
+        } else {
+            SearchOptions {
+                types: Some(vec![SymbolType::Filename, SymbolType::Dirname]),
+                limit: Some(limit),
+                ..Default::default()
+            }
+        };
+
+        let searcher = FuzzySearcher::new(self.symbols.clone());
+        let results = searcher.search(&clean_query, &search_options);
 
         results.into_iter().map(|r| MockSearchResult {
             symbol: r.symbol,
@@ -237,8 +233,8 @@ mod tests {
         vec![
             CodeSymbol {
                 name: "Calculator".to_string(),
-                symbol_type: SymbolType::Variable, // Using Variable for class
-                file: PathBuf::from("/test/Calculator.ts"),
+                symbol_type: SymbolType::Class,
+                file: PathBuf::from("/test/src/Calculator.ts"),
                 line: 1,
                 column: 1,
                 context: Some("class Calculator {".to_string()),
@@ -246,31 +242,55 @@ mod tests {
             CodeSymbol {
                 name: "add".to_string(),
                 symbol_type: SymbolType::Function,
-                file: PathBuf::from("/test/Calculator.ts"),
+                file: PathBuf::from("/test/src/Calculator.ts"),
                 line: 5,
                 column: 2,
                 context: Some("add(a: number, b: number) {".to_string()),
             },
             CodeSymbol {
-                name: "sample.ts".to_string(),
-                symbol_type: SymbolType::Variable, // Using Variable for filename
-                file: PathBuf::from("/test/sample.ts"),
+                name: "Calculator.ts".to_string(),
+                symbol_type: SymbolType::Filename,
+                file: PathBuf::from("/test/src/Calculator.ts"),
+                line: 1,
+                column: 1,
+                context: None,
+            },
+            CodeSymbol {
+                name: "src".to_string(),
+                symbol_type: SymbolType::Dirname,
+                file: PathBuf::from("/test/src/Calculator.ts"),
                 line: 1,
                 column: 1,
                 context: None,
             },
             CodeSymbol {
                 name: "test".to_string(),
-                symbol_type: SymbolType::Variable, // Using Variable for dirname
-                file: PathBuf::from("/test/sample.ts"),
+                symbol_type: SymbolType::Dirname,
+                file: PathBuf::from("/test/src/Calculator.ts"),
+                line: 1,
+                column: 1,
+                context: None,
+            },
+            CodeSymbol {
+                name: "api.ts".to_string(),
+                symbol_type: SymbolType::Filename,
+                file: PathBuf::from("/test/utils/api.ts"),
+                line: 1,
+                column: 1,
+                context: None,
+            },
+            CodeSymbol {
+                name: "utils".to_string(),
+                symbol_type: SymbolType::Dirname,
+                file: PathBuf::from("/test/utils/api.ts"),
                 line: 1,
                 column: 1,
                 context: None,
             },
             CodeSymbol {
                 name: "ApiService".to_string(),
-                symbol_type: SymbolType::Variable, // Using Variable for class
-                file: PathBuf::from("/test/api.ts"),
+                symbol_type: SymbolType::Class,
+                file: PathBuf::from("/test/utils/api.ts"),
                 line: 10,
                 column: 1,
                 context: Some("class ApiService {".to_string()),
@@ -465,6 +485,72 @@ mod tests {
             // Should perform normal fuzzy search
             assert!(!results.is_empty());
             assert!(results.iter().any(|r| r.symbol.name == "Calculator"));
+        }
+
+        #[test]
+        fn should_perform_file_search_including_files_and_directories() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Set mode to file search
+            interface.current_search_mode = interface.search_modes[2].clone();
+            
+            let results = interface.perform_file_search("src", 100);
+            
+            // Should find both files and directories containing "src"
+            assert!(!results.is_empty());
+            let result_names: Vec<&String> = results.iter().map(|r| &r.symbol.name).collect();
+            
+            // Should include both directories named "src" and possibly files containing "src"
+            assert!(result_names.iter().any(|name| *name == "src"));
+        }
+
+        #[test]
+        fn should_perform_directory_only_search_with_trailing_slash() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Set mode to file search
+            interface.current_search_mode = interface.search_modes[2].clone();
+            
+            let results = interface.perform_file_search("src/", 100);
+            
+            // Should find only directories, not files
+            assert!(!results.is_empty());
+            
+            // All results should be directories
+            for result in &results {
+                assert_eq!(result.symbol.symbol_type, SymbolType::Dirname);
+            }
+            
+            // Should contain "src" directory
+            let result_names: Vec<&String> = results.iter().map(|r| &r.symbol.name).collect();
+            assert!(result_names.iter().any(|name| *name == "src"));
+        }
+
+        #[test]
+        fn should_remove_trailing_slash_from_directory_search_query() {
+            let symbols = create_mock_symbols();
+            let searcher = FuzzySearcher::new(symbols.clone());
+            let mut interface = MockTuiInterface::new(searcher, symbols);
+            
+            // Set mode to file search
+            interface.current_search_mode = interface.search_modes[2].clone();
+            
+            let results = interface.perform_file_search("test/", 100);
+            
+            // Should find directories named "test" even though we searched for "test/"
+            assert!(!results.is_empty());
+            
+            let result_names: Vec<&String> = results.iter().map(|r| &r.symbol.name).collect();
+            assert!(result_names.iter().any(|name| *name == "test"));
+            
+            // All results should be directories
+            for result in &results {
+                assert_eq!(result.symbol.symbol_type, SymbolType::Dirname);
+            }
         }
     }
 

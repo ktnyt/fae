@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -132,7 +132,15 @@ impl TuiApp {
                     })
                     .collect();
             } else {
-                let clean_query = self.extract_search_query(&self.query);
+                let mut clean_query = self.extract_search_query(&self.query);
+                
+                // Store whether the query was a directory search (ended with '/')
+                let is_directory_search = clean_query.ends_with('/');
+                
+                // Remove trailing '/' for the actual search if it exists
+                if is_directory_search {
+                    clean_query = clean_query.trim_end_matches('/').to_string();
+                }
                 
                 let search_options = match self.current_search_mode.name.as_str() {
                     "Symbol" => SearchOptions {
@@ -151,9 +159,19 @@ impl TuiApp {
                         ]),
                         ..Default::default()
                     },
-                    "File" => SearchOptions {
-                        types: Some(vec![SymbolType::Filename, SymbolType::Dirname]),
-                        ..Default::default()
+                    "File" => {
+                        // Check if the query ended with '/' for directory-only search
+                        if is_directory_search {
+                            SearchOptions {
+                                types: Some(vec![SymbolType::Dirname]),
+                                ..Default::default()
+                            }
+                        } else {
+                            SearchOptions {
+                                types: Some(vec![SymbolType::Filename, SymbolType::Dirname]),
+                                ..Default::default()
+                            }
+                        }
                     },
                     _ => SearchOptions::default(), // Fuzzy or Regex
                 };
@@ -172,6 +190,9 @@ impl TuiApp {
 
         match key.code {
             KeyCode::Esc => {
+                self.should_quit = true;
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
             KeyCode::Char('?') => {
@@ -363,7 +384,7 @@ impl TuiApp {
             ]),
             Line::from(vec![
                 Span::styled("Keys: ", Style::default().fg(Color::Yellow)),
-                Span::raw("↑/↓ Navigate • Enter Copy • ? Help • Esc Quit"),
+                Span::raw("↑/↓ Navigate • Enter Copy • ? Help • Esc/Ctrl+C Quit"),
             ]),
         ]);
 
@@ -388,6 +409,7 @@ impl TuiApp {
             Line::from("  🔍 Fuzzy - Default fuzzy search"),
             Line::from("  🏷️ #symbol - Search symbols only"),
             Line::from("  📁 >file - Search files/directories"),
+            Line::from("  📁 >dir/ - Search directories only (with trailing /)"),
             Line::from("  🔧 /regex - Regular expression search"),
             Line::from(""),
             Line::from("Navigation:"),
@@ -395,7 +417,7 @@ impl TuiApp {
             Line::from("  Enter - Copy location to clipboard"),
             Line::from("  Backspace - Delete character"),
             Line::from("  ? - Toggle this help"),
-            Line::from("  Esc - Quit"),
+            Line::from("  Esc / Ctrl+C - Quit"),
             Line::from(""),
             Line::from("Press any key to close help"),
         ]);
