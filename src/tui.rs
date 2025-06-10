@@ -17,7 +17,7 @@ use arboard::Clipboard;
 use crate::{
     indexer::TreeSitterIndexer,
     searcher::FuzzySearcher,
-    types::{CodeSymbol, SearchOptions, SearchResult, SymbolType},
+    types::{CodeSymbol, DefaultDisplayStrategy, SearchOptions, SearchResult, SymbolType},
 };
 
 #[derive(Debug, Clone)]
@@ -38,6 +38,7 @@ pub struct TuiApp {
     pub should_quit: bool,
     pub show_help: bool,
     pub status_message: String,
+    pub default_strategy: DefaultDisplayStrategy,
 }
 
 impl TuiApp {
@@ -76,6 +77,7 @@ impl TuiApp {
             should_quit: false,
             show_help: false,
             status_message: "Ready".to_string(),
+            default_strategy: DefaultDisplayStrategy::RecentlyModified,
         }
     }
 
@@ -92,6 +94,9 @@ impl TuiApp {
         self.searcher = Some(FuzzySearcher::new(self.symbols.clone()));
         
         self.status_message = format!("Indexed {} symbols", self.symbols.len());
+        
+        // Show default results on startup
+        self.show_default_results();
         
         Ok(())
     }
@@ -114,6 +119,94 @@ impl TuiApp {
             }
             _ => query.to_string(),
         }
+    }
+
+    fn show_default_results(&mut self) {
+        if self.symbols.is_empty() {
+            return;
+        }
+
+        let default_symbols = self.sort_symbols_by_strategy(&self.default_strategy);
+        self.current_results = default_symbols
+            .into_iter()
+            .take(100) // Limit to 100 results
+            .map(|s| SearchResult {
+                symbol: s,
+                score: 1.0,
+            })
+            .collect();
+        
+        self.selected_index = 0;
+    }
+
+    fn sort_symbols_by_strategy(&self, strategy: &DefaultDisplayStrategy) -> Vec<CodeSymbol> {
+        match strategy {
+            DefaultDisplayStrategy::RecentlyModified => {
+                self.sort_by_recent_modification()
+            }
+            DefaultDisplayStrategy::ProjectImportant => {
+                self.sort_by_project_importance()
+            }
+            DefaultDisplayStrategy::SymbolBalance => {
+                self.sort_by_symbol_balance()
+            }
+            DefaultDisplayStrategy::MostSymbols => {
+                self.sort_by_most_symbols()
+            }
+            DefaultDisplayStrategy::Random => {
+                self.sort_by_random()
+            }
+        }
+    }
+
+    fn sort_by_recent_modification(&self) -> Vec<CodeSymbol> {
+        use std::collections::HashMap;
+        
+        // Group symbols by file and get file modification times
+        let mut file_times: HashMap<std::path::PathBuf, std::time::SystemTime> = HashMap::new();
+        
+        for symbol in &self.symbols {
+            if !file_times.contains_key(&symbol.file) {
+                if let Ok(metadata) = std::fs::metadata(&symbol.file) {
+                    if let Ok(modified) = metadata.modified() {
+                        file_times.insert(symbol.file.clone(), modified);
+                    }
+                }
+            }
+        }
+        
+        // Sort symbols by file modification time (most recent first)
+        let mut sorted_symbols = self.symbols.clone();
+        sorted_symbols.sort_by(|a, b| {
+            let time_a = file_times.get(&a.file).copied().unwrap_or(std::time::UNIX_EPOCH);
+            let time_b = file_times.get(&b.file).copied().unwrap_or(std::time::UNIX_EPOCH);
+            time_b.cmp(&time_a) // Reverse order for most recent first
+        });
+        
+        sorted_symbols
+    }
+
+    fn sort_by_project_importance(&self) -> Vec<CodeSymbol> {
+        // For now, return symbols as-is. This can be enhanced later.
+        self.symbols.clone()
+    }
+
+    fn sort_by_symbol_balance(&self) -> Vec<CodeSymbol> {
+        // For now, return symbols as-is. This can be enhanced later.
+        self.symbols.clone()
+    }
+
+    fn sort_by_most_symbols(&self) -> Vec<CodeSymbol> {
+        // For now, return symbols as-is. This can be enhanced later.
+        self.symbols.clone()
+    }
+
+    fn sort_by_random(&self) -> Vec<CodeSymbol> {
+        use rand::seq::SliceRandom;
+        let mut rng = rand::thread_rng();
+        let mut symbols = self.symbols.clone();
+        symbols.shuffle(&mut rng);
+        symbols
     }
 
     pub fn perform_search(&mut self) {

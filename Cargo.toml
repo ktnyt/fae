@@ -39,8 +39,9 @@ rayon = "1.8"
 anyhow = "1.0"
 thiserror = "1.0"
 
-# 正規表現
+# 正規表現・ランダム
 regex = "1.10"
+rand = "0.8"
 
 [dev-dependencies]
 criterion = "0.5"     # ベンチマーク

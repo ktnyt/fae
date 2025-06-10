@@ -26,6 +26,20 @@ pub enum SymbolType {
     Dirname,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DefaultDisplayStrategy {
+    /// Show recently modified files first
+    RecentlyModified,
+    /// Show project important files (README, config files, main files)
+    ProjectImportant,
+    /// Show balanced mix of different symbol types
+    SymbolBalance,
+    /// Show files with most symbols first
+    MostSymbols,
+    /// Show random selection
+    Random,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchOptions {
     pub include_files: Option<bool>,
