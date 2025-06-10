@@ -40,6 +40,7 @@ pub struct TuiApp {
     pub default_strategy: DefaultDisplayStrategy,
     pub indexing_receiver: Option<std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize)>>,
     pub is_indexing: bool,
+    pub indexing_start_time: Option<std::time::Instant>,
 }
 
 impl TuiApp {
@@ -81,6 +82,7 @@ impl TuiApp {
             default_strategy: DefaultDisplayStrategy::RecentlyModified,
             indexing_receiver: None,
             is_indexing: false,
+            indexing_start_time: None,
         }
     }
 
@@ -282,6 +284,7 @@ impl TuiApp {
         // Store receiver for polling in main loop
         self.indexing_receiver = Some(rx);
         self.is_indexing = true;
+        self.indexing_start_time = Some(std::time::Instant::now());
         
         // Update status to indicate background indexing has started
         self.status_message = format!("Indexing {} files in background...", total_files);
@@ -312,8 +315,22 @@ impl TuiApp {
                 
                 // Update status with progress
                 if processed >= total {
-                    self.status_message = format!("Indexing complete! Found {} symbols", self.symbols.len());
+                    // Calculate indexing duration
+                    let duration = if let Some(start_time) = self.indexing_start_time {
+                        start_time.elapsed()
+                    } else {
+                        std::time::Duration::from_secs(0)
+                    };
+                    
+                    let duration_ms = duration.as_millis();
+                    self.status_message = if duration_ms < 1000 {
+                        format!("Indexing complete! Found {} symbols ({}ms)", self.symbols.len(), duration_ms)
+                    } else {
+                        format!("Indexing complete! Found {} symbols ({:.1}s)", self.symbols.len(), duration.as_secs_f64())
+                    };
+                    
                     self.is_indexing = false;
+                    self.indexing_start_time = None;
                     finished = true;
                     break;
                 } else {
