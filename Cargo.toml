@@ -60,3 +60,11 @@ criterion = "0.5"     # ベンチマーク
 tempfile = "3.8"      # テスト用
 mockall = "0.12"      # モック生成
 serial_test = "3.0"   # テスト実行順序制御
+
+[[bench]]
+name = "indexing_performance"
+harness = false
+
+[[bench]]
+name = "search_performance"
+harness = false

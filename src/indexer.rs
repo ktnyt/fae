@@ -43,6 +43,12 @@ impl TreeSitterIndexer {
         self.initialized = true;
         Ok(())
     }
+    
+    // Synchronous version for parallel processing
+    pub fn initialize_sync(&mut self) -> Result<()> {
+        self.initialized = true;
+        Ok(())
+    }
 
     pub async fn index_file(&mut self, file_path: &Path) -> Result<()> {
         if !self.initialized {
@@ -114,6 +120,77 @@ impl TreeSitterIndexer {
 
         self.symbols_cache.insert(file_path.to_path_buf(), symbols);
         Ok(())
+    }
+    
+    // Synchronous version for parallel processing that returns symbols
+    pub fn index_file_sync(&mut self, file_path: &Path) -> Result<Vec<CodeSymbol>> {
+        if !self.initialized {
+            return Err(anyhow!("Indexer not initialized"));
+        }
+
+        // Handle non-existent files gracefully
+        if !file_path.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut symbols = Vec::new();
+
+        // Add filename and dirname symbols
+        if let Some(filename) = file_path.file_name() {
+            symbols.push(CodeSymbol {
+                name: filename.to_string_lossy().to_string(),
+                symbol_type: SymbolType::Filename,
+                file: file_path.to_path_buf(),
+                line: 1,
+                column: 1,
+                context: None,
+            });
+        }
+
+        if let Some(parent) = file_path.parent() {
+            if let Some(dirname) = parent.file_name() {
+                symbols.push(CodeSymbol {
+                    name: dirname.to_string_lossy().to_string(),
+                    symbol_type: SymbolType::Dirname,
+                    file: file_path.to_path_buf(),
+                    line: 1,
+                    column: 1,
+                    context: None,
+                });
+            }
+        }
+
+        // Get file extension for parser selection
+        let extension = file_path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("");
+
+        // For supported extensions, parse the file using regex-based extraction
+        match extension {
+            // Web languages
+            "ts" | "tsx" | "js" | "jsx" | "py" | "php" | "rb" | "ruby" => {
+                if let Ok(source_code) = fs::read_to_string(file_path) {
+                    self.extract_symbols_from_source(&source_code, file_path, &mut symbols);
+                }
+            }
+            // Systems languages
+            "go" | "rs" | "java" | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp" => {
+                if let Ok(source_code) = fs::read_to_string(file_path) {
+                    self.extract_symbols_from_source(&source_code, file_path, &mut symbols);
+                }
+            }
+            // Additional languages (Perl supported via regex patterns)
+            "cs" | "scala" | "pl" | "pm" => {
+                if let Ok(source_code) = fs::read_to_string(file_path) {
+                    self.extract_symbols_from_source(&source_code, file_path, &mut symbols);
+                }
+            }
+            _ => {
+                // Unsupported file extension - just store filename/dirname symbols
+            }
+        }
+
+        Ok(symbols)
     }
 
     fn extract_symbols_from_source(&self, source: &str, file_path: &Path, symbols: &mut Vec<CodeSymbol>) {
@@ -241,6 +318,7 @@ impl TreeSitterIndexer {
 
     async fn index_directory_with_gitignore(&mut self, directory: &Path, patterns: &[String]) -> anyhow::Result<()> {
         use ignore::WalkBuilder;
+        use rayon::prelude::*;
         
         let mut builder = WalkBuilder::new(directory);
         builder.git_ignore(true)       // .gitignore files
@@ -252,6 +330,8 @@ impl TreeSitterIndexer {
                .ignore(true)           // respect .ignore files
                .add_custom_ignore_filename(".ignore"); // custom ignore files
         
+        // Collect all valid file paths first
+        let mut file_paths = Vec::new();
         for entry in builder.build() {
             match entry {
                 Ok(dir_entry) => {
@@ -264,12 +344,8 @@ impl TreeSitterIndexer {
                         }
                     }
                     
-                    if path.is_file() && self.matches_patterns(path, patterns) {
-                        if let Err(e) = self.index_file(path).await {
-                            if self.verbose {
-                                eprintln!("Warning: Failed to index {}: {}", path.display(), e);
-                            }
-                        }
+                    if path.is_file() && self.matches_patterns(path, patterns) && self.should_index_file(path) {
+                        file_paths.push(path.to_path_buf());
                     }
                 }
                 Err(e) => {
@@ -278,6 +354,37 @@ impl TreeSitterIndexer {
                     }
                 }
             }
+        }
+        
+        // Process files in parallel using rayon
+        let verbose = self.verbose;
+        let results: Vec<_> = file_paths
+            .par_iter()
+            .filter_map(|path| {
+                // Create a temporary indexer for parallel processing
+                let mut temp_indexer = TreeSitterIndexer::with_options(verbose, true);
+                if let Err(_) = temp_indexer.initialize_sync() {
+                    if verbose {
+                        eprintln!("Warning: Failed to initialize indexer for {}", path.display());
+                    }
+                    return None;
+                }
+                
+                match temp_indexer.index_file_sync(path) {
+                    Ok(symbols) => Some((path.clone(), symbols)),
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("Warning: Failed to index {}: {}", path.display(), e);
+                        }
+                        None
+                    }
+                }
+            })
+            .collect();
+        
+        // Merge results back into main indexer
+        for (path, symbols) in results {
+            self.symbols_cache.insert(path, symbols);
         }
         
         Ok(())
@@ -328,6 +435,77 @@ impl TreeSitterIndexer {
             }
         }
         false
+    }
+    
+    fn should_index_file(&self, path: &Path) -> bool {
+        // Skip files that are clearly not useful for symbol search
+        
+        // Check file size - skip files larger than 1MB by default
+        const MAX_FILE_SIZE: u64 = 1024 * 1024; // 1MB
+        if let Ok(metadata) = path.metadata() {
+            if metadata.len() > MAX_FILE_SIZE {
+                if self.verbose {
+                    println!("Skipping large file: {} ({} bytes)", path.display(), metadata.len());
+                }
+                return false;
+            }
+        }
+        
+        // Skip binary files and common non-source files
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            let binary_extensions = [
+                // Images
+                "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+                // Archives
+                "zip", "tar", "gz", "bz2", "7z", "rar",
+                // Executables/binaries
+                "exe", "bin", "so", "dylib", "dll", "app",
+                // Media
+                "mp3", "mp4", "avi", "mov", "wmv", "flv",
+                // Documents
+                "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+                // Databases
+                "db", "sqlite", "sqlite3",
+                // Fonts
+                "ttf", "otf", "woff", "woff2",
+                // Build artifacts (common ones not in .gitignore)
+                "o", "obj", "pyc", "class", "jar",
+                // Lock files (often very large)
+                "lock"
+            ];
+            
+            if binary_extensions.contains(&extension.to_lowercase().as_str()) {
+                if self.verbose {
+                    println!("Skipping binary/non-source file: {}", path.display());
+                }
+                return false;
+            }
+        }
+        
+        // Skip files with suspicious names (likely generated/cache)
+        if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+            let suspicious_patterns = [
+                // Temporary files
+                "~", ".tmp", ".temp", ".bak", ".backup",
+                // IDE files
+                ".idea", ".vscode",
+                // OS files
+                ".DS_Store", "Thumbs.db", "desktop.ini",
+                // Log files
+                ".log",
+            ];
+            
+            for pattern in &suspicious_patterns {
+                if filename.contains(pattern) {
+                    if self.verbose {
+                        println!("Skipping suspicious file: {}", path.display());
+                    }
+                    return false;
+                }
+            }
+        }
+        
+        true
     }
 
     pub fn clear_cache(&mut self) {
