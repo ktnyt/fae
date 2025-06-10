@@ -186,17 +186,57 @@ export class TreeSitterIndexer {
 		try {
 			// Language-specific queries - tested working patterns
 			if (languageName === "javascript" || languageName === "typescript") {
-				// Function declarations
+				// Comprehensive function queries
 				try {
+					// Function declarations
 					queries.push({
 						query: new Parser.Query(
 							language,
-							"(function_declaration (identifier) @name)",
+							"(function_declaration name: (identifier) @name)",
 						),
 						type: "function",
 					});
 				} catch (e) {
-					console.debug("Function query failed");
+					console.debug("Function declaration query failed");
+				}
+
+				try {
+					// Method definitions (class methods)
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(method_definition name: (property_identifier) @name)",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("Method definition query failed");
+				}
+
+				try {
+					// Arrow functions assigned to variables
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(variable_declarator name: (identifier) @name value: (arrow_function))",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("Arrow function query failed");
+				}
+
+				try {
+					// Function expressions assigned to variables
+					queries.push({
+						query: new Parser.Query(
+							language,
+							"(variable_declarator name: (identifier) @name value: (function_expression))",
+						),
+						type: "function",
+					});
+				} catch (e) {
+					console.debug("Function expression query failed");
 				}
 
 				// Class declarations

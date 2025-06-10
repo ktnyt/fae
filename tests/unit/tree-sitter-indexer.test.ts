@@ -26,9 +26,14 @@ describe("TreeSitterIndexer", () => {
 			expect(symbols.some(s => s.name === "sample.ts" && s.type === "filename")).toBe(true);
 			expect(symbols.some(s => s.name === "fixtures" && s.type === "dirname")).toBe(true);
 
-			// Tree-sitter class/interface queries are failing, so check for successfully extracted symbols
-			// Functions are working partially
-			expect(symbols.some(s => s.name === "formatUserName")).toBe(true);
+			// Tree-sitter class/interface queries are failing, but function queries now work well
+			// Functions should be extracted comprehensively (declarations, methods, arrow functions)
+			expect(symbols.some(s => s.name === "formatUserName" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "addUser" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "findUserById" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "constructor" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "userCount" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "internalHelper" && s.type === "function")).toBe(true);
 			
 			// Variables/constants are extracted as identifiers
 			expect(symbols.some(s => s.name === "DEFAULT_TIMEOUT")).toBe(true);
@@ -51,15 +56,19 @@ describe("TreeSitterIndexer", () => {
 			await indexer.indexFile(filePath);
 			const symbols = indexer.getSymbolsByFile(filePath);
 
-			// Check for class (may be found as identifier due to Tree-sitter query failures)
+			// Check for class (class queries still failing, but should be found as identifier)
 			expect(symbols.some(s => s.name === "Calculator")).toBe(true);
 
-			// Check for functions (may be found as identifier due to Tree-sitter query failures)  
-			expect(symbols.some(s => s.name === "createCalculator")).toBe(true);
+			// Check for functions (should now be extracted as proper function types)
+			expect(symbols.some(s => s.name === "createCalculator" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "constructor" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "add" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "multiply" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "getValue" && s.type === "function")).toBe(true);
+			expect(symbols.some(s => s.name === "helper" && s.type === "function")).toBe(true);
 
 			// Check for constants/variables
 			expect(symbols.some(s => s.name === "API_BASE_URL")).toBe(true);
-			expect(symbols.some(s => s.name === "helper")).toBe(true);
 		});
 	});
 
@@ -79,6 +88,54 @@ describe("TreeSitterIndexer", () => {
 			// Check for constants/variables
 			expect(symbols.some(s => s.name === "MAX_ITEMS")).toBe(true);
 			expect(symbols.some(s => s.name === "counter")).toBe(true);
+		});
+	});
+
+	describe("comprehensive function extraction", () => {
+		test("should extract all function types from TypeScript", async () => {
+			const filePath = resolve(fixturesPath, "sample.ts");
+			await indexer.indexFile(filePath);
+			const symbols = indexer.getSymbolsByFile(filePath);
+			
+			const functions = symbols.filter(s => s.type === "function");
+			
+			// Should find all 6 function types
+			expect(functions.length).toBe(6);
+			
+			// Function declaration
+			expect(functions.some(f => f.name === "formatUserName")).toBe(true);
+			
+			// Class methods (including constructor)
+			expect(functions.some(f => f.name === "constructor")).toBe(true);
+			expect(functions.some(f => f.name === "addUser")).toBe(true);
+			expect(functions.some(f => f.name === "findUserById")).toBe(true);
+			expect(functions.some(f => f.name === "userCount")).toBe(true);
+			
+			// Arrow function
+			expect(functions.some(f => f.name === "internalHelper")).toBe(true);
+		});
+
+		test("should extract all function types from JavaScript", async () => {
+			const filePath = resolve(fixturesPath, "sample.js");
+			await indexer.indexFile(filePath);
+			const symbols = indexer.getSymbolsByFile(filePath);
+			
+			const functions = symbols.filter(s => s.type === "function");
+			
+			// Should find all 6 function types
+			expect(functions.length).toBe(6);
+			
+			// Function declaration
+			expect(functions.some(f => f.name === "createCalculator")).toBe(true);
+			
+			// Class methods (including constructor)
+			expect(functions.some(f => f.name === "constructor")).toBe(true);
+			expect(functions.some(f => f.name === "add")).toBe(true);
+			expect(functions.some(f => f.name === "multiply")).toBe(true);
+			expect(functions.some(f => f.name === "getValue")).toBe(true);
+			
+			// Arrow function
+			expect(functions.some(f => f.name === "helper")).toBe(true);
 		});
 	});
 

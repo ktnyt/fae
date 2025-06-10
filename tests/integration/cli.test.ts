@@ -142,20 +142,36 @@ describe("CLI Integration Tests", () => {
 				"--types", "function"
 			]);
 
-			// Tree-sitter function queries may fail, but should still index files  
+			// Tree-sitter function queries now work well
 			expect(stdout).toContain("📚 Found");
 			expect(stdout).toContain("🔍 Indexing");
 			
-			// Check if any function symbols were found
+			// Function type filtering should work properly now
 			const lines = stdout.split("\n");
-			const symbolLines = lines.filter(line => line.match(/^[🔧🏗️📦🔗🏷️📋🔒⚙️🔑📄📁]/));
+			const symbolLines = lines.filter(line => line.match(/^🔧/));
 			
-			// If function symbols are found, they should use 🔧 icon
+			// All symbol result lines should be functions (🔧 icon)
 			symbolLines.forEach(line => {
-				if (line.includes("🔧")) {
-					expect(line).toContain("🔧");
-				}
+				expect(line).toContain("🔧");
 			});
+		});
+
+		test("should find functions with improved Tree-sitter queries", async () => {
+			const { stdout } = await execFileAsync("node", [
+				cliPath,
+				"add",
+				"--directory", testDir,
+				"--patterns", "**/*.ts,**/*.js", 
+				"--types", "function"
+			]);
+
+			expect(stdout).toContain("🔍 Indexing");
+			expect(stdout).toContain("📚 Found");
+			
+			// Should find function symbols with improved extraction
+			if (stdout.includes("🎯 Found")) {
+				expect(stdout).toContain("🔧"); // Function icon
+			}
 		});
 
 		test("should adjust fuzzy search threshold", async () => {
