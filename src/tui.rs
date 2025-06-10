@@ -38,6 +38,8 @@ pub struct TuiApp {
     pub show_help: bool,
     pub status_message: String,
     pub default_strategy: DefaultDisplayStrategy,
+    pub indexing_receiver: Option<std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize)>>,
+    pub is_indexing: bool,
 }
 
 impl TuiApp {
@@ -77,6 +79,8 @@ impl TuiApp {
             show_help: false,
             status_message: "Ready".to_string(),
             default_strategy: DefaultDisplayStrategy::RecentlyModified,
+            indexing_receiver: None,
+            is_indexing: false,
         }
     }
 
@@ -93,9 +97,8 @@ impl TuiApp {
         self.show_default_results();
         self.status_message = format!("Found {} files, indexing symbols...", file_list.len());
         
-        // Phase 2: Progressive symbol indexing in background
-        // This will be implemented in the next step
-        self.start_progressive_indexing(directory, verbose, respect_gitignore, file_list).await?;
+        // Phase 2: Start progressive symbol indexing in background (non-blocking)
+        self.start_progressive_indexing(directory, verbose, respect_gitignore, file_list);
         
         Ok(())
     }
@@ -214,7 +217,7 @@ impl TuiApp {
     }
     
     // Progressive indexing in background while UI remains responsive
-    async fn start_progressive_indexing(&mut self, _directory: &std::path::Path, verbose: bool, _respect_gitignore: bool, file_list: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    fn start_progressive_indexing(&mut self, _directory: &std::path::Path, verbose: bool, _respect_gitignore: bool, file_list: Vec<std::path::PathBuf>) {
         use crate::indexer::TreeSitterIndexer;
         use std::sync::mpsc;
         use std::thread;
@@ -276,37 +279,53 @@ impl TuiApp {
             }
         });
         
+        // Store receiver for polling in main loop
+        self.indexing_receiver = Some(rx);
+        self.is_indexing = true;
+        
         // Update status to indicate background indexing has started
         self.status_message = format!("Indexing {} files in background...", total_files);
-        
-        // Note: In a real implementation, we would need to poll the receiver
-        // during the event loop to update symbols progressively. For now,
-        // we'll wait for completion to maintain the existing API.
-        let mut all_symbols = self.symbols.clone();
-        
-        while let Ok((new_symbols, progress, processed, total)) = rx.recv() {
-            // Add new symbols to our collection
-            all_symbols.extend(new_symbols);
-            
-            // Update status with progress
-            self.status_message = format!("Indexing progress: {}/{} files ({}%)", processed, total, progress);
-            
-            // Break when all files are processed
-            if processed >= total {
-                break;
-            }
+    }
+    
+    // Check for background indexing updates (non-blocking)
+    pub fn update_indexing_progress(&mut self) {
+        if !self.is_indexing {
+            return;
         }
         
-        // Update symbols and searcher with complete index
-        self.symbols = all_symbols;
-        self.searcher = Some(crate::searcher::FuzzySearcher::new(self.symbols.clone()));
-        
-        // Update default results with newly indexed symbols
-        self.show_default_results();
-        
-        self.status_message = format!("Indexing complete! Found {} symbols", self.symbols.len());
-        
-        Ok(())
+        // Take receiver temporarily to avoid borrowing issues
+        if let Some(receiver) = self.indexing_receiver.take() {
+            let mut finished = false;
+            
+            // Use try_recv to avoid blocking - this is key for non-spinning behavior
+            while let Ok((new_symbols, progress, processed, total)) = receiver.try_recv() {
+                // Add new symbols to our collection
+                self.symbols.extend(new_symbols);
+                
+                // Update searcher with new symbols
+                self.searcher = Some(crate::searcher::FuzzySearcher::new(self.symbols.clone()));
+                
+                // Update default results if query is empty
+                if self.query.trim().is_empty() {
+                    self.show_default_results();
+                }
+                
+                // Update status with progress
+                if processed >= total {
+                    self.status_message = format!("Indexing complete! Found {} symbols", self.symbols.len());
+                    self.is_indexing = false;
+                    finished = true;
+                    break;
+                } else {
+                    self.status_message = format!("Indexing progress: {}/{} files ({}%)", processed, total, progress);
+                }
+            }
+            
+            // Put receiver back if not finished
+            if !finished {
+                self.indexing_receiver = Some(receiver);
+            }
+        }
     }
 
     fn detect_search_mode(&self, query: &str) -> SearchMode {
@@ -805,6 +824,9 @@ async fn run_app<B: ratatui::backend::Backend>(
     app: &mut TuiApp,
 ) -> anyhow::Result<()> {
     loop {
+        // Update indexing progress from background thread (non-blocking)
+        app.update_indexing_progress();
+        
         terminal.draw(|f| app.render(f))?;
 
         if app.should_quit {
