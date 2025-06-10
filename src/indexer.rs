@@ -243,15 +243,27 @@ impl TreeSitterIndexer {
         use ignore::WalkBuilder;
         
         let mut builder = WalkBuilder::new(directory);
-        builder.git_ignore(true)
-               .git_global(true)
-               .git_exclude(true)
-               .hidden(false); // Show hidden files but respect .gitignore
+        builder.git_ignore(true)       // .gitignore files
+               .git_global(true)       // global .gitignore
+               .git_exclude(true)      // .git/info/exclude
+               .require_git(false)     // don't require git repo
+               .hidden(false)          // show hidden files but respect .gitignore
+               .parents(true)          // respect parent .gitignore files
+               .ignore(true)           // respect .ignore files
+               .add_custom_ignore_filename(".ignore"); // custom ignore files
         
         for entry in builder.build() {
             match entry {
                 Ok(dir_entry) => {
                     let path = dir_entry.path();
+                    
+                    // Skip .git directory and other common build/cache directories
+                    if let Some(path_str) = path.to_str() {
+                        if path_str.contains("/.git/") || path_str.ends_with("/.git") {
+                            continue;
+                        }
+                    }
+                    
                     if path.is_file() && self.matches_patterns(path, patterns) {
                         if let Err(e) = self.index_file(path).await {
                             if self.verbose {
