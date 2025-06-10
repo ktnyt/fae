@@ -3,6 +3,12 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::fs;
 use anyhow::{Result, anyhow};
+use regex::Regex;
+use std::sync::OnceLock;
+
+// Pre-compiled regex patterns for performance
+static FUNCTION_PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+static IDENTIFIER_PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
 
 pub struct TreeSitterIndexer {
     symbols_cache: HashMap<PathBuf, Vec<CodeSymbol>>,
@@ -46,8 +52,75 @@ impl TreeSitterIndexer {
     
     // Synchronous version for parallel processing
     pub fn initialize_sync(&mut self) -> Result<()> {
+        // Initialize regex patterns on first use
+        Self::init_regex_patterns();
         self.initialized = true;
         Ok(())
+    }
+
+    // Initialize pre-compiled regex patterns
+    fn init_regex_patterns() {
+        FUNCTION_PATTERNS.get_or_init(|| {
+            let patterns = [
+                // Regular function declarations
+                (r"^\s*function\s+(\w+)", "function"),
+                (r"^\s*export\s+function\s+(\w+)", "function"),
+                (r"^\s*async\s+function\s+(\w+)", "function"),
+                (r"^\s*export\s+async\s+function\s+(\w+)", "function"),
+                
+                // Getters and setters (check before general methods)
+                (r"^\s*get\s+(\w+)\s*\(\s*\)", "getter"),
+                (r"^\s*set\s+(\w+)\s*\([^)]*\)", "setter"),
+                
+                // Class methods (including constructor and async methods)
+                (r"^\s*async\s+(\w+)\s*\([^)]*\)", "async_method"),
+                (r"^\s*(\w+)\s*\([^)]*\)", "method"),
+                
+                // Arrow functions
+                (r"^\s*const\s+(\w+)\s*=.*?=>", "arrow"),
+                (r"^\s*let\s+(\w+)\s*=.*?=>", "arrow"),
+                (r"^\s*var\s+(\w+)\s*=.*?=>", "arrow"),
+                
+                // Python functions
+                (r"^\s*def\s+(\w+)", "python_function"),
+            ];
+            
+            patterns.iter().filter_map(|(pattern, type_name)| {
+                Regex::new(pattern).ok().map(|regex| (regex, *type_name))
+            }).collect()
+        });
+        
+        IDENTIFIER_PATTERNS.get_or_init(|| {
+            let patterns = [
+                // TypeScript/JavaScript constants
+                (r"^\s*const\s+([A-Z_][A-Z0-9_]*)", "constant"),
+                (r"^\s*export\s+const\s+([A-Z_][A-Z0-9_]*)", "constant"),
+                
+                // Python constants (all caps assignment)
+                (r"^\s*([A-Z_][A-Z0-9_]*)\s*=", "python_constant"),
+                
+                // Variables
+                (r"^\s*let\s+(\w+)", "variable"),
+                (r"^\s*var\s+(\w+)", "variable"),
+                (r"^\s*(\w+)\s*=", "assignment"), // General assignment (lower priority)
+                
+                // Classes
+                (r"^\s*class\s+(\w+)", "class"),
+                (r"^\s*export\s+class\s+(\w+)", "class"),
+                
+                // TypeScript specific
+                (r"^\s*interface\s+(\w+)", "interface"),
+                (r"^\s*export\s+interface\s+(\w+)", "interface"),
+                (r"^\s*enum\s+(\w+)", "enum"),
+                (r"^\s*export\s+enum\s+(\w+)", "enum"),
+                (r"^\s*type\s+(\w+)", "type"),
+                (r"^\s*export\s+type\s+(\w+)", "type"),
+            ];
+            
+            patterns.iter().filter_map(|(pattern, type_name)| {
+                Regex::new(pattern).ok().map(|regex| (regex, *type_name))
+            }).collect()
+        });
     }
 
     pub async fn index_file(&mut self, file_path: &Path) -> Result<()> {
@@ -240,8 +313,7 @@ impl TreeSitterIndexer {
     }
 
     fn extract_symbols_from_source(&self, source: &str, file_path: &Path, symbols: &mut Vec<CodeSymbol>) {
-        // Enhanced regex-based extraction for testing purposes
-        use regex::Regex;
+        // Use pre-compiled regex patterns for much better performance
         
         for (line_num, line) in source.lines().enumerate() {
             let trimmed_line = line.trim();
@@ -251,34 +323,10 @@ impl TreeSitterIndexer {
                 continue;
             }
             
-            // Extract different types of functions
-            let function_patterns = [
-                // Regular function declarations
-                (r"^\s*function\s+(\w+)", "function"),
-                (r"^\s*export\s+function\s+(\w+)", "function"),
-                (r"^\s*async\s+function\s+(\w+)", "function"),
-                (r"^\s*export\s+async\s+function\s+(\w+)", "function"),
-                
-                // Getters and setters (check before general methods)
-                (r"^\s*get\s+(\w+)\s*\(\s*\)", "getter"),
-                (r"^\s*set\s+(\w+)\s*\([^)]*\)", "setter"),
-                
-                // Class methods (including constructor and async methods)
-                (r"^\s*async\s+(\w+)\s*\([^)]*\)", "async_method"),
-                (r"^\s*(\w+)\s*\([^)]*\)", "method"),
-                
-                // Arrow functions
-                (r"^\s*const\s+(\w+)\s*=.*?=>", "arrow"),
-                (r"^\s*let\s+(\w+)\s*=.*?=>", "arrow"),
-                (r"^\s*var\s+(\w+)\s*=.*?=>", "arrow"),
-                
-                // Python functions
-                (r"^\s*def\s+(\w+)", "python_function"),
-            ];
-            
-            for (pattern, _func_type) in &function_patterns {
-                if let Ok(re) = Regex::new(pattern) {
-                    if let Some(cap) = re.captures(trimmed_line) {
+            // Extract functions using pre-compiled patterns
+            if let Some(function_patterns) = FUNCTION_PATTERNS.get() {
+                for (regex, _func_type) in function_patterns {
+                    if let Some(cap) = regex.captures(trimmed_line) {
                         if let Some(name) = cap.get(1) {
                             let function_name = name.as_str();
                             // Accept all function names, including short ones like 'add'
@@ -291,42 +339,17 @@ impl TreeSitterIndexer {
                                     column: name.start() + 1,
                                     context: None,
                                 });
+                                // Continue checking for more patterns on the same line
                             }
                         }
                     }
                 }
             }
             
-            // Extract identifiers (constants, variables, classes)
-            let identifier_patterns = [
-                // TypeScript/JavaScript constants
-                (r"^\s*const\s+([A-Z_][A-Z0-9_]*)", "constant"),
-                (r"^\s*export\s+const\s+([A-Z_][A-Z0-9_]*)", "constant"),
-                
-                // Python constants (all caps assignment)
-                (r"^\s*([A-Z_][A-Z0-9_]*)\s*=", "python_constant"),
-                
-                // Variables
-                (r"^\s*let\s+(\w+)", "variable"),
-                (r"^\s*var\s+(\w+)", "variable"),
-                (r"^\s*(\w+)\s*=", "assignment"), // General assignment (lower priority)
-                
-                // Classes
-                (r"^\s*class\s+(\w+)", "class"),
-                (r"^\s*export\s+class\s+(\w+)", "class"),
-                
-                // TypeScript specific
-                (r"^\s*interface\s+(\w+)", "interface"),
-                (r"^\s*export\s+interface\s+(\w+)", "interface"),
-                (r"^\s*enum\s+(\w+)", "enum"),
-                (r"^\s*export\s+enum\s+(\w+)", "enum"),
-                (r"^\s*type\s+(\w+)", "type"),
-                (r"^\s*export\s+type\s+(\w+)", "type"),
-            ];
-            
-            for (pattern, _id_type) in &identifier_patterns {
-                if let Ok(re) = Regex::new(pattern) {
-                    if let Some(cap) = re.captures(trimmed_line) {
+            // Extract identifiers using pre-compiled patterns
+            if let Some(identifier_patterns) = IDENTIFIER_PATTERNS.get() {
+                for (regex, _id_type) in identifier_patterns {
+                    if let Some(cap) = regex.captures(trimmed_line) {
                         if let Some(name) = cap.get(1) {
                             let identifier_name = name.as_str();
                             if identifier_name.len() > 2 {
@@ -338,6 +361,7 @@ impl TreeSitterIndexer {
                                     column: name.start() + 1,
                                     context: None,
                                 });
+                                // Continue checking for more patterns on the same line
                             }
                         }
                     }
