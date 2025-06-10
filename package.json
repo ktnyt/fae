@@ -15,9 +15,18 @@
 		"format": "biome format --write .",
 		"lint": "biome lint .",
 		"typecheck": "tsc --noEmit",
-		"test": "echo \"Error: no test specified\" && exit 1"
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:ui": "vitest --ui",
+		"test:coverage": "vitest run --coverage"
 	},
-	"keywords": ["fuzzy", "search", "code", "symbols", "cli"],
+	"keywords": [
+		"fuzzy",
+		"search",
+		"code",
+		"symbols",
+		"cli"
+	],
 	"author": "ktnyt",
 	"license": "MIT",
 	"dependencies": {
@@ -32,8 +41,11 @@
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
 		"@types/node": "^24.0.0",
+		"@vitest/ui": "^3.2.3",
+		"c8": "^10.1.3",
 		"tsx": "^4.19.4",
-		"typescript": "^5.8.3"
+		"typescript": "^5.8.3",
+		"vitest": "^3.2.3"
 	},
 	"engines": {
 		"node": ">=18.0.0"
