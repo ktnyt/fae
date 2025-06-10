@@ -12,6 +12,8 @@ fn get_cli_binary_path() -> PathBuf {
 fn run_cli(args: &[&str]) -> (i32, String, String) {
     let output = Command::new("cargo")
         .arg("run")
+        .arg("--bin")
+        .arg("sfs")
         .arg("--")
         .args(args)
         .output()

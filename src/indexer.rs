@@ -46,6 +46,8 @@ impl TreeSitterIndexer {
     }
 
     pub async fn initialize(&mut self) -> Result<()> {
+        // Initialize regex patterns on first use
+        Self::init_regex_patterns();
         self.initialized = true;
         Ok(())
     }
