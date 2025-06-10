@@ -59,8 +59,8 @@ export class PecoInterface {
 			title: "Symbol Fuzzy Search - Interactive Mode",
 		});
 
-		// Create search input box
-		this.searchBox = blessed.textbox({
+		// Create search input box using textarea for better key control
+		this.searchBox = blessed.textarea({
 			parent: this.screen,
 			top: 0,
 			left: 0,
@@ -81,6 +81,8 @@ export class PecoInterface {
 			},
 			label: ` ${this.currentSearchMode.icon} ${this.currentSearchMode.name} Search `,
 			inputOnFocus: true,
+			keys: true,
+			mouse: true,
 		});
 
 		// Create results list
@@ -121,7 +123,7 @@ export class PecoInterface {
 			left: 0,
 			width: "100%",
 			height: 1,
-			content: `${this.symbols.length} symbols | 🔍 Fuzzy Mode | Ctrl+C: Exit | Enter: Select | ↑↓: Navigate | ?: Help`,
+			content: `${this.symbols.length} symbols | 🔍 Fuzzy Mode | Ctrl+C: Exit | Enter: Select | ↑↓/C-p/C-n: Navigate | ?: Help`,
 			style: {
 				bg: "blue",
 				fg: "white",
@@ -142,18 +144,28 @@ export class PecoInterface {
 			this.showHelp();
 		});
 
-		this.screen.key(["enter"], () => {
+		// Handle enter key at screen level and searchBox level
+		const handleEnter = () => {
 			this.selectCurrentResult();
+		};
+
+		this.screen.key(["enter"], handleEnter);
+		
+		// Also register on searchBox to intercept enter key
+		this.searchBox.key(["enter"], (ch: any, key: any) => {
+			handleEnter();
+			return false; // Prevent default behavior
 		});
 
-		this.screen.key(["up", "k"], () => {
+		// Override key handling for navigation even when searchBox has focus
+		const handleUp = () => {
 			if (this.currentResults.length > 0) {
 				this.selectedIndex = Math.max(0, this.selectedIndex - 1);
 				this.updateResultsDisplay();
 			}
-		});
+		};
 
-		this.screen.key(["down", "j"], () => {
+		const handleDown = () => {
 			if (this.currentResults.length > 0) {
 				this.selectedIndex = Math.min(
 					this.currentResults.length - 1,
@@ -161,6 +173,21 @@ export class PecoInterface {
 				);
 				this.updateResultsDisplay();
 			}
+		};
+
+		// Register handlers at screen level
+		this.screen.key(["up", "k", "C-p"], handleUp);
+		this.screen.key(["down", "j", "C-n"], handleDown);
+
+		// Also register on searchBox to intercept keys
+		this.searchBox.key(["up", "k", "C-p"], (ch: any, key: any) => {
+			handleUp();
+			return false; // Prevent default behavior
+		});
+
+		this.searchBox.key(["down", "j", "C-n"], (ch: any, key: any) => {
+			handleDown();
+			return false; // Prevent default behavior
 		});
 
 		this.screen.key(["pageup"], () => {
@@ -185,25 +212,18 @@ export class PecoInterface {
 			this.selectCurrentResult();
 		});
 
-		// Real-time search on input change
-		this.searchBox.on("keypress", (ch: string, key: any) => {
-			// Skip navigation keys that are handled globally
-			if (key.name === "up" || key.name === "down" || key.name === "enter") {
-				return;
-			}
-
-			// Handle input changes with debouncing
-			if (this.searchTimeout) {
-				clearTimeout(this.searchTimeout);
-			}
-			
-			this.searchTimeout = setTimeout(() => {
+		// Handle text input changes
+		let lastValue = "";
+		this.searchBox.on("keypress", () => {
+			// Use a small delay to let blessed update the value
+			setTimeout(() => {
 				const currentValue = this.searchBox.getValue();
-				if (currentValue !== this.query) {
+				if (currentValue !== lastValue) {
+					lastValue = currentValue;
 					this.query = currentValue;
 					this.performSearch(this.query);
 				}
-			}, 50); // 50ms debounce
+			}, 10);
 		});
 
 		// Results list handlers
@@ -396,7 +416,7 @@ export class PecoInterface {
 		
 		const modeInfo = `${this.currentSearchMode.icon} ${this.currentSearchMode.name} Mode`;
 		this.statusBar.setContent(
-			`${totalSymbols} symbols | ${resultCount} results${selectedInfo} | ${modeInfo} | Ctrl+C: Exit | Enter: Select | ↑↓: Navigate | ?: Help`,
+			`${totalSymbols} symbols | ${resultCount} results${selectedInfo} | ${modeInfo} | Ctrl+C: Exit | Enter: Select | ↑↓/C-p/C-n: Navigate | ?: Help`,
 		);
 
 		this.screen.render();
@@ -463,7 +483,7 @@ export class PecoInterface {
 Keyboard Shortcuts:
 
 Type to search               - Filter symbols in real-time
-↑/↓ or j/k                  - Navigate results
+↑/↓ or j/k or C-p/C-n       - Navigate results
 Page Up/Page Down           - Fast navigation
 Enter                       - Select symbol
 Ctrl+C or Escape            - Exit
