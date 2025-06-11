@@ -1,4 +1,4 @@
-use sfs_rs::indexer::TreeSitterIndexer;
+use sfs::indexer::TreeSitterIndexer;
 use std::path::Path;
 use std::time::Instant;
 use std::env;

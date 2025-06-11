@@ -1,5 +1,5 @@
-use sfs_rs::types::{CodeSymbol, SymbolType, SearchOptions};
-use sfs_rs::searcher::FuzzySearcher;
+use sfs::types::{CodeSymbol, SymbolType, SearchOptions};
+use sfs::searcher::FuzzySearcher;
 use std::path::PathBuf;
 
 // Mock TUI interface for testing purposes

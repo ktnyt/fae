@@ -1,8 +1,8 @@
 // .gitignore機能のテストケース
 // indexer.rsの respect_gitignore フラグの動作を検証
 
-use sfs_rs::types::*;
-use sfs_rs::indexer::TreeSitterIndexer;
+use sfs::types::*;
+use sfs::indexer::TreeSitterIndexer;
 use tempfile::TempDir;
 use std::fs;
 

@@ -91,48 +91,8 @@ impl TreeSitterIndexer {
     
     // Public synchronous method for extracting symbols without caching
     pub fn extract_symbols_sync(&self, file_path: &Path, verbose: bool) -> Result<Vec<CodeSymbol>> {
-        // Handle non-existent files gracefully
-        if !file_path.exists() {
-            return Ok(vec![]);
-        }
-
-        let mut symbols = Vec::new();
-
-        // Get file extension for parser selection
-        let extension = file_path.extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
-
-        // For supported extensions, parse the file using Tree-sitter
-        match extension {
-            // Web languages
-            "ts" | "tsx" | "js" | "jsx" | "py" | "php" | "rb" | "ruby" => {
-                if let Ok(source_code) = fs::read_to_string(file_path) {
-                    if let Ok(extracted) = self.symbol_extractor.extract_symbols(&source_code, file_path) {
-                        symbols.extend(extracted);
-                    }
-                }
-            }
-            // Systems languages
-            "go" | "rs" | "java" | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp" => {
-                if let Ok(source_code) = fs::read_to_string(file_path) {
-                    if let Ok(extracted) = self.symbol_extractor.extract_symbols(&source_code, file_path) {
-                        symbols.extend(extracted);
-                    }
-                }
-            }
-            // Additional languages
-            "cs" | "scala" | "pl" | "pm" => {
-                if let Ok(source_code) = fs::read_to_string(file_path) {
-                    if let Ok(extracted) = self.symbol_extractor.extract_symbols(&source_code, file_path) {
-                        symbols.extend(extracted);
-                    }
-                }
-            }
-            _ => {
-                // Unsupported file extension - no code symbols
-            }
-        }
+        // Use create_file_symbols to get complete symbols including filename/dirname
+        let symbols = self.create_file_symbols(file_path)?;
 
         if verbose && !symbols.is_empty() {
             eprintln!("Extracted {} symbols from {}", symbols.len(), file_path.display());

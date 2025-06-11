@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use sfs_rs::{indexer::TreeSitterIndexer, searcher::FuzzySearcher, types::*, tui::run_tui};
+use sfs::{indexer::TreeSitterIndexer, searcher::FuzzySearcher, types::*, tui::run_tui};
 use std::path::PathBuf;
 
 #[derive(Parser, Clone)]

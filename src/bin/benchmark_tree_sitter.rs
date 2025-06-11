@@ -2,7 +2,7 @@ use std::time::Instant;
 use std::path::Path;
 use tree_sitter::{Parser, Query, QueryCursor};
 use anyhow::Result;
-use sfs_rs::indexer::TreeSitterIndexer;
+use sfs::indexer::TreeSitterIndexer;
 
 fn benchmark_tree_sitter_parsing(file_path: &Path) -> Result<()> {
     println!("🔍 Benchmarking Tree-sitter vs Regex for: {}", file_path.display());

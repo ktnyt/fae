@@ -1,5 +1,5 @@
-use sfs_rs::searcher::FuzzySearcher;
-use sfs_rs::types::*;
+use sfs::searcher::FuzzySearcher;
+use sfs::types::*;
 use std::path::PathBuf;
 
 fn create_test_symbols() -> Vec<CodeSymbol> {

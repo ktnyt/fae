@@ -1,7 +1,7 @@
 // TypeScript types.test.ts をRustに移植
 // 目標: 8つのテストすべてをパスする
 
-use sfs_rs::types::*;
+use sfs::types::*;
 use std::path::PathBuf;
 
 #[cfg(test)]

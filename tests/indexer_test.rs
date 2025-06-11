@@ -1,8 +1,8 @@
 // TypeScript tree-sitter-indexer.test.ts をRustに移植
 // 目標: 10つのテストすべてをパスする
 
-use sfs_rs::types::*;
-use sfs_rs::indexer::TreeSitterIndexer;
+use sfs::types::*;
+use sfs::indexer::TreeSitterIndexer;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 use std::io::Write;

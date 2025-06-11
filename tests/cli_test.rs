@@ -6,7 +6,7 @@ use tempfile::tempdir;
 fn get_cli_binary_path() -> PathBuf {
     // In real usage, this would be the actual binary path
     // For testing, we'll use cargo run
-    PathBuf::from("target/debug/sfs-rs")
+    PathBuf::from("target/debug/sfs")
 }
 
 fn run_cli(args: &[&str]) -> (i32, String, String) {

@@ -1,8 +1,8 @@
 // TypeScript fuzzy-searcher.test.ts をRustに移植
 // 目標: 15つのテストすべてをパスする
 
-use sfs_rs::types::*;
-use sfs_rs::searcher::FuzzySearcher;
+use sfs::types::*;
+use sfs::searcher::FuzzySearcher;
 use std::path::PathBuf;
 
 // Mock symbols for testing (TypeScriptテストと同じデータ)
