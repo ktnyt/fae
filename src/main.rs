@@ -57,6 +57,18 @@ struct Cli {
     /// Disable real-time file watching
     #[arg(long)]
     no_watch: bool,
+    
+    /// Disable index cache loading and saving (force full re-index)
+    #[arg(long)]
+    no_cache: bool,
+    
+    /// Clear existing cache and rebuild from scratch
+    #[arg(long)]
+    clear_cache: bool,
+    
+    /// Display cache statistics and status information
+    #[arg(long)]
+    cache_info: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -95,6 +107,55 @@ impl From<SymbolTypeArg> for SymbolType {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    
+    // Handle cache operations
+    if cli.cache_info {
+        let mut indexer = TreeSitterIndexer::with_options(cli.verbose, !cli.include_ignored);
+        match indexer.load_cache(&cli.directory) {
+            Ok(stats) => {
+                println!("📊 Cache Statistics:");
+                println!("  Total files: {}", stats.total_files);
+                println!("  Total symbols: {}", stats.total_symbols);
+                println!("  Cache created: {}", stats.cache_created);
+                println!("  SFS version: {}", stats.sfs_version);
+                
+                // Check for both compressed and uncompressed cache files
+                let compressed_cache_path = cli.directory.join(".sfscache.gz");
+                let uncompressed_cache_path = cli.directory.join(".sfscache");
+                
+                if compressed_cache_path.exists() {
+                    if let Ok(metadata) = std::fs::metadata(&compressed_cache_path) {
+                        println!("  Cache file size: {} bytes (compressed)", metadata.len());
+                    }
+                    println!("  Cache location: {} (compressed)", compressed_cache_path.display());
+                } else if uncompressed_cache_path.exists() {
+                    if let Ok(metadata) = std::fs::metadata(&uncompressed_cache_path) {
+                        println!("  Cache file size: {} bytes (uncompressed)", metadata.len());
+                    }
+                    println!("  Cache location: {} (uncompressed)", uncompressed_cache_path.display());
+                } else {
+                    println!("  No cache file found");
+                }
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to load cache info: {}", e);
+            }
+        }
+        return Ok(());
+    }
+    
+    if cli.clear_cache {
+        let indexer = TreeSitterIndexer::with_options(cli.verbose, !cli.include_ignored);
+        match indexer.delete_cache_file(&cli.directory) {
+            Ok(()) => {
+                println!("🗑️  Cache cleared successfully");
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to clear cache: {}", e);
+            }
+        }
+        return Ok(());
+    }
     
     // Determine watch mode: --no-watch disables, --watch explicitly enables, default is enabled
     let watch_enabled = if cli.watch && cli.no_watch {
@@ -141,11 +202,45 @@ async fn perform_search(cli: Cli, query: String) -> anyhow::Result<()> {
     
     // Initialize indexer
     let mut indexer = TreeSitterIndexer::with_options(cli.verbose, !cli.include_ignored);
+    
+    // Configure cache based on CLI flags
+    if cli.no_cache {
+        indexer.set_cache_enabled(false);
+        if cli.verbose {
+            println!("📦 Cache disabled");
+        }
+    } else {
+        // Load existing cache if available
+        match indexer.load_cache(&cli.directory) {
+            Ok(stats) => {
+                if cli.verbose && stats.total_files > 0 {
+                    println!("📦 Loaded cache: {} files, {} symbols", stats.total_files, stats.total_symbols);
+                }
+            }
+            Err(e) => {
+                if cli.verbose {
+                    println!("📦 No cache available: {}", e);
+                }
+            }
+        }
+    }
+    
     indexer.initialize().await?;
     
     // Index directory - now supports all file types
     let patterns = vec!["**/*".to_string()];
     indexer.index_directory(&cli.directory, &patterns).await?;
+    
+    // Save cache if enabled
+    if !cli.no_cache {
+        if let Err(e) = indexer.save_cache(&cli.directory) {
+            if cli.verbose {
+                eprintln!("⚠️ Failed to save cache: {}", e);
+            }
+        } else if cli.verbose {
+            println!("💾 Cache saved");
+        }
+    }
     
     let all_symbols = indexer.get_all_symbols();
     if cli.verbose {

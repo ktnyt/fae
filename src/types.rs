@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,4 +87,91 @@ pub enum WatchEventKind {
     Modified,
     Deleted,
     Renamed { from: PathBuf, to: PathBuf },
+}
+
+/// Cache entry for a single file containing hash and symbols
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CachedFile {
+    /// SHA-256 hash of file content
+    pub hash: String,
+    /// Timestamp when this cache entry was created
+    pub last_modified: String, // ISO 8601 format
+    /// Symbols extracted from this file
+    pub symbols: Vec<CodeSymbol>,
+    /// File size in bytes for additional validation
+    pub size: u64,
+}
+
+/// Index cache data structure for .sfscache file
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndexCache {
+    /// Cache format version for compatibility checking
+    pub version: String,
+    /// Timestamp when cache was created
+    pub cache_created: String, // ISO 8601 format
+    /// SFS version that created this cache
+    pub sfs_version: String,
+    /// Map of file paths to cached file data
+    pub files: HashMap<String, CachedFile>, // String keys for JSON compatibility
+}
+
+impl IndexCache {
+    /// Create a new empty cache
+    pub fn new() -> Self {
+        Self {
+            version: "1.0".to_string(),
+            cache_created: chrono::Utc::now().to_rfc3339(),
+            sfs_version: env!("CARGO_PKG_VERSION").to_string(),
+            files: HashMap::new(),
+        }
+    }
+    
+    /// Check if this cache is compatible with current SFS version
+    pub fn is_compatible(&self) -> bool {
+        // For now, only check version format
+        self.version == "1.0"
+    }
+    
+    /// Get cached file data by path
+    pub fn get_file(&self, path: &str) -> Option<&CachedFile> {
+        self.files.get(path)
+    }
+    
+    /// Add or update cached file data
+    pub fn update_file(&mut self, path: String, cached_file: CachedFile) {
+        self.files.insert(path, cached_file);
+    }
+    
+    /// Remove cached file data
+    pub fn remove_file(&mut self, path: &str) -> Option<CachedFile> {
+        self.files.remove(path)
+    }
+    
+    /// Get cache statistics
+    pub fn stats(&self) -> CacheStats {
+        let total_files = self.files.len();
+        let total_symbols: usize = self.files.values().map(|f| f.symbols.len()).sum();
+        
+        CacheStats {
+            total_files,
+            total_symbols,
+            cache_created: self.cache_created.clone(),
+            sfs_version: self.sfs_version.clone(),
+        }
+    }
+}
+
+impl Default for IndexCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Cache statistics for reporting
+#[derive(Debug, Clone, PartialEq)]
+pub struct CacheStats {
+    pub total_files: usize,
+    pub total_symbols: usize,
+    pub cache_created: String,
+    pub sfs_version: String,
 }

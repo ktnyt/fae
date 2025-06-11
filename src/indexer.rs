@@ -4,8 +4,12 @@ use crate::filters::{FileFilter, GitignoreFilter};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
 use anyhow::{Result, anyhow};
 use rayon::prelude::*;
+use sha2::{Sha256, Digest};
+use chrono::Utc;
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 
 pub struct TreeSitterIndexer {
     symbols_cache: HashMap<PathBuf, Vec<CodeSymbol>>,
@@ -15,6 +19,10 @@ pub struct TreeSitterIndexer {
     symbol_extractor: SymbolExtractor,
     file_filter: FileFilter,
     gitignore_filter: GitignoreFilter,
+    // Cache-related fields
+    index_cache: IndexCache,
+    cache_enabled: bool,
+    cache_directory: Option<PathBuf>,
 }
 
 impl Default for TreeSitterIndexer {
@@ -36,6 +44,9 @@ impl TreeSitterIndexer {
             symbol_extractor: SymbolExtractor::new(verbose),
             file_filter: FileFilter::new(verbose),
             gitignore_filter: GitignoreFilter::new(respect_gitignore, verbose),
+            index_cache: IndexCache::new(),
+            cache_enabled: true,
+            cache_directory: None,
         }
     }
     
@@ -50,6 +61,9 @@ impl TreeSitterIndexer {
             symbol_extractor: SymbolExtractor::new(verbose),
             file_filter: FileFilter::new(verbose),
             gitignore_filter: GitignoreFilter::new(respect_gitignore, verbose),
+            index_cache: IndexCache::new(),
+            cache_enabled: true,
+            cache_directory: None,
         }
     }
 
@@ -62,6 +76,9 @@ impl TreeSitterIndexer {
             symbol_extractor: SymbolExtractor::new(verbose),
             file_filter: FileFilter::new(verbose),
             gitignore_filter: GitignoreFilter::new(respect_gitignore, verbose),
+            index_cache: IndexCache::new(),
+            cache_enabled: true,
+            cache_directory: None,
         }
     }
 
@@ -108,7 +125,7 @@ impl TreeSitterIndexer {
     }
 
     /// Create file and directory symbols for a given path
-    fn create_file_symbols(&self, file_path: &Path) -> Result<Vec<CodeSymbol>> {
+    pub fn create_file_symbols(&self, file_path: &Path) -> Result<Vec<CodeSymbol>> {
         // Handle non-existent files gracefully
         if !file_path.exists() {
             return Ok(vec![]);
@@ -227,9 +244,16 @@ impl TreeSitterIndexer {
             })
             .collect();
         
-        // Merge results back into main indexer
+        // Merge results back into main indexer and update cache
         for (path, symbols) in results {
-            self.symbols_cache.insert(path, symbols);
+            self.symbols_cache.insert(path.clone(), symbols.clone());
+            
+            // Update cache entry if cache is enabled
+            if let Err(e) = self.update_cache_entry(&path, &symbols) {
+                if self.verbose {
+                    eprintln!("Warning: Failed to update cache for {}: {}", path.display(), e);
+                }
+            }
         }
         
         Ok(())
@@ -323,5 +347,302 @@ impl TreeSitterIndexer {
     /// Check if a file is currently indexed
     pub fn is_file_indexed(&self, file_path: &PathBuf) -> bool {
         self.symbols_cache.contains_key(file_path)
+    }
+    
+    // ====== Cache Management Methods ======
+    
+    /// Enable or disable cache functionality
+    pub fn set_cache_enabled(&mut self, enabled: bool) {
+        self.cache_enabled = enabled;
+    }
+    
+    /// Check if cache is enabled
+    pub fn is_cache_enabled(&self) -> bool {
+        self.cache_enabled
+    }
+    
+    /// Set cache directory (defaults to project root)
+    pub fn set_cache_directory(&mut self, directory: PathBuf) {
+        self.cache_directory = Some(directory);
+    }
+    
+    /// Calculate SHA-256 hash of file content
+    pub fn calculate_file_hash(&self, file_path: &Path) -> Result<String> {
+        let mut file = fs::File::open(file_path)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0; 8192]; // 8KB buffer
+        
+        loop {
+            let bytes_read = file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..bytes_read]);
+        }
+        
+        let hash = hasher.finalize();
+        Ok(format!("sha256:{:x}", hash))
+    }
+    
+    /// Check if cached file is still valid (hash matches)
+    pub fn is_cache_valid(&self, file_path: &Path, cached_hash: &str) -> Result<bool> {
+        if !file_path.exists() {
+            return Ok(false);
+        }
+        
+        let current_hash = self.calculate_file_hash(file_path)?;
+        Ok(current_hash == cached_hash)
+    }
+    
+    /// Load cache from compressed .sfscache.gz file (with fallback to uncompressed .sfscache)
+    pub fn load_cache(&mut self, directory: &Path) -> Result<CacheStats> {
+        if !self.cache_enabled {
+            return Err(anyhow!("Cache is disabled"));
+        }
+        
+        // Try compressed cache first, then fallback to uncompressed
+        let compressed_cache_path = directory.join(".sfscache.gz");
+        let uncompressed_cache_path = directory.join(".sfscache");
+        
+        let (cache_path, is_compressed) = if compressed_cache_path.exists() {
+            (compressed_cache_path, true)
+        } else if uncompressed_cache_path.exists() {
+            (uncompressed_cache_path, false)
+        } else {
+            if self.verbose {
+                eprintln!("No cache file found at: {} or {}", 
+                         compressed_cache_path.display(), uncompressed_cache_path.display());
+            }
+            return Ok(CacheStats {
+                total_files: 0,
+                total_symbols: 0,
+                cache_created: "N/A".to_string(),
+                sfs_version: "N/A".to_string(),
+            });
+        };
+        
+        if self.verbose {
+            eprintln!("Loading {} cache from: {}", 
+                     if is_compressed { "compressed" } else { "uncompressed" }, 
+                     cache_path.display());
+        }
+        
+        let cache_content = if is_compressed {
+            // Decompress gzip file
+            let file = fs::File::open(&cache_path)?;
+            let mut decoder = GzDecoder::new(file);
+            let mut decompressed = String::new();
+            decoder.read_to_string(&mut decompressed)?;
+            decompressed
+        } else {
+            // Read uncompressed file
+            fs::read_to_string(&cache_path)?
+        };
+        
+        let loaded_cache: IndexCache = serde_json::from_str(&cache_content)?;
+        
+        // Check cache compatibility
+        if !loaded_cache.is_compatible() {
+            return Err(anyhow!("Cache version incompatible. Current format: 1.0, found: {}", 
+                              loaded_cache.version));
+        }
+        
+        self.index_cache = loaded_cache;
+        self.cache_directory = Some(directory.to_path_buf());
+        
+        let stats = self.index_cache.stats();
+        
+        if self.verbose {
+            eprintln!("Cache loaded: {} files, {} symbols", stats.total_files, stats.total_symbols);
+        }
+        
+        Ok(stats)
+    }
+    
+    /// Save current cache to compressed .sfscache.gz file
+    pub fn save_cache(&self, directory: &Path) -> Result<()> {
+        if !self.cache_enabled {
+            return Err(anyhow!("Cache is disabled"));
+        }
+        
+        let cache_path = directory.join(".sfscache.gz");
+        
+        if self.verbose {
+            eprintln!("Saving compressed cache to: {}", cache_path.display());
+        }
+        
+        // Serialize to compact JSON (no pretty printing for compression efficiency)
+        let cache_json = serde_json::to_string(&self.index_cache)?;
+        
+        // Create gzip encoder with high compression
+        let file = fs::File::create(&cache_path)?;
+        let mut encoder = GzEncoder::new(file, Compression::best());
+        encoder.write_all(cache_json.as_bytes())?;
+        encoder.finish()?;
+        
+        if self.verbose {
+            let stats = self.index_cache.stats();
+            let uncompressed_size = cache_json.len();
+            let compressed_size = fs::metadata(&cache_path)?.len();
+            let compression_ratio = (uncompressed_size as f64 / compressed_size as f64).round() as u64;
+            
+            eprintln!("Cache saved: {} files, {} symbols", stats.total_files, stats.total_symbols);
+            eprintln!("Compression: {} bytes → {} bytes ({}x reduction)", 
+                     uncompressed_size, compressed_size, compression_ratio);
+        }
+        
+        Ok(())
+    }
+    
+    /// Load symbols from cache if file hash matches, otherwise re-index
+    pub fn load_or_index_file(&mut self, file_path: &Path) -> Result<Vec<CodeSymbol>> {
+        if !self.cache_enabled {
+            return self.create_file_symbols(file_path);
+        }
+        
+        let path_str = file_path.to_string_lossy().to_string();
+        
+        // Check if file is in cache
+        if let Some(cached_file) = self.index_cache.get_file(&path_str) {
+            // Validate cache entry
+            match self.is_cache_valid(file_path, &cached_file.hash) {
+                Ok(true) => {
+                    if self.verbose {
+                        eprintln!("Cache hit for file: {} ({} symbols)", 
+                                 file_path.display(), cached_file.symbols.len());
+                    }
+                    return Ok(cached_file.symbols.clone());
+                }
+                Ok(false) => {
+                    if self.verbose {
+                        eprintln!("Cache miss (file changed): {}", file_path.display());
+                    }
+                }
+                Err(e) => {
+                    if self.verbose {
+                        eprintln!("Cache validation error for {}: {}", file_path.display(), e);
+                    }
+                }
+            }
+        }
+        
+        // Cache miss or invalid - re-index file
+        let symbols = self.create_file_symbols(file_path)?;
+        self.update_cache_entry(file_path, &symbols)?;
+        
+        Ok(symbols)
+    }
+    
+    /// Update cache entry for a file
+    pub fn update_cache_entry(&mut self, file_path: &Path, symbols: &[CodeSymbol]) -> Result<()> {
+        if !self.cache_enabled {
+            return Ok(());
+        }
+        
+        let path_str = file_path.to_string_lossy().to_string();
+        let hash = self.calculate_file_hash(file_path)?;
+        let size = file_path.metadata()?.len();
+        
+        let cached_file = CachedFile {
+            hash,
+            last_modified: Utc::now().to_rfc3339(),
+            symbols: symbols.to_vec(),
+            size,
+        };
+        
+        self.index_cache.update_file(path_str, cached_file);
+        
+        if self.verbose {
+            eprintln!("Updated cache entry for: {} ({} symbols)", 
+                     file_path.display(), symbols.len());
+        }
+        
+        Ok(())
+    }
+    
+    /// Remove cache entry for a file
+    pub fn remove_cache_entry(&mut self, file_path: &Path) -> Result<()> {
+        if !self.cache_enabled {
+            return Ok(());
+        }
+        
+        let path_str = file_path.to_string_lossy().to_string();
+        
+        if let Some(removed) = self.index_cache.remove_file(&path_str) {
+            if self.verbose {
+                eprintln!("Removed cache entry for: {} ({} symbols)", 
+                         file_path.display(), removed.symbols.len());
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get cache statistics
+    pub fn get_cache_stats(&self) -> CacheStats {
+        self.index_cache.stats()
+    }
+    
+    /// Extract all symbols from loaded cache for immediate use
+    pub fn get_all_cached_symbols(&self) -> Vec<CodeSymbol> {
+        if !self.cache_enabled {
+            return Vec::new();
+        }
+        
+        let mut all_symbols = Vec::new();
+        for cached_file in self.index_cache.files.values() {
+            all_symbols.extend(cached_file.symbols.clone());
+        }
+        
+        all_symbols
+    }
+    
+    /// Check if a file exists in cache and is still valid
+    pub fn is_file_cached_and_valid(&self, file_path: &Path) -> bool {
+        if !self.cache_enabled {
+            return false;
+        }
+        
+        let path_str = file_path.to_string_lossy().to_string();
+        if let Some(cached_file) = self.index_cache.get_file(&path_str) {
+            if let Ok(current_hash) = self.calculate_file_hash(file_path) {
+                return current_hash == cached_file.hash;
+            }
+        }
+        
+        false
+    }
+    
+    /// Clear all index cache data
+    pub fn clear_index_cache(&mut self) {
+        self.index_cache = IndexCache::new();
+        
+        if self.verbose {
+            eprintln!("Index cache cleared");
+        }
+    }
+    
+    /// Delete cache files from disk (both compressed and uncompressed)
+    pub fn delete_cache_file(&self, directory: &Path) -> Result<()> {
+        let compressed_cache_path = directory.join(".sfscache.gz");
+        let uncompressed_cache_path = directory.join(".sfscache");
+        
+        let mut deleted_files = Vec::new();
+        
+        if compressed_cache_path.exists() {
+            fs::remove_file(&compressed_cache_path)?;
+            deleted_files.push(compressed_cache_path.display().to_string());
+        }
+        
+        if uncompressed_cache_path.exists() {
+            fs::remove_file(&uncompressed_cache_path)?;
+            deleted_files.push(uncompressed_cache_path.display().to_string());
+        }
+        
+        if self.verbose && !deleted_files.is_empty() {
+            eprintln!("Cache files deleted: {}", deleted_files.join(", "));
+        }
+        
+        Ok(())
     }
 }

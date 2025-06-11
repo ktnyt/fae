@@ -21,7 +21,7 @@ use crate::{
     indexer::TreeSitterIndexer,
 };
 
-type IndexingReceiver = std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize)>;
+type IndexingReceiver = std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize, bool)>;
 
 #[derive(Debug, Clone)]
 pub struct SearchMode {
@@ -50,6 +50,8 @@ pub struct TuiApp {
     pub indexer: Option<TreeSitterIndexer>,
     pub watch_enabled: bool,
     pub last_updated_file: Option<String>,
+    // Cache management
+    pub directory_path: Option<std::path::PathBuf>,
 }
 
 impl Default for TuiApp {
@@ -103,26 +105,91 @@ impl TuiApp {
             indexer: None,
             watch_enabled: false,
             last_updated_file: None,
+            // Cache management
+            directory_path: None,
         }
     }
 
     pub async fn initialize(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
-        // Phase 1: Quick file discovery for immediate display
+        // Store directory path for cache management
+        self.directory_path = Some(directory.to_path_buf());
+        
+        // Phase 1: Load cache symbols immediately for instant availability
+        self.status_message = "Loading cache...".to_string();
+        let cache_symbols = self.load_cache_symbols(directory, verbose).await?;
+        
+        // Phase 2: Quick file discovery for immediate display
         self.status_message = "Discovering files...".to_string();
         let file_list = self.quick_file_discovery(directory, respect_gitignore).await?;
         
-        // Create initial file-only symbols for immediate display
-        self.symbols = self.create_file_symbols(&file_list);
+        // Phase 3: Merge cache symbols with file symbols, avoiding duplicates
+        let mut initial_symbols = self.create_file_symbols(&file_list);
+        
+        // Add cache symbols, but avoid duplicates by checking file paths
+        let mut existing_files: std::collections::HashSet<std::path::PathBuf> = 
+            initial_symbols.iter().map(|s| s.file.clone()).collect();
+        
+        let cache_count = cache_symbols.len();
+        for cache_symbol in cache_symbols {
+            if !existing_files.contains(&cache_symbol.file) {
+                existing_files.insert(cache_symbol.file.clone());
+                initial_symbols.push(cache_symbol);
+            }
+        }
+        
+        self.symbols = initial_symbols;
         self.searcher = Some(FuzzySearcher::new(self.symbols.clone()));
         
-        // Show initial results immediately
+        // Show initial results immediately (now includes cache symbols)
         self.show_default_results();
-        self.status_message = format!("Found {} files, indexing symbols...", file_list.len());
+        let cache_info = if cache_count > 0 {
+            format!(" (including {} cached symbols)", cache_count)
+        } else {
+            String::new()
+        };
+        self.status_message = format!("Found {} files{}, indexing symbols...", file_list.len(), cache_info);
         
-        // Phase 2: Start progressive symbol indexing in background (non-blocking)
+        // Phase 4: Start progressive symbol indexing in background (non-blocking)
         self.start_progressive_indexing(directory, verbose, respect_gitignore, file_list);
         
         Ok(())
+    }
+    
+    /// Load symbols from cache for immediate availability in TUI
+    async fn load_cache_symbols(&self, directory: &std::path::Path, verbose: bool) -> anyhow::Result<Vec<CodeSymbol>> {
+        use crate::indexer::TreeSitterIndexer;
+        
+        let mut indexer = TreeSitterIndexer::with_options(verbose, true);
+        indexer.initialize_sync()?;
+        
+        match indexer.load_cache(directory) {
+            Ok(stats) if stats.total_symbols > 0 => {
+                if verbose {
+                    eprintln!("TUI cache loaded: {} files, {} symbols", stats.total_files, stats.total_symbols);
+                }
+                
+                // Extract all symbols from cache for immediate use
+                let cache_symbols = indexer.get_all_cached_symbols();
+                
+                if verbose && !cache_symbols.is_empty() {
+                    eprintln!("Extracted {} symbols from cache for immediate TUI use", cache_symbols.len());
+                }
+                
+                Ok(cache_symbols)
+            }
+            Ok(_) => {
+                if verbose {
+                    eprintln!("No cache available for TUI");
+                }
+                Ok(Vec::new())
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("Failed to load cache for TUI: {}", e);
+                }
+                Ok(Vec::new())
+            }
+        }
     }
 
     pub async fn initialize_with_watch(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool, watch_enabled: bool) -> anyhow::Result<()> {
@@ -141,6 +208,14 @@ impl TuiApp {
     fn setup_file_watching(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
         // Initialize indexer for file watching
         let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
+        
+        // Load cache if available
+        if let Ok(stats) = indexer.load_cache(directory) {
+            if stats.total_files > 0 {
+                self.status_message = format!("Cache loaded: {} files, {} symbols", stats.total_files, stats.total_symbols);
+            }
+        }
+        
         indexer.initialize_sync()?;
         self.indexer = Some(indexer);
 
@@ -270,65 +345,99 @@ impl TuiApp {
     }
     
     // Progressive indexing in background while UI remains responsive
-    fn start_progressive_indexing(&mut self, _directory: &std::path::Path, verbose: bool, _respect_gitignore: bool, file_list: Vec<std::path::PathBuf>) {
+    fn start_progressive_indexing(&mut self, directory: &std::path::Path, verbose: bool, _respect_gitignore: bool, file_list: Vec<std::path::PathBuf>) {
         use crate::indexer::TreeSitterIndexer;
         use std::sync::mpsc;
         use std::thread;
         
         let (tx, rx) = mpsc::channel();
-        let indexer = TreeSitterIndexer::new();
-        let total_files = file_list.len();
+        let mut indexer = TreeSitterIndexer::new();
         
-        // Spawn background thread for symbol extraction
+        // Load cache if available for smart indexing
+        let cache_loaded = if let Ok(stats) = indexer.load_cache(directory) {
+            if verbose {
+                eprintln!("Cache loaded for progressive indexing: {} files, {} symbols", 
+                         stats.total_files, stats.total_symbols);
+            }
+            true
+        } else {
+            if verbose {
+                eprintln!("No cache available for progressive indexing");
+            }
+            false
+        };
+        
+        let total_files = file_list.len();
+        let directory_path = directory.to_path_buf();
+        
+        // Spawn background thread for smart symbol extraction
         thread::spawn(move || {
             let mut processed = 0;
+            let mut cache_hits = 0;
+            let mut cache_misses = 0;
             
             for file_path in file_list {
-                // Extract symbols for this file
-                match indexer.extract_symbols_sync(&file_path, verbose) {
-                    Ok(mut symbols) => {
-                        // Add file and directory symbols if they don't exist
-                        if let Some(filename) = file_path.file_name() {
-                            symbols.push(crate::types::CodeSymbol {
-                                name: filename.to_string_lossy().to_string(),
-                                symbol_type: crate::types::SymbolType::Filename,
-                                file: file_path.clone(),
-                                line: 1,
-                                column: 1,
-                                context: None,
-                            });
-                        }
-                        
-                        if let Some(parent) = file_path.parent() {
-                            if let Some(dirname) = parent.file_name() {
-                                symbols.push(crate::types::CodeSymbol {
-                                    name: dirname.to_string_lossy().to_string(),
-                                    symbol_type: crate::types::SymbolType::Dirname,
-                                    file: file_path.clone(),
-                                    line: 1,
-                                    column: 1,
-                                    context: None,
-                                });
+                // Smart cache-aware indexing: only process files that need updating
+                match indexer.load_or_index_file(&file_path) {
+                    Ok(symbols) => {
+                        // Check if this was a cache hit or miss
+                        if cache_loaded {
+                            if indexer.is_file_cached_and_valid(&file_path) {
+                                cache_hits += 1;
+                            } else {
+                                cache_misses += 1;
                             }
                         }
                         
                         processed += 1;
                         let progress = (processed as f32 / total_files as f32 * 100.0) as u32;
+                        let is_completed = processed >= total_files;
                         
-                        // Send symbols and progress back to main thread
-                        if tx.send((symbols, progress, processed, total_files)).is_err() {
+                        // Send symbols, progress, and completion flag back to main thread
+                        if tx.send((symbols, progress, processed, total_files, is_completed)).is_err() {
                             break; // Main thread has dropped the receiver
+                        }
+                        
+                        // Save cache when indexing is complete
+                        if is_completed {
+                            if let Err(e) = indexer.save_cache(&directory_path) {
+                                if verbose {
+                                    eprintln!("Warning: Failed to save cache in background thread: {}", e);
+                                }
+                            } else if verbose {
+                                eprintln!("Cache saved successfully after progressive indexing");
+                            }
                         }
                     }
                     Err(_) => {
                         // Continue with next file on error
                         processed += 1;
                         let progress = (processed as f32 / total_files as f32 * 100.0) as u32;
-                        if tx.send((Vec::new(), progress, processed, total_files)).is_err() {
+                        let is_completed = processed >= total_files;
+                        
+                        if tx.send((Vec::new(), progress, processed, total_files, is_completed)).is_err() {
                             break;
+                        }
+                        
+                        // Save cache even if last file failed
+                        if is_completed {
+                            if let Err(e) = indexer.save_cache(&directory_path) {
+                                if verbose {
+                                    eprintln!("Warning: Failed to save cache in background thread: {}", e);
+                                }
+                            } else if verbose {
+                                eprintln!("Cache saved successfully after progressive indexing");
+                            }
                         }
                     }
                 }
+            }
+            
+            // Log cache efficiency if verbose
+            if verbose && cache_loaded && (cache_hits + cache_misses) > 0 {
+                let cache_hit_rate = (cache_hits as f32 / (cache_hits + cache_misses) as f32 * 100.0) as u32;
+                eprintln!("Progressive indexing completed - Cache hits: {}, Cache misses: {}, Hit rate: {}%", 
+                         cache_hits, cache_misses, cache_hit_rate);
             }
         });
         
@@ -337,8 +446,9 @@ impl TuiApp {
         self.is_indexing = true;
         self.indexing_start_time = Some(std::time::Instant::now());
         
-        // Update status to indicate background indexing has started
-        self.status_message = format!("Indexing {} files in background...", total_files);
+        // Update status to indicate smart background indexing has started
+        let indexing_type = if cache_loaded { "smart indexing" } else { "indexing" };
+        self.status_message = format!("Starting {} of {} files in background...", indexing_type, total_files);
     }
     
     // Check for background indexing updates (non-blocking)
@@ -356,13 +466,13 @@ impl TuiApp {
             let mut updates_this_frame = 0;
             const MAX_UPDATES_PER_FRAME: usize = 3;
             
-            while let Ok((new_symbols, progress, processed, total)) = receiver.try_recv() {
+            while let Ok((new_symbols, progress, processed, total, is_completed)) = receiver.try_recv() {
                 // Add new symbols to our collection
                 self.symbols.extend(new_symbols);
                 updates_this_frame += 1;
                 
                 // Only update expensive operations periodically or when finished
-                let should_update_searcher = processed >= total || updates_this_frame >= MAX_UPDATES_PER_FRAME;
+                let should_update_searcher = is_completed || updates_this_frame >= MAX_UPDATES_PER_FRAME;
                 
                 if should_update_searcher {
                     // Update searcher with new symbols
@@ -375,7 +485,7 @@ impl TuiApp {
                 }
                 
                 // Update status with progress
-                if processed >= total {
+                if is_completed {
                     // Calculate indexing duration
                     let duration = if let Some(start_time) = self.indexing_start_time {
                         start_time.elapsed()
@@ -384,10 +494,11 @@ impl TuiApp {
                     };
                     
                     let duration_ms = duration.as_millis();
+                    
                     self.status_message = if duration_ms < 1000 {
-                        format!("Indexing complete! Found {} symbols ({}ms)", self.symbols.len(), duration_ms)
+                        format!("Indexing complete! Found {} symbols ({}ms, with cache)", self.symbols.len(), duration_ms)
                     } else {
-                        format!("Indexing complete! Found {} symbols ({:.1}s)", self.symbols.len(), duration.as_secs_f64())
+                        format!("Indexing complete! Found {} symbols ({:.1}s, with cache)", self.symbols.len(), duration.as_secs_f64())
                     };
                     
                     self.is_indexing = false;
@@ -396,7 +507,7 @@ impl TuiApp {
                     break;
                 } else if should_update_searcher {
                     // Only update status message periodically to reduce UI churn
-                    self.status_message = format!("Indexing progress: {}/{} files ({}%)", processed, total, progress);
+                    self.status_message = format!("Smart indexing progress: {}/{} files ({}%)", processed, total, progress);
                 }
                 
                 // Break early if we've hit our update limit for this frame

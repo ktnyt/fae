@@ -85,6 +85,11 @@ notify = "6.1"        # リアルタイムファイル監視
 regex = "1.10"
 rand = "0.8"
 
+# キャッシュ機能
+sha2 = "0.10"         # ファイルハッシュ計算
+chrono = { version = "0.4", features = ["serde"] }
+flate2 = "1.0"        # gzip圧縮・展開
+
 [dev-dependencies]
 criterion = "0.5"     # ベンチマーク
 tempfile = "3.8"      # テスト用
