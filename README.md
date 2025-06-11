@@ -7,36 +7,96 @@ A blazingly fast fuzzy search tool for code symbols (functions, classes, variabl
 - 🔍 **Fuzzy Search**: Find symbols quickly with fuzzy matching
 - 🖥️ **Interactive TUI**: Beautiful terminal user interface with real-time search
 - 📋 **Clipboard Integration**: Copy symbol locations with Enter key
-- 🚀 **Lightning Fast**: Native Rust binary for maximum performance
-- 📁 **Multi-language**: Supports TypeScript, JavaScript, Python with regex-based parsing
-- 🎯 **Smart Filtering**: Filter by symbol type (function, class, variable, etc.)
+- 🚀 **Lightning Fast**: Native Rust binary with concurrent processing
+- 📁 **Multi-language**: Supports multiple languages through Tree-sitter:
+  - Web: TypeScript, JavaScript, PHP
+  - Systems: Rust, Go, C, C++
+  - JVM: Java, Scala
+  - Others: Python, Ruby, C#
+- 🎯 **Smart Filtering**: Filter by symbol type with intelligent deduplication
 - 🔄 **Multiple Search Modes**: Fuzzy, Symbol-only, File-only, and Regex search
 - 🎨 **User-friendly**: Color-coded results with intuitive navigation
-- 🚫 **Gitignore Support**: Respects .gitignore files by default, with option to include all files
+- 🚫 **Gitignore Support**: Respects .gitignore files by default
+- ⚡ **Progressive Indexing**: Real-time indexing with progress display
+- 🔒 **Robust Error Handling**: Comprehensive error management and recovery
 
 ## Installation
 
-### From Binary (Recommended)
+### Prerequisites
 
-```bash
-# Build from source
-git clone https://github.com/ktnyt/sfs
-cd sfs
-cargo build --release
+- Rust 1.85.1 or later
+- Cargo (comes with Rust)
+- Git
+- C compiler (for Tree-sitter)
+  - gcc/clang on Unix-like systems
+  - MSVC on Windows
 
-# Binary will be available at target/release/sfs
-```
-
-### From Source
+### From Source (Recommended)
 
 ```bash
 # Clone repository
 git clone https://github.com/ktnyt/sfs
 cd sfs
 
-# Build with Cargo
+# Build and install
 cargo install --path .
+
+# Verify installation
+sfs --version
 ```
+
+### Development Setup
+
+```bash
+# Clone repository
+git clone https://github.com/ktnyt/sfs
+cd sfs
+
+# Install development dependencies
+cargo install cargo-watch  # For auto-recompilation
+cargo install cargo-audit # For security auditing
+cargo install cargo-tarpaulin # For code coverage
+
+# Build debug version
+cargo build
+
+# Watch for changes and rebuild
+cargo watch -x build
+
+# Run tests with coverage
+cargo tarpaulin
+```
+
+### Platform-specific Notes
+
+#### Linux
+
+```bash
+# Install required dependencies
+sudo apt-get update
+sudo apt-get install build-essential pkg-config libx11-dev libxcb1-dev
+```
+
+#### macOS
+
+```bash
+# Install required dependencies
+brew install pkg-config
+```
+
+#### Windows
+
+- Install Visual Studio Build Tools with C++ support
+- Install Git for Windows
+- Install Rust using rustup-init.exe
+
+## Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Usage
 
@@ -51,6 +111,7 @@ sfs -d ./src
 ```
 
 **TUI Controls:**
+
 - Type to search symbols in real-time
 - `↑/↓` or `Ctrl+p/n`: Navigate results
 - `Enter`: Copy symbol location to clipboard and clear search
@@ -58,6 +119,7 @@ sfs -d ./src
 - `F1` or `Ctrl+h`: Show help
 
 **Search Modes:**
+
 - **Fuzzy** (default): `query` - Fuzzy search across all symbols
 - **Symbol**: `#query` - Search only symbol names (exclude files/dirs)
 - **File**: `>query` - Search only file and directory names
@@ -86,92 +148,115 @@ sfs "router" --threshold 0.2
 
 - `-d, --directory <path>`: Directory to search (default: current directory)
 - `-t, --types <types>`: Symbol types to include (comma-separated)
+  - `function`: Functions and methods
+  - `variable`: Variables and fields
+  - `class`: Class declarations
+  - `interface`: Interface declarations
+  - `type`: Type aliases and definitions
+  - `enum`: Enumeration declarations
+  - `constant`: Constants and immutable values
+  - `method`: Class and object methods
+  - `property`: Object properties
+  - `filename`: File names
+  - `dirname`: Directory names
 - `--no-files`: Exclude filenames from search
 - `--no-dirs`: Exclude directory names from search
-- `-l, --limit <number>`: Maximum number of results (default: 50)
-- `--threshold <number>`: Fuzzy search threshold 0-1 (default: 0.4)
+- `-l, --limit <number>`: Maximum number of results (default: 10)
+- `--threshold <number>`: Fuzzy search threshold 0-1 (default: 0.5)
 - `--tui`: Force TUI mode (default when no query provided)
-- `-v, --verbose`: Enable verbose output (detailed progress information)
+- `-v, --verbose`: Enable verbose output with progress information
 - `--include-ignored`: Include files normally ignored by .gitignore
 
-### Symbol Types
-
-- `function`: Function declarations, methods, getters, setters
-- `class`: Class declarations
-- `interface`: Interface declarations (TypeScript)
-- `type`: Type aliases (TypeScript)
-- `variable`: Variable declarations and constants
-- `filename`: File names
-- `dirname`: Directory names
-
-## Examples
-
 ### TUI Mode Examples
+
 ```bash
 # Interactive search with real-time results
 sfs
 
-# Start in specific directory
-sfs -d ./src/components
+# Start in specific directory with verbose output
+sfs -d ./src -v
 
 # In TUI, try these searches:
 # - "user" - fuzzy search for user-related symbols
 # - "#Component" - find only Component symbols (no files)
 # - ">index" - find only files/dirs named index
 # - "/^get.*" - regex search for symbols starting with "get"
+# - "@class" - search only for class declarations
+# - "!constant" - search only for constants
 ```
 
 ### CLI Mode Examples
+
 ```bash
-# Find all functions
-sfs "" --types function
+# Find all functions with progress display
+sfs "handler" -v --types function
 
-# Find TypeScript interfaces
-sfs "User" --types interface
+# Search for TypeScript interfaces and types
+sfs "User" --types interface,type
 
-# Search with high fuzzy threshold (more exact)
-sfs "handleClick" --threshold 0.8
+# Search with high fuzzy threshold (more exact matches)
+sfs "handleClick" --threshold 0.8 --types method
 
-# Limit to top 5 results
-sfs "component" -l 5
+# Find classes with limit
+sfs "Service" --types class -l 5
 
-# Search including files ignored by .gitignore
+# Search including ignored files
 sfs "config" --include-ignored
 
-# Verbose mode to see indexing progress
-sfs "handler" -v
+# Search for enums and constants
+sfs "Status" --types enum,constant
+
+# Complex multi-type search
+sfs "user" --types class,interface,method --threshold 0.6
+
+# Search in specific directory excluding files
+sfs "api" -d ./src/services --no-files
 ```
 
-## Development
+### Development
 
 ```bash
-# Run tests
+# Run all tests
 cargo test
 
-# Build release version
+# Run specific test categories
+cargo test --test indexer_test
+cargo test --test searcher_test
+cargo test --test tui_test
+
+# Run performance tests
+cargo bench
+
+# Build with all optimizations
 cargo build --release
 
-# Run in development mode
-cargo run
-
-# Run with debug output
+# Run with debug logging
 RUST_LOG=debug cargo run
 
-# Format code
+# Format and lint
 cargo fmt
-
-# Lint code
 cargo clippy
+
+# Run security tests
+cargo test --test security_test
+
+# Test real-world scenarios
+cargo test --test real_world_scenarios_test
 ```
 
 ## Technical Details
 
-- **Parser**: Regex-based symbol extraction for reliability
-- **Search**: Uses `fuzzy-matcher` crate for fast fuzzy search
+- **Parser**: Tree-sitter based symbol extraction for accuracy and speed
+- **Search**: Uses `fuzzy-matcher` crate with optimized regex compilation
 - **TUI**: Built with `ratatui` for beautiful terminal interface
 - **Clipboard**: Cross-platform clipboard support with `arboard`
-- **Performance**: Concurrent file processing and caching
-
-## License
-
-MIT
+- **Performance**:
+  - Concurrent file processing with Rayon and Tokio
+  - Progressive indexing with status display
+  - Optimized regex compilation (3300x performance improvement)
+  - Smart deduplication for cleaner results
+- **Testing**:
+  - Comprehensive test suite with mockall and serial_test
+  - Performance benchmarks using criterion
+  - Real-world scenario testing
+  - Security and error handling coverage
