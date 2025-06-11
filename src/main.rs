@@ -1,6 +1,7 @@
 use clap::Parser;
-use sfs::{run_tui, types::*, FuzzySearcher, TreeSitterIndexer};
+use sfs::{run_tui, types::*, searcher::SearchManager, TreeSitterIndexer};
 use std::path::Path;
+use ignore::WalkBuilder;
 
 #[derive(Parser)]
 #[command(name = "sfs")]
@@ -13,6 +14,10 @@ struct Cli {
     /// Search query (if not provided, launches TUI mode)
     query: Option<String>,
 
+    /// Directory to search in (defaults to current directory)
+    #[arg(short, long)]
+    directory: Option<String>,
+
     /// Enable verbose output
     #[arg(short, long)]
     verbose: bool,
@@ -21,8 +26,11 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Default settings (hardcoded for simplicity)
-    let directory = Path::new(".");
+    // Use provided directory or default to current directory
+    let directory = cli.directory
+        .as_ref()
+        .map(|d| Path::new(d))
+        .unwrap_or_else(|| Path::new("."));
     let respect_gitignore = true;
 
     match cli.query {
@@ -51,16 +59,37 @@ fn perform_search(query: String, directory: &Path, verbose: bool) -> anyhow::Res
     let mut indexer = TreeSitterIndexer::with_options(verbose, true); // respect_gitignore = true
     indexer.initialize_sync()?;
 
-    // Simple file discovery for CLI mode
-    let search_patterns = vec![
-        "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.py", "**/*.rs",
+    // Index files in the specified directory using ignore crate
+    let supported_extensions = [
+        "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "cpp", "c", "h", "hpp",
+        "cs", "php", "rb", "swift", "kt", "scala", "sh", "bash", "zsh", "fish"
     ];
-    for pattern in search_patterns {
-        if verbose {
-            println!("Indexing files matching: {}", pattern);
+    
+    let walker = WalkBuilder::new(directory)
+        .follow_links(false)
+        .git_ignore(true)
+        .build();
+    
+    for entry in walker {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(extension) = path.extension() {
+                    if let Some(ext_str) = extension.to_str() {
+                        if supported_extensions.contains(&ext_str) {
+                            if verbose {
+                                println!("📂 Indexing: {}", path.display());
+                            }
+                            if let Err(e) = indexer.index_file_sync(path) {
+                                if verbose {
+                                    eprintln!("⚠️  Failed to index {}: {}", path.display(), e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        // Note: This is a simplified implementation for the CLI mode
-        // The full async directory indexing is available in TUI mode
     }
 
     // Get all symbols
@@ -71,7 +100,7 @@ fn perform_search(query: String, directory: &Path, verbose: bool) -> anyhow::Res
     }
 
     // Initialize searcher
-    let searcher = FuzzySearcher::new(symbols);
+    let searcher = SearchManager::new(symbols);
 
     // Search with default options
     let search_options = SearchOptions {
@@ -82,8 +111,8 @@ fn perform_search(query: String, directory: &Path, verbose: bool) -> anyhow::Res
         limit: Some(20), // Reasonable default
     };
 
-    // Perform search
-    let results = searcher.search(&query, &search_options);
+    // Perform search using fuzzy search method
+    let results = searcher.search_symbols(&query, &search_options);
 
     if results.is_empty() {
         println!("No results found for '{}'", query);

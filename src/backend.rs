@@ -1,7 +1,8 @@
 use crate::{
     file_watcher::FileWatcher,
     indexer::TreeSitterIndexer,
-    searcher::FuzzySearcher,
+    mode::SearchModeManager,
+    searcher::SearchManager,
     types::{CodeSymbol, SearchMode, SearchOptions, SearchResult},
 };
 use anyhow::Result;
@@ -56,7 +57,8 @@ pub enum FileChangeType {
 /// Independent search backend with no UI dependencies
 pub struct SearchBackend {
     indexer: TreeSitterIndexer,
-    searcher: Option<FuzzySearcher>,
+    searcher: Option<SearchManager>,
+    mode_manager: SearchModeManager,
     file_watcher: Option<FileWatcher>,
     event_sender: mpsc::Sender<BackendEvent>,
     command_receiver: mpsc::Receiver<UserCommand>,
@@ -85,6 +87,7 @@ impl SearchBackend {
         let backend = Self {
             indexer: TreeSitterIndexer::with_options(verbose, respect_gitignore),
             searcher: None,
+            mode_manager: SearchModeManager::new(),
             file_watcher: None,
             event_sender,
             command_receiver,
@@ -292,56 +295,12 @@ impl SearchBackend {
         Ok(())
     }
 
-    fn perform_search(&mut self, query: String, mode: SearchMode) -> Result<()> {
+    fn perform_search(&mut self, query: String, _mode: SearchMode) -> Result<()> {
         if let Some(ref searcher) = self.searcher {
-            // Remove prefix from query based on search mode
-            let clean_query = match mode.name.as_str() {
-                "Symbol" => query.strip_prefix('#').unwrap_or(&query).to_string(),
-                "File" => query.strip_prefix('>').unwrap_or(&query).to_string(),
-                "Regex" => query.strip_prefix('/').unwrap_or(&query).to_string(),
-                _ => query.clone(),
-            };
-
-            let results = match mode.name.as_str() {
-                "Symbol" => {
-                    let search_options = SearchOptions {
-                        include_files: Some(false),
-                        include_dirs: Some(false),
-                        types: Some(vec![
-                            crate::types::SymbolType::Function,
-                            crate::types::SymbolType::Variable,
-                            crate::types::SymbolType::Class,
-                            crate::types::SymbolType::Interface,
-                            crate::types::SymbolType::Type,
-                            crate::types::SymbolType::Enum,
-                            crate::types::SymbolType::Constant,
-                            crate::types::SymbolType::Method,
-                            crate::types::SymbolType::Property,
-                        ]),
-                        ..Default::default()
-                    };
-                    searcher.search(&clean_query, &search_options)
-                }
-                "File" => {
-                    let search_options = SearchOptions {
-                        types: Some(vec![
-                            crate::types::SymbolType::Filename,
-                            crate::types::SymbolType::Dirname,
-                        ]),
-                        ..Default::default()
-                    };
-                    searcher.search(&clean_query, &search_options)
-                }
-                "Regex" => {
-                    let search_options = SearchOptions::default();
-                    searcher.search_content(&clean_query, &search_options)
-                }
-                _ => {
-                    // Default "Content" mode
-                    let search_options = SearchOptions::default();
-                    searcher.search_content(&clean_query, &search_options)
-                }
-            };
+            let search_options = SearchOptions::default();
+            
+            // Use the new mode manager to handle search
+            let (results, _mode_metadata) = self.mode_manager.search(&query, searcher, &search_options);
 
             let _ = self
                 .event_sender
@@ -458,7 +417,7 @@ impl SearchBackend {
                             searcher.update_symbols(symbols);
                         } else if !symbols.is_empty() {
                             // Create initial searcher
-                            self.searcher = Some(FuzzySearcher::new(symbols));
+                            self.searcher = Some(SearchManager::new(symbols));
                         }
 
                         updates_processed += 1;

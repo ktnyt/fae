@@ -2,6 +2,7 @@ pub mod cache_manager;
 pub mod file_watcher;
 pub mod filters;
 pub mod indexer;
+pub mod mode;
 pub mod parsers;
 pub mod searcher;
 pub mod tui;
