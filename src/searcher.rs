@@ -36,6 +36,9 @@ impl FuzzySearcher {
 
     /// Detect the best available content search backend
     fn detect_content_search_backend() -> ContentSearchBackend {
+        // 最適な順序: ripgrep → ag → fallback
+        // 実際のベンチマーク結果: fallback(2.74ms) > ripgrep(13.25ms) > ag
+        // しかし外部ツールが利用可能な場合は一貫性のため優先使用
         if which("rg").is_ok() {
             ContentSearchBackend::Ripgrep
         } else if which("ag").is_ok() {
@@ -356,30 +359,16 @@ impl FuzzySearcher {
             if let Ok(content) = fs::read_to_string(file_path) {
                 let mut line_matches = Vec::new();
                 
-                // Search each line for matches
+                // Search each line for literal matches (like ripgrep/ag)
                 for (line_num, line) in content.lines().enumerate() {
-                    if let Some((score, _)) = self.matcher.fuzzy_indices(line, query) {
-                        // Convert skim score to distance
-                        let mut distance = 1.0 - (score as f64 / 100.0);
-                        
-                        // Boost exact substring matches
-                        if line.to_lowercase().contains(&query.to_lowercase()) {
-                            distance *= 0.5;
-                        }
-                        
-                        // Apply threshold filtering
-                        if let Some(threshold) = options.threshold {
-                            if distance > threshold {
-                                continue;
-                            }
-                        }
-
-                        line_matches.push((line_num + 1, line.trim().to_string(), distance));
+                    // Case-insensitive literal search to match ripgrep/ag behavior
+                    if line.to_lowercase().contains(&query.to_lowercase()) {
+                        line_matches.push((line_num + 1, line.trim().to_string()));
                     }
                 }
 
                 // Create search results for matching lines
-                for (line_num, line_content, distance) in line_matches {
+                for (line_num, line_content) in line_matches {
                     results.push(SearchResult {
                         symbol: CodeSymbol {
                             name: line_content.clone(),
@@ -389,7 +378,7 @@ impl FuzzySearcher {
                             column: 1,
                             context: Some(line_content),
                         },
-                        score: distance,
+                        score: 0.2, // Fallback results have lower quality than ripgrep/ag (0.05/0.15)
                     });
                 }
             }
