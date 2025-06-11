@@ -89,6 +89,7 @@ rand = "0.8"
 sha2 = "0.10"         # ファイルハッシュ計算
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1.0"        # gzip圧縮・展開
+lru = "0.12"          # LRUキャッシュ
 
 [dev-dependencies]
 criterion = "0.5"     # ベンチマーク

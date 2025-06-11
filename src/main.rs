@@ -69,6 +69,10 @@ struct Cli {
     /// Display cache statistics and status information
     #[arg(long)]
     cache_info: bool,
+    
+    /// Enable memory-efficient cache with memory limit in MB (for large projects)
+    #[arg(long)]
+    memory_efficient_cache: Option<usize>,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -202,6 +206,14 @@ async fn perform_search(cli: Cli, query: String) -> anyhow::Result<()> {
     
     // Initialize indexer
     let mut indexer = TreeSitterIndexer::with_options(cli.verbose, !cli.include_ignored);
+    
+    // Configure memory-efficient cache if specified
+    if let Some(memory_limit_mb) = cli.memory_efficient_cache {
+        indexer.enable_memory_efficient_cache(cli.directory.clone(), memory_limit_mb);
+        if cli.verbose {
+            println!("🧠 Memory-efficient cache enabled ({}MB limit)", memory_limit_mb);
+        }
+    }
     
     // Configure cache based on CLI flags
     if cli.no_cache {

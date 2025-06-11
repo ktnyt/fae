@@ -1,6 +1,7 @@
 use crate::types::*;
 use crate::parsers::SymbolExtractor;
 use crate::filters::{FileFilter, GitignoreFilter};
+use crate::cache_manager::MemoryEfficientCacheManager;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::fs;
@@ -22,6 +23,8 @@ pub struct TreeSitterIndexer {
     index_cache: IndexCache,
     cache_enabled: bool,
     cache_directory: Option<PathBuf>,
+    memory_efficient_cache: Option<MemoryEfficientCacheManager>,
+    use_memory_efficient_cache: bool,
 }
 
 impl Default for TreeSitterIndexer {
@@ -46,6 +49,8 @@ impl TreeSitterIndexer {
             index_cache: IndexCache::new(),
             cache_enabled: true,
             cache_directory: None,
+            memory_efficient_cache: None,
+            use_memory_efficient_cache: false,
         }
     }
     
@@ -63,6 +68,8 @@ impl TreeSitterIndexer {
             index_cache: IndexCache::new(),
             cache_enabled: true,
             cache_directory: None,
+            memory_efficient_cache: None,
+            use_memory_efficient_cache: false,
         }
     }
 
@@ -78,6 +85,8 @@ impl TreeSitterIndexer {
             index_cache: IndexCache::new(),
             cache_enabled: true,
             cache_directory: None,
+            memory_efficient_cache: None,
+            use_memory_efficient_cache: false,
         }
     }
 
@@ -201,7 +210,16 @@ impl TreeSitterIndexer {
     }
 
     pub fn get_all_symbols(&self) -> Vec<CodeSymbol> {
-        self.symbols_cache.values().flatten().cloned().collect()
+        // If symbols are in memory cache, use that
+        if !self.symbols_cache.is_empty() {
+            return self.symbols_cache.values().flatten().cloned().collect();
+        }
+        
+        // Otherwise, extract from index cache
+        self.index_cache.files.values()
+            .flat_map(|cached_file| cached_file.symbols.iter())
+            .cloned()
+            .collect()
     }
 
     pub async fn index_directory(&mut self, directory: &Path, patterns: &[String]) -> anyhow::Result<()> {
@@ -347,6 +365,40 @@ impl TreeSitterIndexer {
     /// Set cache directory (defaults to project root)
     pub fn set_cache_directory(&mut self, directory: PathBuf) {
         self.cache_directory = Some(directory);
+    }
+    
+    /// Enable memory-efficient cache with specified memory limit (MB)
+    pub fn enable_memory_efficient_cache(&mut self, directory: PathBuf, max_memory_mb: usize) {
+        self.use_memory_efficient_cache = true;
+        let cache_manager = MemoryEfficientCacheManager::new(directory, max_memory_mb);
+        self.memory_efficient_cache = Some(cache_manager);
+        
+        if self.verbose {
+            eprintln!("Memory-efficient cache enabled with {}MB limit", max_memory_mb);
+        }
+    }
+    
+    /// Disable memory-efficient cache
+    pub fn disable_memory_efficient_cache(&mut self) {
+        self.use_memory_efficient_cache = false;
+        self.memory_efficient_cache = None;
+        
+        if self.verbose {
+            eprintln!("Memory-efficient cache disabled");
+        }
+    }
+    
+    /// Check if memory-efficient cache is enabled
+    pub fn is_memory_efficient_cache_enabled(&self) -> bool {
+        self.use_memory_efficient_cache
+    }
+    
+    /// Get memory usage of efficient cache (MB)
+    pub fn get_memory_efficient_cache_usage(&self) -> f64 {
+        self.memory_efficient_cache
+            .as_ref()
+            .map(|cache| cache.memory_usage_mb())
+            .unwrap_or(0.0)
     }
     
     /// Calculate SHA-256 hash of file content

@@ -5,6 +5,7 @@ pub mod tui;
 pub mod parsers;
 pub mod filters;
 pub mod file_watcher;
+pub mod cache_manager;
 
 // 公開API
 pub use types::*;
