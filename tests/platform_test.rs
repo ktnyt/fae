@@ -6,7 +6,6 @@ use sfs::indexer::TreeSitterIndexer;
 use sfs::searcher::FuzzySearcher;
 use tempfile::TempDir;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
@@ -372,7 +371,7 @@ export class MacOSUnicodeHandler {
         // 改行コードに関係なく適切な行番号が取得されることを確認
         for symbol in &all_symbols {
             assert!(symbol.line > 0, "Line numbers should be positive: {}", symbol.line);
-            assert!(symbol.column >= 0, "Column numbers should be non-negative: {}", symbol.column);
+            // Column is u32, so always non-negative by type definition
         }
         
         println!("✅ Line endings: {} symbols from files with different line endings", 

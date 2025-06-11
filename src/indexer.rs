@@ -17,6 +17,12 @@ pub struct TreeSitterIndexer {
     gitignore_filter: GitignoreFilter,
 }
 
+impl Default for TreeSitterIndexer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeSitterIndexer {
     pub fn new() -> Self {
         let verbose = false;

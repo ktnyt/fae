@@ -3,7 +3,6 @@
 
 use sfs::types::*;
 use sfs::searcher::FuzzySearcher;
-use std::path::PathBuf;
 
 // Mock symbols for testing (TypeScriptテストと同じデータ)
 fn create_mock_symbols() -> Vec<CodeSymbol> {

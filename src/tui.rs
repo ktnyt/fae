@@ -19,6 +19,8 @@ use crate::{
     types::{CodeSymbol, DefaultDisplayStrategy, SearchOptions, SearchResult, SymbolType},
 };
 
+type IndexingReceiver = std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize)>;
+
 #[derive(Debug, Clone)]
 pub struct SearchMode {
     pub name: String,
@@ -38,9 +40,15 @@ pub struct TuiApp {
     pub show_help: bool,
     pub status_message: String,
     pub default_strategy: DefaultDisplayStrategy,
-    pub indexing_receiver: Option<std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize)>>,
+    pub indexing_receiver: Option<IndexingReceiver>,
     pub is_indexing: bool,
     pub indexing_start_time: Option<std::time::Instant>,
+}
+
+impl Default for TuiApp {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TuiApp {
@@ -720,7 +728,11 @@ impl TuiApp {
     }
 
     fn render_search_box(&self, f: &mut Frame, area: Rect) {
-        let mode_info = format!("{} {} Search", self.current_search_mode.icon, self.current_search_mode.name);
+        let mode_info = if self.query.is_empty() && self.current_search_mode.name == "Content" {
+            format!("{} Recently Edited", self.current_search_mode.icon)
+        } else {
+            format!("{} {} Search", self.current_search_mode.icon, self.current_search_mode.name)
+        };
         
         let search_text = Text::from(vec![
             Line::from(vec![

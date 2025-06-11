@@ -31,20 +31,18 @@ fn main() -> anyhow::Result<()> {
            .add_custom_ignore_filename(".ignore");
     
     let mut files = Vec::new();
-    for entry in builder.build() {
-        if let Ok(dir_entry) = entry {
-            let file_path = dir_entry.path();
-            
-            // Skip .git directory
-            if let Some(path_str) = file_path.to_str() {
-                if path_str.contains("/.git/") || path_str.ends_with("/.git") {
-                    continue;
-                }
+    for dir_entry in builder.build().flatten() {
+        let file_path = dir_entry.path();
+        
+        // Skip .git directory
+        if let Some(path_str) = file_path.to_str() {
+            if path_str.contains("/.git/") || path_str.ends_with("/.git") {
+                continue;
             }
-            
-            if file_path.is_file() && should_include_file(file_path) {
-                files.push(file_path.to_path_buf());
-            }
+        }
+        
+        if file_path.is_file() && should_include_file(file_path) {
+            files.push(file_path.to_path_buf());
         }
     }
     

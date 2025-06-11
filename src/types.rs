@@ -40,25 +40,13 @@ pub enum DefaultDisplayStrategy {
     Random,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SearchOptions {
     pub include_files: Option<bool>,
     pub include_dirs: Option<bool>,
     pub types: Option<Vec<SymbolType>>,
     pub threshold: Option<f64>,
     pub limit: Option<usize>,
-}
-
-impl Default for SearchOptions {
-    fn default() -> Self {
-        Self {
-            include_files: None,
-            include_dirs: None,
-            types: None,
-            threshold: None,
-            limit: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

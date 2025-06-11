@@ -85,10 +85,14 @@ fn benchmark_tree_sitter_parsing(file_path: &Path) -> Result<()> {
              if ratio > 1.0 { "slower" } else { "faster" });
     
     println!("\n💡 Analysis:");
-    if symbol_count > symbols.len() {
-        println!("  - Tree-sitter found {} more symbols", symbol_count - symbols.len());
-    } else if symbols.len() > symbol_count {
-        println!("  - Regex found {} more symbols", symbols.len() - symbol_count);
+    match symbol_count.cmp(&symbols.len()) {
+        std::cmp::Ordering::Greater => {
+            println!("  - Tree-sitter found {} more symbols", symbol_count - symbols.len());
+        }
+        std::cmp::Ordering::Less => {
+            println!("  - Regex found {} more symbols", symbols.len() - symbol_count);
+        }
+        std::cmp::Ordering::Equal => {}
     }
     
     Ok(())
@@ -121,7 +125,7 @@ fn main() -> Result<()> {
             let start = Instant::now();
             let mut parser = Parser::new();
             parser.set_language(tree_sitter_rust::language())?;
-            let tree = parser.parse(&content, None).unwrap();
+            let _tree = parser.parse(&content, None).unwrap();
             let ts_time = start.elapsed();
             total_tree_sitter += ts_time;
             
