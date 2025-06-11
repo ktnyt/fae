@@ -238,4 +238,90 @@ impl TreeSitterIndexer {
     pub fn clear_cache(&mut self) {
         self.symbols_cache.clear();
     }
+
+    // === Incremental index update methods for file watching ===
+
+    /// Apply an index update from file watcher
+    pub fn apply_index_update(&mut self, update: &IndexUpdate) -> Result<()> {
+        match update {
+            IndexUpdate::Added { file, symbols } => {
+                self.add_file_symbols(file, symbols.clone())?;
+            }
+            IndexUpdate::Modified { file, symbols } => {
+                self.update_file_symbols(file, symbols.clone())?;
+            }
+            IndexUpdate::Removed { file, .. } => {
+                self.remove_file_symbols(file)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Add symbols for a new file
+    pub fn add_file_symbols(&mut self, file_path: &PathBuf, symbols: Vec<CodeSymbol>) -> Result<()> {
+        if self.verbose {
+            eprintln!("Adding {} symbols from new file: {}", symbols.len(), file_path.display());
+        }
+        self.symbols_cache.insert(file_path.clone(), symbols);
+        Ok(())
+    }
+
+    /// Update symbols for an existing file
+    pub fn update_file_symbols(&mut self, file_path: &PathBuf, symbols: Vec<CodeSymbol>) -> Result<()> {
+        if self.verbose {
+            eprintln!("Updating {} symbols for modified file: {}", symbols.len(), file_path.display());
+        }
+        self.symbols_cache.insert(file_path.clone(), symbols);
+        Ok(())
+    }
+
+    /// Remove symbols for a deleted file
+    pub fn remove_file_symbols(&mut self, file_path: &PathBuf) -> Result<()> {
+        if let Some(removed_symbols) = self.symbols_cache.remove(file_path) {
+            if self.verbose {
+                eprintln!("Removed {} symbols from deleted file: {}", removed_symbols.len(), file_path.display());
+            }
+        }
+        Ok(())
+    }
+
+    /// Re-index a specific file and update cache
+    pub fn reindex_file(&mut self, file_path: &PathBuf, patterns: &[String]) -> Result<Vec<CodeSymbol>> {
+        // Check if file should be indexed based on patterns and filters
+        if !self.file_filter.matches_patterns(file_path, patterns) || !self.file_filter.should_index_file(file_path) {
+            // File shouldn't be indexed - remove from cache if present
+            if let Some(old_symbols) = self.symbols_cache.remove(file_path) {
+                if self.verbose {
+                    eprintln!("File no longer matches patterns, removed {} symbols: {}", 
+                             old_symbols.len(), file_path.display());
+                }
+            }
+            return Ok(vec![]);
+        }
+
+        // Re-index the file
+        let symbols = self.create_file_symbols(file_path)?;
+        self.symbols_cache.insert(file_path.clone(), symbols.clone());
+        
+        if self.verbose {
+            eprintln!("Re-indexed file with {} symbols: {}", symbols.len(), file_path.display());
+        }
+        
+        Ok(symbols)
+    }
+
+    /// Get current symbol count for monitoring
+    pub fn get_symbol_count(&self) -> usize {
+        self.symbols_cache.values().map(|symbols| symbols.len()).sum()
+    }
+
+    /// Get current file count for monitoring
+    pub fn get_file_count(&self) -> usize {
+        self.symbols_cache.len()
+    }
+
+    /// Check if a file is currently indexed
+    pub fn is_file_indexed(&self, file_path: &PathBuf) -> bool {
+        self.symbols_cache.contains_key(file_path)
+    }
 }

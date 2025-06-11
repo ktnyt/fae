@@ -4,8 +4,11 @@ pub mod indexer;
 pub mod tui;
 pub mod parsers;
 pub mod filters;
+pub mod file_watcher;
 
 // 公開API
 pub use types::*;
 pub use searcher::*;
 pub use indexer::*;
+pub use file_watcher::*;
+pub use tui::{run_tui, run_tui_with_watch};

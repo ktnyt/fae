@@ -16,7 +16,9 @@ use arboard::Clipboard;
 
 use crate::{
     searcher::FuzzySearcher,
-    types::{CodeSymbol, DefaultDisplayStrategy, SearchOptions, SearchResult, SymbolType},
+    types::{CodeSymbol, DefaultDisplayStrategy, SearchOptions, SearchResult, SymbolType, IndexUpdate},
+    file_watcher::FileWatcher,
+    indexer::TreeSitterIndexer,
 };
 
 type IndexingReceiver = std::sync::mpsc::Receiver<(Vec<CodeSymbol>, u32, usize, usize)>;
@@ -43,6 +45,10 @@ pub struct TuiApp {
     pub indexing_receiver: Option<IndexingReceiver>,
     pub is_indexing: bool,
     pub indexing_start_time: Option<std::time::Instant>,
+    // File watching components
+    pub file_watcher: Option<FileWatcher>,
+    pub indexer: Option<TreeSitterIndexer>,
+    pub watch_enabled: bool,
 }
 
 impl Default for TuiApp {
@@ -91,6 +97,10 @@ impl TuiApp {
             indexing_receiver: None,
             is_indexing: false,
             indexing_start_time: None,
+            // File watching components
+            file_watcher: None,
+            indexer: None,
+            watch_enabled: false,
         }
     }
 
@@ -110,6 +120,37 @@ impl TuiApp {
         // Phase 2: Start progressive symbol indexing in background (non-blocking)
         self.start_progressive_indexing(directory, verbose, respect_gitignore, file_list);
         
+        Ok(())
+    }
+
+    pub async fn initialize_with_watch(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool, watch_enabled: bool) -> anyhow::Result<()> {
+        // Initialize normally first
+        self.initialize(directory, verbose, respect_gitignore).await?;
+        
+        // Set up file watching if enabled
+        self.watch_enabled = watch_enabled;
+        if watch_enabled {
+            self.setup_file_watching(directory, verbose, respect_gitignore)?;
+        }
+        
+        Ok(())
+    }
+
+    fn setup_file_watching(&mut self, directory: &std::path::Path, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
+        // Initialize indexer for file watching
+        let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
+        indexer.initialize_sync()?;
+        self.indexer = Some(indexer);
+
+        // Set up file watcher with patterns
+        let patterns = vec!["**/*".to_string()]; // Watch all files
+        let file_watcher = FileWatcher::new(directory, patterns, Some(100))?; // 100ms debounce
+        self.file_watcher = Some(file_watcher);
+
+        if verbose {
+            self.status_message = "File watching enabled - index will update automatically".to_string();
+        }
+
         Ok(())
     }
     
@@ -365,6 +406,75 @@ impl TuiApp {
             // Put receiver back if not finished
             if !finished {
                 self.indexing_receiver = Some(receiver);
+            }
+        }
+
+        // Also check for file watcher updates
+        self.process_file_watcher_events();
+    }
+
+    /// Process file watcher events and apply index updates
+    fn process_file_watcher_events(&mut self) {
+        if !self.watch_enabled || self.file_watcher.is_none() || self.indexer.is_none() {
+            return;
+        }
+
+        let mut updates_processed = 0;
+        const MAX_WATCH_UPDATES_PER_FRAME: usize = 5;
+
+        // Process file watcher updates
+        while updates_processed < MAX_WATCH_UPDATES_PER_FRAME {
+            // Try to get an update, avoiding long borrows
+            let index_update = if let Some(ref file_watcher) = self.file_watcher {
+                match file_watcher.try_recv_update() {
+                    Ok(Some(update)) => update,
+                    Ok(None) => break, // No more updates
+                    Err(_) => break,   // Channel disconnected or other error
+                }
+            } else {
+                break;
+            };
+
+            // Now process the update without borrowing file_watcher
+            if let Some(ref mut indexer) = self.indexer {
+                if let Err(e) = indexer.apply_index_update(&index_update) {
+                    eprintln!("Failed to apply index update: {}", e);
+                    continue;
+                }
+                
+                // Update our symbols cache with the new symbols from indexer
+                self.symbols = indexer.get_all_symbols();
+                
+                // Update searcher with new symbols
+                self.searcher = Some(FuzzySearcher::new(self.symbols.clone()));
+                
+                // Update current results if we have a query
+                if !self.query.trim().is_empty() {
+                    self.perform_search();
+                } else {
+                    self.show_default_results();
+                }
+                
+                // Update status message for file events
+                match &index_update {
+                    IndexUpdate::Added { file, symbols } => {
+                        self.status_message = format!("File added: {} ({} symbols)", 
+                                                     file.file_name().unwrap_or_default().to_string_lossy(), 
+                                                     symbols.len());
+                    }
+                    IndexUpdate::Modified { file, symbols } => {
+                        self.status_message = format!("File modified: {} ({} symbols)", 
+                                                     file.file_name().unwrap_or_default().to_string_lossy(), 
+                                                     symbols.len());
+                    }
+                    IndexUpdate::Removed { file, symbol_count } => {
+                        self.status_message = format!("File deleted: {} ({} symbols removed)", 
+                                                     file.file_name().unwrap_or_default().to_string_lossy(), 
+                                                     symbol_count);
+                    }
+                }
+                
+                updates_processed += 1;
             }
         }
     }
@@ -835,6 +945,11 @@ impl TuiApp {
             Line::from(vec![
                 Span::styled("Status: ", Style::default().fg(Color::Cyan)),
                 Span::raw(&self.status_message),
+                if self.watch_enabled {
+                    Span::styled(" | 👁 Watch: ON", Style::default().fg(Color::Green))
+                } else {
+                    Span::styled(" | 👁 Watch: OFF", Style::default().fg(Color::Red))
+                },
             ]),
             Line::from(vec![
                 Span::styled("Keys: ", Style::default().fg(Color::Yellow)),
@@ -872,6 +987,10 @@ impl TuiApp {
             Line::from("  Backspace - Delete character"),
             Line::from("  ? - Toggle this help"),
             Line::from("  Esc / Ctrl+C - Quit"),
+            Line::from(""),
+            Line::from("File Watching:"),
+            Line::from(format!("  Status: {}", if self.watch_enabled { "🟢 Enabled" } else { "🔴 Disabled" })),
+            Line::from("  Monitors files for real-time index updates"),
             Line::from(""),
             Line::from("Note: By default, files ignored by .gitignore are excluded."),
             Line::from("      Use --include-ignored flag to search all files."),
@@ -915,6 +1034,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 pub async fn run_tui(directory: std::path::PathBuf, verbose: bool, respect_gitignore: bool) -> anyhow::Result<()> {
+    run_tui_with_watch(directory, verbose, respect_gitignore, false).await
+}
+
+pub async fn run_tui_with_watch(directory: std::path::PathBuf, verbose: bool, respect_gitignore: bool, watch_enabled: bool) -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -924,7 +1047,7 @@ pub async fn run_tui(directory: std::path::PathBuf, verbose: bool, respect_gitig
 
     // Create and initialize app
     let mut app = TuiApp::new();
-    app.initialize(&directory, verbose, respect_gitignore).await?;
+    app.initialize_with_watch(&directory, verbose, respect_gitignore, watch_enabled).await?;
 
     // Main loop
     let result = run_app(&mut terminal, &mut app).await;

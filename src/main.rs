@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use sfs::{indexer::TreeSitterIndexer, searcher::FuzzySearcher, types::*, tui::run_tui};
+use sfs::{indexer::TreeSitterIndexer, searcher::FuzzySearcher, types::*, run_tui_with_watch};
 use std::path::PathBuf;
 
 #[derive(Parser, Clone)]
@@ -49,6 +49,14 @@ struct Cli {
     /// Use this flag to search all files in the directory regardless of .gitignore rules.
     #[arg(long)]
     include_ignored: bool,
+    
+    /// Enable real-time file watching and automatic index updates
+    #[arg(long)]
+    watch: bool,
+    
+    /// Disable real-time file watching (default behavior)
+    #[arg(long)]
+    no_watch: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -88,9 +96,20 @@ impl From<SymbolTypeArg> for SymbolType {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     
+    // Determine watch mode: --watch enables, --no-watch disables, default is disabled
+    let watch_enabled = if cli.watch && cli.no_watch {
+        // If both flags are provided, show warning and default to disabled
+        eprintln!("⚠️  Warning: Both --watch and --no-watch flags provided. Defaulting to no-watch.");
+        false
+    } else if cli.watch {
+        true
+    } else {
+        false // Default behavior: no watching
+    };
+    
     if cli.tui {
-        // TUI mode  
-        run_tui(cli.directory, cli.verbose, !cli.include_ignored).await?;
+        // TUI mode with optional file watching
+        run_tui_with_watch(cli.directory, cli.verbose, !cli.include_ignored, watch_enabled).await?;
     } else {
         let query = cli.query.clone();
         match query {
@@ -99,11 +118,15 @@ async fn main() -> anyhow::Result<()> {
                 perform_search(cli, q).await?;
             }
             None => {
-                // Interactive mode - fallback to TUI
+                // Interactive mode - fallback to TUI with optional file watching
                 if cli.verbose {
-                    println!("🖥️  Starting TUI mode...");
+                    if watch_enabled {
+                        println!("🖥️  Starting TUI mode with file watching...");
+                    } else {
+                        println!("🖥️  Starting TUI mode...");
+                    }
                 }
-                run_tui(cli.directory, cli.verbose, !cli.include_ignored).await?;
+                run_tui_with_watch(cli.directory, cli.verbose, !cli.include_ignored, watch_enabled).await?;
             }
         }
     }

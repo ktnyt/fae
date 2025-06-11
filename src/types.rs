@@ -61,3 +61,29 @@ pub struct IndexedFile {
     pub symbols: Vec<CodeSymbol>,
     pub last_modified: u64,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndexUpdate {
+    /// New file was added to the index
+    Added { file: PathBuf, symbols: Vec<CodeSymbol> },
+    /// Existing file was modified and re-indexed
+    Modified { file: PathBuf, symbols: Vec<CodeSymbol> },
+    /// File was deleted from the index
+    Removed { file: PathBuf, symbol_count: usize },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum WatchEvent {
+    /// File system event that should trigger index update
+    FileChanged { path: PathBuf, event_kind: WatchEventKind },
+    /// Batch of events (for optimization)
+    BatchUpdate { events: Vec<WatchEvent> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum WatchEventKind {
+    Created,
+    Modified,
+    Deleted,
+    Renamed { from: PathBuf, to: PathBuf },
+}
