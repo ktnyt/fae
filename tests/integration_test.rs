@@ -1,13 +1,13 @@
 // 統合・エンドツーエンドテストスイート
 // 実際のプロジェクト構造でのCLI+TUI全ワークフロー検証
 
-use sfs::types::*;
 use sfs::indexer::TreeSitterIndexer;
 use sfs::searcher::FuzzySearcher;
-use tempfile::TempDir;
+use sfs::types::*;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 
 #[cfg(test)]
 mod integration_tests {
@@ -16,7 +16,7 @@ mod integration_tests {
     /// 実際のNode.jsプロジェクト構造を模倣した複雑な環境を作成
     fn create_realistic_project_structure(temp_dir: &TempDir) -> anyhow::Result<()> {
         let project_root = temp_dir.path();
-        
+
         // Node.js プロジェクト構造
         fs::create_dir_all(project_root.join("src/components/ui"))?;
         fs::create_dir_all(project_root.join("src/utils"))?;
@@ -26,24 +26,26 @@ mod integration_tests {
         fs::create_dir_all(project_root.join("tests/integration"))?;
         fs::create_dir_all(project_root.join("docs"))?;
         fs::create_dir_all(project_root.join("scripts"))?;
-        
+
         // node_modules (大規模)
         fs::create_dir_all(project_root.join("node_modules/react/lib"))?;
         fs::create_dir_all(project_root.join("node_modules/lodash/lib"))?;
         fs::create_dir_all(project_root.join("node_modules/@types/node"))?;
         fs::create_dir_all(project_root.join("node_modules/.cache"))?;
-        
+
         // .git ディレクトリ
         fs::create_dir_all(project_root.join(".git/objects"))?;
         fs::create_dir_all(project_root.join(".git/refs/heads"))?;
         fs::create_dir_all(project_root.join(".git/hooks"))?;
-        
+
         // dist/build 成果物
         fs::create_dir_all(project_root.join("dist/assets"))?;
         fs::create_dir_all(project_root.join("build/static"))?;
-        
+
         // プロジェクト設定ファイル
-        fs::write(project_root.join("package.json"), r#"{
+        fs::write(
+            project_root.join("package.json"),
+            r#"{
   "name": "test-project",
   "version": "1.0.0",
   "dependencies": {
@@ -54,9 +56,12 @@ mod integration_tests {
     "@types/node": "^18.0.0",
     "typescript": "^4.9.0"
   }
-}"#)?;
+}"#,
+        )?;
 
-        fs::write(project_root.join("tsconfig.json"), r#"{
+        fs::write(
+            project_root.join("tsconfig.json"),
+            r#"{
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
@@ -69,9 +74,12 @@ mod integration_tests {
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "build"]
-}"#)?;
+}"#,
+        )?;
 
-        fs::write(project_root.join(".gitignore"), r#"# Dependencies
+        fs::write(
+            project_root.join(".gitignore"),
+            r#"# Dependencies
 node_modules/
 
 # Build outputs
@@ -97,10 +105,13 @@ npm-debug.log*
 
 # Cache
 .cache/
-"#)?;
+"#,
+        )?;
 
         // 実際のソースコード（複雑な例）
-        fs::write(project_root.join("src/components/ui/Button.tsx"), r#"import React, { forwardRef, ButtonHTMLAttributes } from 'react';
+        fs::write(
+            project_root.join("src/components/ui/Button.tsx"),
+            r#"import React, { forwardRef, ButtonHTMLAttributes } from 'react';
 import { cn } from '../../utils/classNames';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -138,9 +149,12 @@ Button.displayName = 'Button';
 
 export { Button };
 export default Button;
-"#)?;
+"#,
+        )?;
 
-        fs::write(project_root.join("src/utils/classNames.ts"), r#"import { type ClassValue, clsx } from 'clsx';
+        fs::write(
+            project_root.join("src/utils/classNames.ts"),
+            r#"import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 export function cn(...inputs: ClassValue[]) {
@@ -181,9 +195,12 @@ export class ClassNameBuilder {
     return cn(...this.classes);
   }
 }
-"#)?;
+"#,
+        )?;
 
-        fs::write(project_root.join("src/hooks/useLocalStorage.ts"), r#"import { useState, useEffect, useCallback } from 'react';
+        fs::write(
+            project_root.join("src/hooks/useLocalStorage.ts"),
+            r#"import { useState, useEffect, useCallback } from 'react';
 
 type SetValue<T> = T | ((val: T) => T);
 
@@ -248,9 +265,12 @@ function useLocalStorage<T>(
 }
 
 export default useLocalStorage;
-"#)?;
+"#,
+        )?;
 
-        fs::write(project_root.join("src/types/api.ts"), r#"export interface User {
+        fs::write(
+            project_root.join("src/types/api.ts"),
+            r#"export interface User {
   id: string;
   name: string;
   email: string;
@@ -322,10 +342,13 @@ export interface SearchParams extends PaginationParams {
   query?: string;
   filters?: Record<string, any>;
 }
-"#)?;
+"#,
+        )?;
 
         // テストファイル
-        fs::write(project_root.join("tests/unit/Button.test.tsx"), r#"import React from 'react';
+        fs::write(
+            project_root.join("tests/unit/Button.test.tsx"),
+            r#"import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { Button } from '../../src/components/ui/Button';
 
@@ -355,9 +378,12 @@ describe('Button Component', () => {
     expect(ref.current).toBeInstanceOf(HTMLButtonElement);
   });
 });
-"#)?;
+"#,
+        )?;
 
-        fs::write(project_root.join("tests/integration/userFlow.test.ts"), r#"import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+        fs::write(
+            project_root.join("tests/integration/userFlow.test.ts"),
+            r#"import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { setupTestDatabase, cleanupTestDatabase } from './helpers/database';
 import { createTestUser, loginUser, updateUserProfile } from './helpers/userHelpers';
 
@@ -429,10 +455,13 @@ describe('User Management Flow', () => {
     });
   });
 });
-"#)?;
+"#,
+        )?;
 
         // ドキュメント
-        fs::write(project_root.join("docs/API.md"), r#"# API Documentation
+        fs::write(
+            project_root.join("docs/API.md"),
+            r#"# API Documentation
 
 ## Authentication
 
@@ -508,10 +537,13 @@ Update user profile.
   }
 }
 ```
-"#)?;
+"#,
+        )?;
 
         // スクリプト
-        fs::write(project_root.join("scripts/build.sh"), r#"#!/bin/bash
+        fs::write(
+            project_root.join("scripts/build.sh"),
+            r#"#!/bin/bash
 
 set -e
 
@@ -538,35 +570,47 @@ echo "📋 Generating types..."
 npx tsc --declaration --emitDeclarationOnly --outDir dist/types
 
 echo "✅ Build completed successfully!"
-"#)?;
+"#,
+        )?;
 
         // node_modules の中身（一部）
-        fs::write(project_root.join("node_modules/react/package.json"), r#"{
+        fs::write(
+            project_root.join("node_modules/react/package.json"),
+            r#"{
   "name": "react",
   "version": "18.2.0",
   "description": "React is a JavaScript library for building user interfaces.",
   "main": "index.js",
   "license": "MIT"
-}"#)?;
+}"#,
+        )?;
 
-        fs::write(project_root.join("node_modules/react/lib/React.js"), r#"'use strict';
+        fs::write(
+            project_root.join("node_modules/react/lib/React.js"),
+            r#"'use strict';
 
 if (process.env.NODE_ENV === 'production') {
   module.exports = require('./cjs/react.production.min.js');
 } else {
   module.exports = require('./cjs/react.development.js');
 }
-"#)?;
+"#,
+        )?;
 
-        fs::write(project_root.join("node_modules/lodash/package.json"), r#"{
+        fs::write(
+            project_root.join("node_modules/lodash/package.json"),
+            r#"{
   "name": "lodash",
   "version": "4.17.21",
   "description": "Lodash modular utilities.",
   "main": "lodash.js",
   "license": "MIT"
-}"#)?;
+}"#,
+        )?;
 
-        fs::write(project_root.join("node_modules/lodash/lib/debounce.js"), r#"function debounce(func, wait, options) {
+        fs::write(
+            project_root.join("node_modules/lodash/lib/debounce.js"),
+            r#"function debounce(func, wait, options) {
   let lastArgs,
       lastThis,
       maxWait,
@@ -606,10 +650,13 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 module.exports = debounce;
-"#)?;
+"#,
+        )?;
 
         // .git ファイル（軽量版）
-        fs::write(project_root.join(".git/config"), r#"[core]
+        fs::write(
+            project_root.join(".git/config"),
+            r#"[core]
 	repositoryformatversion = 0
 	filemode = true
 	bare = false
@@ -622,14 +669,20 @@ module.exports = debounce;
 [branch "main"]
 	remote = origin
 	merge = refs/heads/main
-"#)?;
+"#,
+        )?;
 
         fs::write(project_root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
 
-        fs::write(project_root.join(".git/refs/heads/main"), "1234567890abcdef1234567890abcdef12345678\n")?;
+        fs::write(
+            project_root.join(".git/refs/heads/main"),
+            "1234567890abcdef1234567890abcdef12345678\n",
+        )?;
 
         // dist/build ディレクトリ（ビルド成果物）
-        fs::write(project_root.join("dist/index.html"), r#"<!DOCTYPE html>
+        fs::write(
+            project_root.join("dist/index.html"),
+            r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -642,9 +695,12 @@ module.exports = debounce;
     <script src="./assets/index.js"></script>
 </body>
 </html>
-"#)?;
+"#,
+        )?;
 
-        fs::write(project_root.join("dist/assets/index.js"), r#"(function(){
+        fs::write(
+            project_root.join("dist/assets/index.js"),
+            r#"(function(){
   'use strict';
   
   // Minified React application bundle
@@ -703,9 +759,13 @@ module.exports = debounce;
     render(React.createElement(App), root);
   });
 })();
-"#)?;
+"#,
+        )?;
 
-        println!("✅ Created realistic project structure with {} files", count_files(project_root)?);
+        println!(
+            "✅ Created realistic project structure with {} files",
+            count_files(project_root)?
+        );
         Ok(())
     }
 
@@ -742,57 +802,100 @@ module.exports = debounce;
         let indexing_duration = start_time.elapsed();
 
         let all_symbols = indexer.get_all_symbols();
-        
+
         // デバッグ情報を出力
         println!("🔍 Debug information:");
         println!("  Total symbols extracted: {}", all_symbols.len());
-        
+
         // ファイル別のシンボル分布を確認
         let mut file_symbol_count = std::collections::HashMap::new();
         for symbol in &all_symbols {
-            let file_name = symbol.file.file_name()
+            let file_name = symbol
+                .file
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             *file_symbol_count.entry(file_name).or_insert(0) += 1;
         }
-        
+
         println!("  Files with symbols:");
         for (file, count) in file_symbol_count.iter() {
             println!("    {}: {} symbols", file, count);
         }
-        
+
         // 一部のシンボル名を確認
         println!("  Sample symbols:");
         for symbol in all_symbols.iter().take(10) {
-            println!("    {} ({:?}) in {}", symbol.name, symbol.symbol_type, symbol.file.display());
+            println!(
+                "    {} ({:?}) in {}",
+                symbol.name,
+                symbol.symbol_type,
+                symbol.file.display()
+            );
         }
-        
+
         // 統合テストの基本検証（期待値を調整）
-        assert!(all_symbols.len() > 30, "Should extract substantial number of symbols from realistic project, got {}", all_symbols.len());
-        assert!(indexing_duration < Duration::from_secs(30), "Should index realistic project within 30 seconds");
+        assert!(
+            all_symbols.len() > 30,
+            "Should extract substantial number of symbols from realistic project, got {}",
+            all_symbols.len()
+        );
+        assert!(
+            indexing_duration < Duration::from_secs(30),
+            "Should index realistic project within 30 seconds"
+        );
 
         // 特定のシンボルが存在することを確認
-        assert!(all_symbols.iter().any(|s| s.name == "Button"), "Should find Button component");
-        assert!(all_symbols.iter().any(|s| s.name == "useLocalStorage"), "Should find custom hook");
-        assert!(all_symbols.iter().any(|s| s.name == "User"), "Should find User interface");
-        assert!(all_symbols.iter().any(|s| s.name == "ClassNameBuilder"), "Should find utility class");
+        assert!(
+            all_symbols.iter().any(|s| s.name == "Button"),
+            "Should find Button component"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "useLocalStorage"),
+            "Should find custom hook"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "User"),
+            "Should find User interface"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "ClassNameBuilder"),
+            "Should find utility class"
+        );
 
         // ファイル/ディレクトリシンボルの確認
-        assert!(all_symbols.iter().any(|s| s.name.contains("Button.tsx")), "Should find component files");
+        assert!(
+            all_symbols.iter().any(|s| s.name.contains("Button.tsx")),
+            "Should find component files"
+        );
         // ディレクトリは見つからない場合があるので、代わりにファイルの確認
-        assert!(all_symbols.iter().any(|s| s.name == "ui"), "Should find ui directory (from Button.tsx path)");
-        assert!(all_symbols.iter().any(|s| s.name == "types"), "Should find types directory");
+        assert!(
+            all_symbols.iter().any(|s| s.name == "ui"),
+            "Should find ui directory (from Button.tsx path)"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "types"),
+            "Should find types directory"
+        );
 
         // .gitignore が効いてnode_modules等が除外されていることを確認
-        let node_modules_symbols: Vec<_> = all_symbols.iter()
+        let node_modules_symbols: Vec<_> = all_symbols
+            .iter()
             .filter(|s| s.file.to_string_lossy().contains("node_modules"))
             .collect();
-        assert!(node_modules_symbols.is_empty(), "Should exclude node_modules from indexing");
+        assert!(
+            node_modules_symbols.is_empty(),
+            "Should exclude node_modules from indexing"
+        );
 
-        let dist_symbols: Vec<_> = all_symbols.iter()
+        let dist_symbols: Vec<_> = all_symbols
+            .iter()
             .filter(|s| s.file.to_string_lossy().contains("/dist/"))
             .collect();
-        assert!(dist_symbols.is_empty(), "Should exclude dist directory from indexing");
+        assert!(
+            dist_symbols.is_empty(),
+            "Should exclude dist directory from indexing"
+        );
 
         println!("🎯 End-to-end test completed:");
         println!("  📁 Project files indexed successfully");
@@ -822,23 +925,18 @@ module.exports = debounce;
             // コンポーネント検索
             ("Button", "Should find React components"),
             ("btn", "Should find Button with partial match"),
-            
-            // 関数検索  
+            // 関数検索
             ("useLocal", "Should find custom hooks"),
             ("cn", "Should find utility functions"),
-            
             // 型検索
             ("User", "Should find TypeScript interfaces"),
             ("Api", "Should find API-related types"),
-            
             // ファイル検索
             ("tsx", "Should find TypeScript React files"),
             ("test", "Should find test files"),
-            
             // 設定ファイル検索
             ("package", "Should find package.json"),
             ("tsconfig", "Should find TypeScript config"),
-            
             // 部分マッチ検索
             ("Notification", "Should find notification-related symbols"),
             ("Preference", "Should find preferences-related symbols"),
@@ -850,17 +948,30 @@ module.exports = debounce;
             let search_duration = search_start.elapsed();
 
             // 検索性能の確認
-            assert!(search_duration < Duration::from_millis(100), 
-                "Search for '{}' should complete within 100ms, took {:?}", query, search_duration);
+            assert!(
+                search_duration < Duration::from_millis(100),
+                "Search for '{}' should complete within 100ms, took {:?}",
+                query,
+                search_duration
+            );
 
             // 結果の妥当性確認（デバッグ出力で確認したシンボルに基づく）
-            if ["Button", "btn", "useLocal", "cn", "User", "Api", "tsx", "test", "package", "tsconfig"].contains(&query) {
-                if results.is_empty() {
-                    println!("⚠️  No results for '{}' - this might be expected based on the actual project structure", query);
-                }
+            if [
+                "Button", "btn", "useLocal", "cn", "User", "Api", "tsx", "test", "package",
+                "tsconfig",
+            ]
+            .contains(&query)
+                && results.is_empty()
+            {
+                println!("⚠️  No results for '{}' - this might be expected based on the actual project structure", query);
             }
 
-            println!("🔍 Search '{}': {} results in {:?}", query, results.len(), search_duration);
+            println!(
+                "🔍 Search '{}': {} results in {:?}",
+                query,
+                results.len(),
+                search_duration
+            );
         }
 
         // 型フィルタリングテスト
@@ -868,19 +979,27 @@ module.exports = debounce;
             types: Some(vec![SymbolType::Function]),
             ..Default::default()
         };
-        
+
         let function_results = searcher.search("use", &function_options);
-        assert!(function_results.iter().all(|r| r.symbol.symbol_type == SymbolType::Function),
-            "Type filtering should only return functions");
+        assert!(
+            function_results
+                .iter()
+                .all(|r| r.symbol.symbol_type == SymbolType::Function),
+            "Type filtering should only return functions"
+        );
 
         let class_options = SearchOptions {
             types: Some(vec![SymbolType::Class]),
             ..Default::default()
         };
-        
+
         let class_results = searcher.search("Class", &class_options);
-        assert!(class_results.iter().all(|r| r.symbol.symbol_type == SymbolType::Class),
-            "Type filtering should only return classes");
+        assert!(
+            class_results
+                .iter()
+                .all(|r| r.symbol.symbol_type == SymbolType::Class),
+            "Type filtering should only return classes"
+        );
 
         println!("✅ Large-scale search workflow test completed successfully");
 
@@ -906,7 +1025,8 @@ module.exports = debounce;
 
             for file_idx in 0..20 {
                 let file_path = module_dir.join(format!("component_{}.tsx", file_idx));
-                let content = format!(r#"import React from 'react';
+                let content = format!(
+                    r#"import React from 'react';
 
 export interface Component{}Props {{
   id: string;
@@ -962,7 +1082,9 @@ export const Component{}: React.FC<Component{}Props> = ({{
 }};
 
 export default Component{};
-"#, file_idx, file_idx, file_idx, file_idx, file_idx);
+"#,
+                    file_idx, file_idx, file_idx, file_idx, file_idx
+                );
 
                 fs::write(file_path, content)?;
             }
@@ -970,9 +1092,12 @@ export default Component{};
 
         let creation_duration = start_creation.elapsed();
         let file_count = count_files(project_root)?;
-        
+
         println!("📊 Created {} files in {:?}", file_count, creation_duration);
-        assert!(file_count >= 1000, "Should create at least 1000 files for large-scale test");
+        assert!(
+            file_count >= 1000,
+            "Should create at least 1000 files for large-scale test"
+        );
 
         // 大規模インデックシングのテスト
         let mut indexer = TreeSitterIndexer::with_verbose(false);
@@ -987,16 +1112,22 @@ export default Component{};
         let all_symbols = indexer.get_all_symbols();
 
         // 性能基準の確認
-        assert!(indexing_duration < Duration::from_secs(60), 
-            "Should index 1000+ files within 60 seconds, took {:?}", indexing_duration);
+        assert!(
+            indexing_duration < Duration::from_secs(60),
+            "Should index 1000+ files within 60 seconds, took {:?}",
+            indexing_duration
+        );
 
         let files_per_second = file_count as f64 / indexing_duration.as_secs_f64();
-        assert!(files_per_second > 10.0, 
-            "Should process at least 10 files per second, got {:.2}", files_per_second);
+        assert!(
+            files_per_second > 10.0,
+            "Should process at least 10 files per second, got {:.2}",
+            files_per_second
+        );
 
         // 大規模検索のテスト
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         let search_queries = vec!["Component", "React", "Props", "onClick", "variant"];
         let mut total_search_time = Duration::new(0, 0);
 
@@ -1004,18 +1135,29 @@ export default Component{};
             let search_start = Instant::now();
             let results = searcher.search(query, &SearchOptions::default());
             let search_duration = search_start.elapsed();
-            
+
             total_search_time += search_duration;
-            
-            assert!(search_duration < Duration::from_millis(200),
-                "Search should complete within 200ms even with 1000+ files, took {:?}", search_duration);
-            
+
+            assert!(
+                search_duration < Duration::from_millis(200),
+                "Search should complete within 200ms even with 1000+ files, took {:?}",
+                search_duration
+            );
+
             // 大規模生成ファイルでは特定のシンボルが見つかることを期待
             if *query == "Component" {
-                assert!(!results.is_empty(), "Should find Component symbols in generated files");
+                assert!(
+                    !results.is_empty(),
+                    "Should find Component symbols in generated files"
+                );
             }
-            
-            println!("🔍 Large search '{}': {} results in {:?}", query, results.len(), search_duration);
+
+            println!(
+                "🔍 Large search '{}': {} results in {:?}",
+                query,
+                results.len(),
+                search_duration
+            );
         }
 
         let avg_search_time = total_search_time / search_queries.len() as u32;
@@ -1023,7 +1165,10 @@ export default Component{};
         println!("🎯 Large-scale performance test results:");
         println!("  📁 Files processed: {}", file_count);
         println!("  🔍 Symbols extracted: {}", all_symbols.len());
-        println!("  ⏱️  Indexing time: {:?} ({:.2} files/sec)", indexing_duration, files_per_second);
+        println!(
+            "  ⏱️  Indexing time: {:?} ({:.2} files/sec)",
+            indexing_duration, files_per_second
+        );
         println!("  🔍 Average search time: {:?}", avg_search_time);
         println!("  ✅ Performance requirements met");
 
@@ -1037,22 +1182,24 @@ export default Component{};
 
         // 複数のインデクサーを並列実行
         let temp_path = temp_dir.path().to_path_buf();
-        let handles: Vec<_> = (0..3).map(|i| {
-            let path = temp_path.clone();
-            tokio::spawn(async move {
-                let mut indexer = TreeSitterIndexer::with_verbose(false);
-                indexer.initialize().await.unwrap();
-                
-                let patterns = vec!["**/*".to_string()];
-                let start = Instant::now();
-                
-                indexer.index_directory(&path, &patterns).await.unwrap();
-                let duration = start.elapsed();
-                
-                let symbols = indexer.get_all_symbols();
-                (i, symbols.len(), duration)
+        let handles: Vec<_> = (0..3)
+            .map(|i| {
+                let path = temp_path.clone();
+                tokio::spawn(async move {
+                    let mut indexer = TreeSitterIndexer::with_verbose(false);
+                    indexer.initialize().await.unwrap();
+
+                    let patterns = vec!["**/*".to_string()];
+                    let start = Instant::now();
+
+                    indexer.index_directory(&path, &patterns).await.unwrap();
+                    let duration = start.elapsed();
+
+                    let symbols = indexer.get_all_symbols();
+                    (i, symbols.len(), duration)
+                })
             })
-        }).collect();
+            .collect();
 
         // すべてのタスクの完了を待つ
         let mut results = Vec::new();
@@ -1063,9 +1210,12 @@ export default Component{};
         // 結果の一貫性を確認
         let symbol_counts: Vec<usize> = results.iter().map(|(_, count, _)| *count).collect();
         let first_count = symbol_counts[0];
-        
-        assert!(symbol_counts.iter().all(|&count| count == first_count),
-            "Concurrent indexing should produce consistent results: {:?}", symbol_counts);
+
+        assert!(
+            symbol_counts.iter().all(|&count| count == first_count),
+            "Concurrent indexing should produce consistent results: {:?}",
+            symbol_counts
+        );
 
         println!("🔄 Concurrent operations test:");
         for (i, count, duration) in results {
@@ -1088,28 +1238,35 @@ export default Component{};
         // Quick file discoveryのテスト（TUI初期表示）
         let quick_start = Instant::now();
         let patterns = vec!["**/*".to_string()];
-        
+
         // プログレッシブインデックシングをシミュレート
         let project_path = temp_dir.path();
         let file_filter = sfs::filters::FileFilter::new(false);
         let gitignore_filter = sfs::filters::GitignoreFilter::new(true, false);
-        
+
         let walker = gitignore_filter.create_walker(project_path);
         let mut quick_files = Vec::new();
-        
-        for entry in walker.build().take(100) { // 最初の100ファイル
+
+        for entry in walker.build().take(100) {
+            // 最初の100ファイル
             if let Some(file_path) = gitignore_filter.should_process_entry(&entry) {
                 if file_filter.should_index_file(&file_path) {
                     quick_files.push(file_path);
                 }
             }
         }
-        
+
         let quick_duration = quick_start.elapsed();
-        
-        assert!(quick_duration < Duration::from_millis(100),
-            "Quick file discovery should complete within 100ms, took {:?}", quick_duration);
-        assert!(!quick_files.is_empty(), "Should discover files quickly for TUI display");
+
+        assert!(
+            quick_duration < Duration::from_millis(100),
+            "Quick file discovery should complete within 100ms, took {:?}",
+            quick_duration
+        );
+        assert!(
+            !quick_files.is_empty(),
+            "Should discover files quickly for TUI display"
+        );
 
         // フルインデックシングをバックグラウンドで実行
         let full_start = Instant::now();
@@ -1130,7 +1287,7 @@ export default Component{};
 
         for (query, scenario) in search_scenarios {
             let search_start = Instant::now();
-            
+
             let search_options = if query.starts_with('>') {
                 SearchOptions {
                     types: Some(vec![SymbolType::Dirname, SymbolType::Filename]),
@@ -1138,26 +1295,48 @@ export default Component{};
                 }
             } else if query.starts_with('#') {
                 SearchOptions {
-                    types: Some(vec![SymbolType::Function, SymbolType::Class, SymbolType::Interface]),
+                    types: Some(vec![
+                        SymbolType::Function,
+                        SymbolType::Class,
+                        SymbolType::Interface,
+                    ]),
                     ..Default::default()
                 }
             } else {
                 SearchOptions::default()
             };
-            
+
             let clean_query = query.trim_start_matches('>').trim_start_matches('#');
             let results = searcher.search(clean_query, &search_options);
             let search_duration = search_start.elapsed();
 
-            assert!(search_duration < Duration::from_millis(50),
-                "Interactive search should be very fast: {} took {:?}", scenario, search_duration);
+            assert!(
+                search_duration < Duration::from_millis(50),
+                "Interactive search should be very fast: {} took {:?}",
+                scenario,
+                search_duration
+            );
 
-            println!("🔍 {}: '{}' → {} results in {:?}", scenario, query, results.len(), search_duration);
+            println!(
+                "🔍 {}: '{}' → {} results in {:?}",
+                scenario,
+                query,
+                results.len(),
+                search_duration
+            );
         }
 
         println!("🎯 CLI/TUI workflow integration test:");
-        println!("  ⚡ Quick discovery: {} files in {:?}", quick_files.len(), quick_duration);
-        println!("  📁 Full indexing: {} symbols in {:?}", indexer.get_all_symbols().len(), full_duration);
+        println!(
+            "  ⚡ Quick discovery: {} files in {:?}",
+            quick_files.len(),
+            quick_duration
+        );
+        println!(
+            "  📁 Full indexing: {} symbols in {:?}",
+            indexer.get_all_symbols().len(),
+            full_duration
+        );
         println!("  ✅ Interactive search performance meets requirements");
 
         Ok(())

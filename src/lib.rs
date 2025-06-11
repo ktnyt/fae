@@ -1,25 +1,25 @@
-pub mod types;
-pub mod searcher;
-pub mod indexer;
-pub mod tui;
-pub mod parsers;
-pub mod filters;
-pub mod file_watcher;
 pub mod cache_manager;
+pub mod file_watcher;
+pub mod filters;
+pub mod indexer;
+pub mod parsers;
+pub mod searcher;
+pub mod tui;
+pub mod types;
 
 // New event-based architecture modules
 pub mod backend;
-pub mod tui_state;
 pub mod tui_simulator;
+pub mod tui_state;
 
 // 公開API
-pub use types::*;
-pub use searcher::*;
-pub use indexer::*;
 pub use file_watcher::*;
+pub use indexer::*;
+pub use searcher::*;
 pub use tui::{run_tui, run_tui_with_watch};
+pub use types::*;
 
 // New APIs for testing and simulation
-pub use backend::{SearchBackend, BackendEvent, UserCommand};
-pub use tui_state::{TuiState, TuiInput, TuiAction};
+pub use backend::{BackendEvent, SearchBackend, UserCommand};
 pub use tui_simulator::TuiSimulator;
+pub use tui_state::{TuiAction, TuiInput, TuiState};

@@ -1,15 +1,16 @@
-use sfs::{TuiSimulator, BackendEvent, UserCommand};
-use std::path::PathBuf;
-use tempfile::TempDir;
+use sfs::{BackendEvent, TuiSimulator, UserCommand};
 use std::fs;
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 
 fn create_test_project() -> anyhow::Result<TempDir> {
     let temp_dir = TempDir::new()?;
-    
+
     // Create multiple test files with different symbols
     let files = vec![
-        ("src/main.ts", r#"
+        (
+            "src/main.ts",
+            r#"
 class Application {
     private name: string;
     
@@ -26,8 +27,11 @@ function main() {
     const app = new Application("TestApp");
     app.start();
 }
-"#),
-        ("src/utils.ts", r#"
+"#,
+        ),
+        (
+            "src/utils.ts",
+            r#"
 export interface Config {
     port: number;
     host: string;
@@ -41,8 +45,11 @@ export function createConfig(): Config {
 }
 
 export const DEFAULT_TIMEOUT = 5000;
-"#),
-        ("src/service.py", r#"
+"#,
+        ),
+        (
+            "src/service.py",
+            r#"
 class DatabaseService:
     def __init__(self, connection_string: str):
         self.connection_string = connection_string
@@ -58,9 +65,10 @@ def create_service(conn_str: str) -> DatabaseService:
     return DatabaseService(conn_str)
 
 RETRY_COUNT = 3
-"#),
+"#,
+        ),
     ];
-    
+
     for (file_path, content) in files {
         let full_path = temp_dir.path().join(file_path);
         if let Some(parent) = full_path.parent() {
@@ -68,7 +76,7 @@ RETRY_COUNT = 3
         }
         fs::write(&full_path, content)?;
     }
-    
+
     Ok(temp_dir)
 }
 
@@ -76,52 +84,68 @@ RETRY_COUNT = 3
 fn test_progressive_indexing_workflow() -> anyhow::Result<()> {
     let temp_dir = create_test_project()?;
     let mut simulator = TuiSimulator::new(false, true)?;
-    
+
     // Start indexing
     simulator.initialize(temp_dir.path().to_path_buf())?;
-    
+
     // Track indexing progress events
     let mut indexing_events = Vec::new();
     let start_time = Instant::now();
     let timeout = Duration::from_secs(10);
-    
+
     // Wait for indexing to complete while collecting progress events
     loop {
         if start_time.elapsed() > timeout {
             return Err(anyhow::anyhow!("Progressive indexing timeout"));
         }
-        
+
         match simulator.try_process_event()? {
-            Some(event) => {
-                match &event {
-                    BackendEvent::IndexingProgress { processed, total, symbols } => {
-                        indexing_events.push(event.clone());
-                        println!("Progress: {}/{} files, {} symbols", processed, total, symbols.len());
-                    }
-                    BackendEvent::IndexingComplete { duration, total_symbols } => {
-                        println!("Indexing complete: {} symbols in {:?}", total_symbols, duration);
-                        break;
-                    }
-                    BackendEvent::Error { message } => {
-                        return Err(anyhow::anyhow!("Indexing error: {}", message));
-                    }
-                    _ => {}
+            Some(event) => match &event {
+                BackendEvent::IndexingProgress {
+                    processed,
+                    total,
+                    symbols,
+                } => {
+                    indexing_events.push(event.clone());
+                    println!(
+                        "Progress: {}/{} files, {} symbols",
+                        processed,
+                        total,
+                        symbols.len()
+                    );
                 }
-            }
+                BackendEvent::IndexingComplete {
+                    duration,
+                    total_symbols,
+                } => {
+                    println!(
+                        "Indexing complete: {} symbols in {:?}",
+                        total_symbols, duration
+                    );
+                    break;
+                }
+                BackendEvent::Error { message } => {
+                    return Err(anyhow::anyhow!("Indexing error: {}", message));
+                }
+                _ => {}
+            },
             None => {
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
     }
-    
+
     // Verify we received progress events
-    assert!(!indexing_events.is_empty(), "Should receive progress events");
-    
+    assert!(
+        !indexing_events.is_empty(),
+        "Should receive progress events"
+    );
+
     // Verify final state
     let state = simulator.get_state();
     assert!(!state.symbols.is_empty(), "Should have indexed symbols");
     assert!(!state.is_indexing, "Should finish indexing");
-    
+
     Ok(())
 }
 
@@ -129,13 +153,13 @@ fn test_progressive_indexing_workflow() -> anyhow::Result<()> {
 fn test_search_during_progressive_indexing() -> anyhow::Result<()> {
     let temp_dir = create_test_project()?;
     let mut simulator = TuiSimulator::new(false, true)?;
-    
+
     // Start indexing
     simulator.initialize(temp_dir.path().to_path_buf())?;
-    
+
     // Wait a bit for some symbols to be indexed
     std::thread::sleep(Duration::from_millis(100));
-    
+
     // Try searching while indexing is in progress
     simulator.send_command(UserCommand::Search {
         query: "Application".to_string(),
@@ -145,12 +169,12 @@ fn test_search_during_progressive_indexing() -> anyhow::Result<()> {
             icon: "🔍".to_string(),
         },
     })?;
-    
+
     // Wait for search results
     let mut search_completed = false;
     let start_time = Instant::now();
     let timeout = Duration::from_secs(5);
-    
+
     while start_time.elapsed() < timeout && !search_completed {
         if let Some(event) = simulator.try_process_event()? {
             match event {
@@ -167,39 +191,42 @@ fn test_search_during_progressive_indexing() -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    
+
     assert!(search_completed, "Should complete search during indexing");
-    
+
     Ok(())
 }
 
-#[test] 
+#[test]
 fn test_file_watching_integration() -> anyhow::Result<()> {
     let temp_dir = create_test_project()?;
     let mut simulator = TuiSimulator::new(false, true)?;
-    
+
     // Initialize and wait for indexing
     simulator.initialize(temp_dir.path().to_path_buf())?;
     simulator.wait_for_indexing_complete()?;
-    
+
     // Enable file watching
     simulator.enable_file_watching()?;
-    
+
     // Create a new file to trigger file watching
     let new_file_path = temp_dir.path().join("src/new_component.ts");
-    fs::write(&new_file_path, r#"
+    fs::write(
+        &new_file_path,
+        r#"
 export class NewComponent {
     public render(): string {
         return "<div>New Component</div>";
     }
 }
-"#)?;
-    
+"#,
+    )?;
+
     // Wait for file change event
     let mut file_changed = false;
     let start_time = Instant::now();
     let timeout = Duration::from_secs(5);
-    
+
     while start_time.elapsed() < timeout && !file_changed {
         if let Some(event) = simulator.try_process_event()? {
             match event {
@@ -218,11 +245,14 @@ export class NewComponent {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    
+
     // Note: File watching might not work in all test environments
     // So we don't assert on file_changed, just verify no errors occurred
-    println!("File watching test completed (change detected: {})", file_changed);
-    
+    println!(
+        "File watching test completed (change detected: {})",
+        file_changed
+    );
+
     Ok(())
 }
 
@@ -230,15 +260,15 @@ export class NewComponent {
 fn test_real_time_ui_updates() -> anyhow::Result<()> {
     let temp_dir = create_test_project()?;
     let mut simulator = TuiSimulator::new(false, true)?;
-    
+
     // Track UI state changes during indexing
     let mut state_snapshots = Vec::new();
-    
+
     simulator.initialize(temp_dir.path().to_path_buf())?;
-    
+
     let start_time = Instant::now();
     let timeout = Duration::from_secs(10);
-    
+
     // Capture state changes every 100ms
     while start_time.elapsed() < timeout {
         // Process any pending events
@@ -249,7 +279,7 @@ fn test_real_time_ui_updates() -> anyhow::Result<()> {
                 break; // Prevent infinite loop
             }
         }
-        
+
         // Capture current state
         let state = simulator.get_state();
         state_snapshots.push((
@@ -258,28 +288,38 @@ fn test_real_time_ui_updates() -> anyhow::Result<()> {
             state.is_indexing,
             state.status_message.clone(),
         ));
-        
+
         // Exit if indexing is complete
         if !state.is_indexing && !state.symbols.is_empty() {
             break;
         }
-        
+
         std::thread::sleep(Duration::from_millis(100));
     }
-    
+
     // Verify we captured multiple state changes
-    assert!(state_snapshots.len() > 1, "Should capture multiple UI state snapshots");
-    
+    assert!(
+        state_snapshots.len() > 1,
+        "Should capture multiple UI state snapshots"
+    );
+
     // Verify progression: symbols should increase over time
     let final_symbols = state_snapshots.last().unwrap().1;
     let initial_symbols = state_snapshots.first().unwrap().1;
-    
-    println!("UI state progression: {} -> {} symbols over {} snapshots", 
-             initial_symbols, final_symbols, state_snapshots.len());
-    
+
+    println!(
+        "UI state progression: {} -> {} symbols over {} snapshots",
+        initial_symbols,
+        final_symbols,
+        state_snapshots.len()
+    );
+
     // Final state should have more symbols than initial (unless it was instant)
-    assert!(final_symbols >= initial_symbols, "Symbol count should not decrease");
-    
+    assert!(
+        final_symbols >= initial_symbols,
+        "Symbol count should not decrease"
+    );
+
     Ok(())
 }
 
@@ -287,10 +327,10 @@ fn test_real_time_ui_updates() -> anyhow::Result<()> {
 fn test_backend_event_handling_robustness() -> anyhow::Result<()> {
     let temp_dir = create_test_project()?;
     let mut simulator = TuiSimulator::new(false, true)?;
-    
+
     // Test rapid command sending
     simulator.initialize(temp_dir.path().to_path_buf())?;
-    
+
     // Send multiple search commands in rapid succession
     for i in 0..5 {
         simulator.send_command(UserCommand::Search {
@@ -302,12 +342,12 @@ fn test_backend_event_handling_robustness() -> anyhow::Result<()> {
             },
         })?;
     }
-    
+
     // Process all events with timeout
     let start_time = Instant::now();
     let timeout = Duration::from_secs(10);
     let mut total_events = 0;
-    
+
     while start_time.elapsed() < timeout {
         if let Some(event) = simulator.try_process_event()? {
             total_events += 1;
@@ -328,19 +368,19 @@ fn test_backend_event_handling_robustness() -> anyhow::Result<()> {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        
+
         // Prevent infinite loops
         if total_events > 50 {
             break;
         }
     }
-    
+
     println!("Processed {} events total", total_events);
     assert!(total_events > 0, "Should process some events");
-    
+
     // Verify backend is still responsive
     let state = simulator.get_state();
     assert!(!state.symbols.is_empty(), "Should have indexed symbols");
-    
+
     Ok(())
 }

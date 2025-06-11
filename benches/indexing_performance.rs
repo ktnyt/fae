@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use sfs_rs::indexer::TreeSitterIndexer;
+use sfs::TreeSitterIndexer;
+use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
-use std::fs;
 
 // Helper function to create test files
 fn create_test_files(dir: &Path, file_count: usize, file_size: usize) -> anyhow::Result<()> {
@@ -27,7 +27,13 @@ export class TestClass{} {{
     }}
 }}",
                 "// ".repeat(file_size / 10),
-                i, i, i, i, i, i, i
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i
             ),
             1 => format!(
                 "{}
@@ -44,7 +50,13 @@ class TestClass{}:
 
 TEST_CONSTANT_{} = 'constant_value'",
                 "# ".repeat(file_size / 10),
-                i, i, i, i, i, i, i
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i
             ),
             2 => format!(
                 "{}
@@ -63,7 +75,14 @@ func (t *TestStruct{}) Method{}() {{
 
 const TestConstant{} = \"constant\"",
                 "// ".repeat(file_size / 10),
-                i, i, i, i, i, i, i, i
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i
             ),
             _ => format!(
                 "{}
@@ -90,17 +109,25 @@ impl TestStruct{} {{
 
 const TEST_CONSTANT_{}: &str = \"constant\";",
                 "// ".repeat(file_size / 10),
-                i, i, i, i, i, i, i, i, i
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i,
+                i
             ),
         };
-        
+
         let extension = match i % 4 {
             0 => "ts",
-            1 => "py", 
+            1 => "py",
             2 => "go",
             _ => "rs",
         };
-        
+
         let file_path = dir.join(format!("test_file_{}.{}", i, extension));
         fs::write(file_path, content)?;
     }
@@ -111,7 +138,7 @@ const TEST_CONSTANT_{}: &str = \"constant\";",
 fn bench_small_project_indexing(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     create_test_files(temp_dir.path(), 10, 500).unwrap();
-    
+
     c.bench_function("index_small_project_10_files", |b| {
         b.iter(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -119,7 +146,10 @@ fn bench_small_project_indexing(c: &mut Criterion) {
                 let mut indexer = TreeSitterIndexer::with_options(false, true);
                 indexer.initialize().await.unwrap();
                 let patterns = vec!["**/*".to_string()];
-                indexer.index_directory(black_box(temp_dir.path()), black_box(&patterns)).await.unwrap();
+                indexer
+                    .index_directory(black_box(temp_dir.path()), black_box(&patterns))
+                    .await
+                    .unwrap();
                 black_box(indexer.get_all_symbols().len())
             })
         })
@@ -130,7 +160,7 @@ fn bench_small_project_indexing(c: &mut Criterion) {
 fn bench_medium_project_indexing(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     create_test_files(temp_dir.path(), 50, 1000).unwrap();
-    
+
     c.bench_function("index_medium_project_50_files", |b| {
         b.iter(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -138,7 +168,10 @@ fn bench_medium_project_indexing(c: &mut Criterion) {
                 let mut indexer = TreeSitterIndexer::with_options(false, true);
                 indexer.initialize().await.unwrap();
                 let patterns = vec!["**/*".to_string()];
-                indexer.index_directory(black_box(temp_dir.path()), black_box(&patterns)).await.unwrap();
+                indexer
+                    .index_directory(black_box(temp_dir.path()), black_box(&patterns))
+                    .await
+                    .unwrap();
                 black_box(indexer.get_all_symbols().len())
             })
         })
@@ -149,7 +182,7 @@ fn bench_medium_project_indexing(c: &mut Criterion) {
 fn bench_large_project_indexing(c: &mut Criterion) {
     let temp_dir = TempDir::new().unwrap();
     create_test_files(temp_dir.path(), 200, 2000).unwrap();
-    
+
     c.bench_function("index_large_project_200_files", |b| {
         b.iter(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -157,7 +190,10 @@ fn bench_large_project_indexing(c: &mut Criterion) {
                 let mut indexer = TreeSitterIndexer::with_options(false, true);
                 indexer.initialize().await.unwrap();
                 let patterns = vec!["**/*".to_string()];
-                indexer.index_directory(black_box(temp_dir.path()), black_box(&patterns)).await.unwrap();
+                indexer
+                    .index_directory(black_box(temp_dir.path()), black_box(&patterns))
+                    .await
+                    .unwrap();
                 black_box(indexer.get_all_symbols().len())
             })
         })
@@ -167,27 +203,26 @@ fn bench_large_project_indexing(c: &mut Criterion) {
 // Benchmark single file indexing with different sizes
 fn bench_single_file_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_file_indexing");
-    
+
     for size in [100, 500, 1000, 5000].iter() {
         let temp_dir = TempDir::new().unwrap();
         create_test_files(temp_dir.path(), 1, *size).unwrap();
-        
-        group.bench_with_input(
-            format!("file_size_{}_chars", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(async {
-                        let mut indexer = TreeSitterIndexer::with_options(false, true);
-                        indexer.initialize().await.unwrap();
-                        let patterns = vec!["**/*".to_string()];
-                        indexer.index_directory(black_box(temp_dir.path()), black_box(&patterns)).await.unwrap();
-                        black_box(indexer.get_all_symbols().len())
-                    })
+
+        group.bench_with_input(format!("file_size_{}_chars", size), size, |b, _| {
+            b.iter(|| {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let mut indexer = TreeSitterIndexer::with_options(false, true);
+                    indexer.initialize().await.unwrap();
+                    let patterns = vec!["**/*".to_string()];
+                    indexer
+                        .index_directory(black_box(temp_dir.path()), black_box(&patterns))
+                        .await
+                        .unwrap();
+                    black_box(indexer.get_all_symbols().len())
                 })
-            },
-        );
+            })
+        });
     }
     group.finish();
 }
@@ -195,7 +230,7 @@ fn bench_single_file_sizes(c: &mut Criterion) {
 // Benchmark current project indexing (real-world test)
 fn bench_current_project(c: &mut Criterion) {
     let current_dir = std::env::current_dir().unwrap();
-    
+
     c.bench_function("index_current_project", |b| {
         b.iter(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -203,7 +238,10 @@ fn bench_current_project(c: &mut Criterion) {
                 let mut indexer = TreeSitterIndexer::with_options(false, true);
                 indexer.initialize().await.unwrap();
                 let patterns = vec!["**/*".to_string()];
-                indexer.index_directory(black_box(&current_dir), black_box(&patterns)).await.unwrap();
+                indexer
+                    .index_directory(black_box(&current_dir), black_box(&patterns))
+                    .await
+                    .unwrap();
                 black_box(indexer.get_all_symbols().len())
             })
         })

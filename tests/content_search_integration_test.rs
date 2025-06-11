@@ -1,7 +1,7 @@
 use sfs::searcher::FuzzySearcher;
 use sfs::types::*;
-use tempfile::TempDir;
 use std::fs;
+use tempfile::TempDir;
 
 #[cfg(test)]
 mod content_search_integration_tests {
@@ -9,7 +9,7 @@ mod content_search_integration_tests {
 
     fn create_test_project() -> TempDir {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        
+
         // Create test files with various content
         fs::write(
             temp_dir.path().join("main.rs"),
@@ -33,7 +33,8 @@ impl Config {
     }
 }
 "#,
-        ).expect("Failed to write main.rs");
+        )
+        .expect("Failed to write main.rs");
 
         fs::write(
             temp_dir.path().join("utils.js"),
@@ -56,7 +57,8 @@ class UserManager {
     }
 }
 "#,
-        ).expect("Failed to write utils.js");
+        )
+        .expect("Failed to write utils.js");
 
         fs::write(
             temp_dir.path().join("data.py"),
@@ -78,7 +80,8 @@ class DataProcessor:
         processed = [item for item in raw_data if item.get('valid')]
         return processed
 "#,
-        ).expect("Failed to write data.py");
+        )
+        .expect("Failed to write data.py");
 
         temp_dir
     }
@@ -121,12 +124,22 @@ class DataProcessor:
         // Test searching for "function" - should find content in JS and Python files
         let results = searcher.search_content("function", &SearchOptions::default());
         assert!(!results.is_empty(), "Should find 'function' content");
-        
+
         // Should find JavaScript function definitions
-        let js_results: Vec<_> = results.iter()
-            .filter(|r| r.symbol.file.extension().map(|ext| ext == "js").unwrap_or(false))
+        let js_results: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                r.symbol
+                    .file
+                    .extension()
+                    .map(|ext| ext == "js")
+                    .unwrap_or(false)
+            })
             .collect();
-        assert!(!js_results.is_empty(), "Should find 'function' in JavaScript files");
+        assert!(
+            !js_results.is_empty(),
+            "Should find 'function' in JavaScript files"
+        );
     }
 
     #[test]
@@ -140,10 +153,20 @@ class DataProcessor:
         assert!(!results.is_empty(), "Should find 'import' statements");
 
         // Should find import in Python file
-        let python_results: Vec<_> = results.iter()
-            .filter(|r| r.symbol.file.extension().map(|ext| ext == "py").unwrap_or(false))
+        let python_results: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                r.symbol
+                    .file
+                    .extension()
+                    .map(|ext| ext == "py")
+                    .unwrap_or(false)
+            })
             .collect();
-        assert!(!python_results.is_empty(), "Should find 'import' in Python files");
+        assert!(
+            !python_results.is_empty(),
+            "Should find 'import' in Python files"
+        );
     }
 
     #[test]
@@ -157,10 +180,20 @@ class DataProcessor:
         assert!(!results.is_empty(), "Should find 'struct' definitions");
 
         // Should find struct in Rust file
-        let rust_results: Vec<_> = results.iter()
-            .filter(|r| r.symbol.file.extension().map(|ext| ext == "rs").unwrap_or(false))
+        let rust_results: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                r.symbol
+                    .file
+                    .extension()
+                    .map(|ext| ext == "rs")
+                    .unwrap_or(false)
+            })
             .collect();
-        assert!(!rust_results.is_empty(), "Should find 'struct' in Rust files");
+        assert!(
+            !rust_results.is_empty(),
+            "Should find 'struct' in Rust files"
+        );
     }
 
     #[test]
@@ -202,7 +235,11 @@ class DataProcessor:
 
         let unlimited_results = searcher.search_content("the", &SearchOptions::default());
         if unlimited_results.len() > 2 {
-            assert_eq!(limited_results.len(), 2, "Should return exactly 2 results when limited");
+            assert_eq!(
+                limited_results.len(),
+                2,
+                "Should return exactly 2 results when limited"
+            );
         }
     }
 
@@ -219,7 +256,10 @@ class DataProcessor:
         // Check that line numbers are reasonable (not 0, not way too high)
         for result in &results {
             assert!(result.symbol.line > 0, "Line numbers should be positive");
-            assert!(result.symbol.line < 1000, "Line numbers should be reasonable for test files");
+            assert!(
+                result.symbol.line < 1000,
+                "Line numbers should be reasonable for test files"
+            );
         }
     }
 
@@ -233,26 +273,28 @@ class DataProcessor:
         assert_eq!(results.len(), 0, "Empty query should return no results");
 
         let whitespace_results = searcher.search_content("   ", &SearchOptions::default());
-        assert_eq!(whitespace_results.len(), 0, "Whitespace-only query should return no results");
+        assert_eq!(
+            whitespace_results.len(),
+            0,
+            "Whitespace-only query should return no results"
+        );
     }
 
     #[test]
     fn should_handle_missing_files_gracefully() {
         // Create symbols pointing to non-existent files
-        let non_existent_symbols = vec![
-            CodeSymbol {
-                name: "missing.rs".to_string(),
-                symbol_type: SymbolType::Filename,
-                file: "/non/existent/path/missing.rs".into(),
-                line: 1,
-                column: 1,
-                context: None,
-            }
-        ];
+        let non_existent_symbols = vec![CodeSymbol {
+            name: "missing.rs".to_string(),
+            symbol_type: SymbolType::Filename,
+            file: "/non/existent/path/missing.rs".into(),
+            line: 1,
+            column: 1,
+            context: None,
+        }];
 
         let searcher = FuzzySearcher::new(non_existent_symbols);
         let results = searcher.search_content("test", &SearchOptions::default());
-        
+
         // Should not crash and should return empty results
         assert_eq!(results.len(), 0, "Should handle missing files gracefully");
     }

@@ -103,6 +103,14 @@ cargo run --bin test_tree_sitter_symbols -- src/
 
 ## Development Guidelines
 
+### Complex System Development Principles
+⚠️ **Critical Development Lessons**:
+- **Define Expected Behavior First**: Before implementing complex features, clearly specify the complete behavior and interaction patterns
+- **Incremental Implementation**: Break complex systems into simple, testable components and build incrementally
+- **Debug Strategy**: Use systematic debugging with logging/tracing - assumptions about system behavior are often incorrect
+- **End-to-End Testing**: Write tests that validate complete workflows, not just individual components
+- **Architecture Understanding**: Ensure all team members (including yourself) fully understand the designed system behavior before implementation
+
 ### Adding New Languages
 1. Add tree-sitter dependency to `Cargo.toml`
 2. Update language configuration in `parsers/tree_sitter_config.rs`

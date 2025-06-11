@@ -35,22 +35,26 @@ mod content_search_tests {
 
         // Search for content that exists in sample.ts
         let results = searcher.search_content("export", &options);
-        
+
         // Should find lines containing "export"
         assert!(!results.is_empty(), "Should find content matches");
-        
+
         // Check that results contain file paths and line numbers
         for result in &results {
             assert!(result.symbol.line > 0, "Should have valid line number");
-            
+
             // File path should be one of our test fixtures (could be absolute or relative)
             let file_str = result.symbol.file.to_string_lossy();
-            let is_valid_file = file_str.contains("sample.ts") || file_str.ends_with("sample.ts") ||
-                               file_str.contains("sample.js") || file_str.ends_with("sample.js") ||
-                               file_str.contains("test.txt") || file_str.ends_with("test.txt");
+            let is_valid_file = file_str.contains("sample.ts")
+                || file_str.ends_with("sample.ts")
+                || file_str.contains("sample.js")
+                || file_str.ends_with("sample.js")
+                || file_str.contains("test.txt")
+                || file_str.ends_with("test.txt");
             assert!(
                 is_valid_file,
-                "Should reference a test fixture file, got: {}", file_str
+                "Should reference a test fixture file, got: {}",
+                file_str
             );
         }
     }
@@ -63,9 +67,12 @@ mod content_search_tests {
 
         // Search for content that doesn't exist
         let results = searcher.search_content("nonexistentcontent12345", &options);
-        
+
         // Should find no matches
-        assert!(results.is_empty(), "Should find no matches for non-existent content");
+        assert!(
+            results.is_empty(),
+            "Should find no matches for non-existent content"
+        );
     }
 
     #[test]
@@ -75,9 +82,12 @@ mod content_search_tests {
         let options = SearchOptions::default();
 
         let results = searcher.search_content("", &options);
-        
+
         // Should return empty results for empty query
-        assert!(results.is_empty(), "Should return empty results for empty query");
+        assert!(
+            results.is_empty(),
+            "Should return empty results for empty query"
+        );
     }
 
     #[test]
@@ -91,7 +101,7 @@ mod content_search_tests {
 
         // Search for a common word that might have many matches
         let results = searcher.search_content("function", &options);
-        
+
         // Should respect the limit
         assert!(results.len() <= 2, "Should respect the limit option");
     }

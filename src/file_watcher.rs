@@ -1,5 +1,5 @@
-use crate::types::{IndexUpdate, WatchEvent, WatchEventKind};
 use crate::indexer::TreeSitterIndexer;
+use crate::types::{IndexUpdate, WatchEvent, WatchEventKind};
 use anyhow::{Context, Result};
 use notify::{EventKind, RecursiveMode, Result as NotifyResult, Watcher};
 use std::collections::HashMap;
@@ -85,11 +85,7 @@ pub struct FileWatcher {
 
 impl FileWatcher {
     /// Create a new file watcher for the given directory
-    pub fn new(
-        watch_path: &Path,
-        patterns: Vec<String>,
-        debounce_ms: Option<u64>,
-    ) -> Result<Self> {
+    pub fn new(watch_path: &Path, patterns: Vec<String>, debounce_ms: Option<u64>) -> Result<Self> {
         let (notify_tx, notify_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
 
@@ -261,9 +257,15 @@ impl FileWatcher {
                         match indexer.reindex_file(&path, patterns) {
                             Ok(symbols) => {
                                 if event_kind == WatchEventKind::Created {
-                                    Some(IndexUpdate::Added { file: path, symbols })
+                                    Some(IndexUpdate::Added {
+                                        file: path,
+                                        symbols,
+                                    })
                                 } else {
-                                    Some(IndexUpdate::Modified { file: path, symbols })
+                                    Some(IndexUpdate::Modified {
+                                        file: path,
+                                        symbols,
+                                    })
                                 }
                             }
                             Err(_) => None, // Failed to extract symbols
@@ -271,9 +273,9 @@ impl FileWatcher {
                     }
                     WatchEventKind::Deleted => {
                         // For deleted files, we don't need to extract symbols
-                        Some(IndexUpdate::Removed { 
-                            file: path, 
-                            symbol_count: 0  // We don't know the count of removed symbols
+                        Some(IndexUpdate::Removed {
+                            file: path,
+                            symbol_count: 0, // We don't know the count of removed symbols
                         })
                     }
                     WatchEventKind::Renamed { from: _, to } => {

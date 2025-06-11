@@ -1,5 +1,5 @@
-use tree_sitter::{Language, Query};
 use anyhow::Result;
+use tree_sitter::{Language, Query};
 
 /// Tree-sitter language configuration for different file types
 pub struct LanguageConfig {

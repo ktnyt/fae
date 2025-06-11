@@ -27,7 +27,10 @@ mod type_definitions {
             assert_eq!(symbol.file, PathBuf::from("/src/test.ts"));
             assert_eq!(symbol.line, 10);
             assert_eq!(symbol.column, 5);
-            assert_eq!(symbol.context, Some("function testFunction() {".to_string()));
+            assert_eq!(
+                symbol.context,
+                Some("function testFunction() {".to_string())
+            );
         }
 
         #[test]
@@ -101,7 +104,10 @@ mod type_definitions {
 
             assert_eq!(options.include_files, Some(false));
             assert_eq!(options.include_dirs, Some(true));
-            assert_eq!(options.types, Some(vec![SymbolType::Function, SymbolType::Class]));
+            assert_eq!(
+                options.types,
+                Some(vec![SymbolType::Function, SymbolType::Class])
+            );
             assert_eq!(options.threshold, Some(0.5));
             assert_eq!(options.limit, Some(10));
         }

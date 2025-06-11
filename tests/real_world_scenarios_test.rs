@@ -1,12 +1,12 @@
 // リアルワールドシナリオテストスイート
 // 実際の開発現場で使用される典型的なユースケースでの挙動検証
 
-use sfs::types::*;
 use sfs::indexer::TreeSitterIndexer;
 use sfs::searcher::FuzzySearcher;
-use tempfile::TempDir;
+use sfs::types::*;
 use std::fs;
 use std::time::{Duration, Instant};
+use tempfile::TempDir;
 
 #[cfg(test)]
 mod real_world_scenarios {
@@ -15,9 +15,11 @@ mod real_world_scenarios {
     /// 典型的なTypeScript Reactプロジェクト構造を作成
     fn create_react_typescript_project(dir: &TempDir) -> anyhow::Result<()> {
         let dir_path = dir.path();
-        
+
         // Package.json
-        fs::write(dir_path.join("package.json"), r#"{
+        fs::write(
+            dir_path.join("package.json"),
+            r#"{
   "name": "react-app",
   "version": "1.0.0",
   "dependencies": {
@@ -25,10 +27,13 @@ mod real_world_scenarios {
     "@types/react": "^18.0.0",
     "typescript": "^4.9.0"
   }
-}"#)?;
+}"#,
+        )?;
 
         // TypeScript設定
-        fs::write(dir_path.join("tsconfig.json"), r#"{
+        fs::write(
+            dir_path.join("tsconfig.json"),
+            r#"{
   "compilerOptions": {
     "target": "ES2020",
     "lib": ["DOM", "DOM.Iterable", "ES6"],
@@ -43,7 +48,8 @@ mod real_world_scenarios {
     "jsx": "react-jsx"
   },
   "include": ["src"]
-}"#)?;
+}"#,
+        )?;
 
         // ソースファイル構造
         fs::create_dir_all(dir_path.join("src/components"))?;
@@ -53,7 +59,9 @@ mod real_world_scenarios {
         fs::create_dir_all(dir_path.join("src/services"))?;
 
         // App.tsx
-        fs::write(dir_path.join("src/App.tsx"), r#"import React from 'react';
+        fs::write(
+            dir_path.join("src/App.tsx"),
+            r#"import React from 'react';
 import { UserList } from './components/UserList';
 import { useUsers } from './hooks/useUsers';
 import './App.css';
@@ -75,10 +83,13 @@ const App: React.FC = () => {
 };
 
 export default App;
-"#)?;
+"#,
+        )?;
 
         // UserList Component
-        fs::write(dir_path.join("src/components/UserList.tsx"), r#"import React from 'react';
+        fs::write(
+            dir_path.join("src/components/UserList.tsx"),
+            r#"import React from 'react';
 import { User } from '../types/User';
 import { UserCard } from './UserCard';
 
@@ -95,10 +106,13 @@ export const UserList: React.FC<UserListProps> = ({ users }) => {
     </div>
   );
 };
-"#)?;
+"#,
+        )?;
 
         // UserCard Component
-        fs::write(dir_path.join("src/components/UserCard.tsx"), r#"import React from 'react';
+        fs::write(
+            dir_path.join("src/components/UserCard.tsx"),
+            r#"import React from 'react';
 import { User } from '../types/User';
 import { formatDate } from '../utils/dateUtils';
 
@@ -120,10 +134,13 @@ export const UserCard: React.FC<UserCardProps> = ({ user }) => {
     </div>
   );
 };
-"#)?;
+"#,
+        )?;
 
         // Custom Hook
-        fs::write(dir_path.join("src/hooks/useUsers.ts"), r#"import { useState, useEffect } from 'react';
+        fs::write(
+            dir_path.join("src/hooks/useUsers.ts"),
+            r#"import { useState, useEffect } from 'react';
 import { User } from '../types/User';
 import { UserService } from '../services/UserService';
 
@@ -156,10 +173,13 @@ export const useUsers = (): UseUsersReturn => {
 
   return { users, loading, error };
 };
-"#)?;
+"#,
+        )?;
 
         // Types
-        fs::write(dir_path.join("src/types/User.ts"), r#"export interface User {
+        fs::write(
+            dir_path.join("src/types/User.ts"),
+            r#"export interface User {
   id: string;
   name: string;
   email: string;
@@ -177,10 +197,13 @@ export interface CreateUserRequest {
 export interface UpdateUserRequest extends Partial<CreateUserRequest> {
   id: string;
 }
-"#)?;
+"#,
+        )?;
 
         // Services
-        fs::write(dir_path.join("src/services/UserService.ts"), r#"import { User, CreateUserRequest, UpdateUserRequest } from '../types/User';
+        fs::write(
+            dir_path.join("src/services/UserService.ts"),
+            r#"import { User, CreateUserRequest, UpdateUserRequest } from '../types/User';
 import { ApiClient } from './ApiClient';
 
 export class UserService {
@@ -208,10 +231,13 @@ export class UserService {
     await ApiClient.delete(`/users/${id}`);
   }
 }
-"#)?;
+"#,
+        )?;
 
         // API Client
-        fs::write(dir_path.join("src/services/ApiClient.ts"), r#"interface ApiResponse<T> {
+        fs::write(
+            dir_path.join("src/services/ApiClient.ts"),
+            r#"interface ApiResponse<T> {
   data: T;
   status: number;
   message?: string;
@@ -275,10 +301,13 @@ export class ApiClient {
     }
   }
 }
-"#)?;
+"#,
+        )?;
 
         // Utilities
-        fs::write(dir_path.join("src/utils/dateUtils.ts"), r#"export const formatDate = (date: Date): string => {
+        fs::write(
+            dir_path.join("src/utils/dateUtils.ts"),
+            r#"export const formatDate = (date: Date): string => {
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
@@ -297,7 +326,8 @@ export const addDays = (date: Date, days: number): Date => {
   result.setDate(result.getDate() + days);
   return result;
 };
-"#)?;
+"#,
+        )?;
 
         Ok(())
     }
@@ -305,9 +335,11 @@ export const addDays = (date: Date, days: number): Date => {
     /// 典型的なNode.js Express APIプロジェクト構造を作成
     fn create_nodejs_express_project(dir: &TempDir) -> anyhow::Result<()> {
         let dir_path = dir.path();
-        
+
         // Package.json
-        fs::write(dir_path.join("package.json"), r#"{
+        fs::write(
+            dir_path.join("package.json"),
+            r#"{
   "name": "express-api",
   "version": "1.0.0",
   "scripts": {
@@ -325,7 +357,8 @@ export const addDays = (date: Date, days: number): Date => {
     "typescript": "^4.9.0",
     "ts-node": "^10.0.0"
   }
-}"#)?;
+}"#,
+        )?;
 
         // サーバー構造
         fs::create_dir_all(dir_path.join("src/controllers"))?;
@@ -336,7 +369,9 @@ export const addDays = (date: Date, days: number): Date => {
         fs::create_dir_all(dir_path.join("src/utils"))?;
 
         // Server.ts
-        fs::write(dir_path.join("src/server.ts"), r#"import express from 'express';
+        fs::write(
+            dir_path.join("src/server.ts"),
+            r#"import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { userRoutes } from './routes/userRoutes';
@@ -362,10 +397,13 @@ app.listen(PORT, () => {
 });
 
 export default app;
-"#)?;
+"#,
+        )?;
 
         // User Controller
-        fs::write(dir_path.join("src/controllers/userController.ts"), r#"import { Request, Response, NextFunction } from 'express';
+        fs::write(
+            dir_path.join("src/controllers/userController.ts"),
+            r#"import { Request, Response, NextFunction } from 'express';
 import { UserService } from '../services/userService';
 import { logger } from '../utils/logger';
 
@@ -430,10 +468,13 @@ export class UserController {
     }
   }
 }
-"#)?;
+"#,
+        )?;
 
         // User Service
-        fs::write(dir_path.join("src/services/userService.ts"), r#"import { User, CreateUserDto, UpdateUserDto } from '../models/User';
+        fs::write(
+            dir_path.join("src/services/userService.ts"),
+            r#"import { User, CreateUserDto, UpdateUserDto } from '../models/User';
 import { DatabaseError } from '../utils/errors';
 
 export class UserService {
@@ -492,10 +533,13 @@ export class UserService {
     this.users.splice(userIndex, 1);
   }
 }
-"#)?;
+"#,
+        )?;
 
         // Models
-        fs::write(dir_path.join("src/models/User.ts"), r#"export interface User {
+        fs::write(
+            dir_path.join("src/models/User.ts"),
+            r#"export interface User {
   id: string;
   name: string;
   email: string;
@@ -511,10 +555,13 @@ export interface CreateUserDto {
 }
 
 export interface UpdateUserDto extends Partial<CreateUserDto> {}
-"#)?;
+"#,
+        )?;
 
         // Routes
-        fs::write(dir_path.join("src/routes/userRoutes.ts"), r#"import { Router } from 'express';
+        fs::write(
+            dir_path.join("src/routes/userRoutes.ts"),
+            r#"import { Router } from 'express';
 import { UserController } from '../controllers/userController';
 import { validateUserInput } from '../middleware/validation';
 
@@ -527,10 +574,13 @@ router.put('/:id', validateUserInput, UserController.updateUser);
 router.delete('/:id', UserController.deleteUser);
 
 export { router as userRoutes };
-"#)?;
+"#,
+        )?;
 
         // Middleware
-        fs::write(dir_path.join("src/middleware/errorHandler.ts"), r#"import { Request, Response, NextFunction } from 'express';
+        fs::write(
+            dir_path.join("src/middleware/errorHandler.ts"),
+            r#"import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
 
 export const errorHandler = (
@@ -546,9 +596,12 @@ export const errorHandler = (
     message: process.env.NODE_ENV === 'development' ? error.message : undefined,
   });
 };
-"#)?;
+"#,
+        )?;
 
-        fs::write(dir_path.join("src/middleware/validation.ts"), r#"import { Request, Response, NextFunction } from 'express';
+        fs::write(
+            dir_path.join("src/middleware/validation.ts"),
+            r#"import { Request, Response, NextFunction } from 'express';
 
 export const validateUserInput = (
   req: Request,
@@ -571,10 +624,13 @@ export const validateUserInput = (
 
   next();
 };
-"#)?;
+"#,
+        )?;
 
         // Utils
-        fs::write(dir_path.join("src/utils/logger.ts"), r#"export const logger = {
+        fs::write(
+            dir_path.join("src/utils/logger.ts"),
+            r#"export const logger = {
   info: (message: string, ...args: any[]) => {
     console.log(`[INFO] ${new Date().toISOString()}: ${message}`, ...args);
   },
@@ -593,9 +649,12 @@ export const validateUserInput = (
     }
   },
 };
-"#)?;
+"#,
+        )?;
 
-        fs::write(dir_path.join("src/utils/errors.ts"), r#"export class DatabaseError extends Error {
+        fs::write(
+            dir_path.join("src/utils/errors.ts"),
+            r#"export class DatabaseError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'DatabaseError';
@@ -615,7 +674,8 @@ export class AuthenticationError extends Error {
     this.name = 'AuthenticationError';
   }
 }
-"#)?;
+"#,
+        )?;
 
         Ok(())
     }
@@ -623,7 +683,7 @@ export class AuthenticationError extends Error {
     /// 典型的なPythonプロジェクト構造を作成
     fn create_python_project(dir: &TempDir) -> anyhow::Result<()> {
         let dir_path = dir.path();
-        
+
         // Python プロジェクト構造
         fs::create_dir_all(dir_path.join("src/analytics"))?;
         fs::create_dir_all(dir_path.join("src/models"))?;
@@ -631,20 +691,25 @@ export class AuthenticationError extends Error {
         fs::create_dir_all(dir_path.join("tests"))?;
 
         // Requirements
-        fs::write(dir_path.join("requirements.txt"), r#"pandas>=1.5.0
+        fs::write(
+            dir_path.join("requirements.txt"),
+            r#"pandas>=1.5.0
 numpy>=1.21.0
 scikit-learn>=1.1.0
 matplotlib>=3.5.0
 seaborn>=0.11.0
 pytest>=7.0.0
-"#)?;
+"#,
+        )?;
 
         // Main module
         fs::write(dir_path.join("src/__init__.py"), "")?;
-        
+
         // Analytics module
         fs::write(dir_path.join("src/analytics/__init__.py"), "")?;
-        fs::write(dir_path.join("src/analytics/data_processor.py"), r#"import pandas as pd
+        fs::write(
+            dir_path.join("src/analytics/data_processor.py"),
+            r#"import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional
 from ..utils.logger import get_logger
@@ -725,11 +790,14 @@ class DataProcessor:
         
         logger.info("Calculated dataset statistics")
         return stats
-"#)?;
+"#,
+        )?;
 
         // Machine Learning Model
         fs::write(dir_path.join("src/models/__init__.py"), "")?;
-        fs::write(dir_path.join("src/models/predictor.py"), r#"from typing import List, Dict, Optional, Tuple
+        fs::write(
+            dir_path.join("src/models/predictor.py"),
+            r#"from typing import List, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -835,11 +903,14 @@ class MLPredictor:
         
         importance_dict = dict(zip(self.feature_names, self.model.feature_importances_))
         return dict(sorted(importance_dict.items(), key=lambda x: x[1], reverse=True))
-"#)?;
+"#,
+        )?;
 
         // Utilities
         fs::write(dir_path.join("src/utils/__init__.py"), "")?;
-        fs::write(dir_path.join("src/utils/logger.py"), r#"import logging
+        fs::write(
+            dir_path.join("src/utils/logger.py"),
+            r#"import logging
 import sys
 from typing import Optional
 
@@ -876,9 +947,12 @@ def setup_logging(level: str = 'INFO') -> None:
             logging.StreamHandler(sys.stdout)
         ]
     )
-"#)?;
+"#,
+        )?;
 
-        fs::write(dir_path.join("src/utils/config.py"), r#"import os
+        fs::write(
+            dir_path.join("src/utils/config.py"),
+            r#"import os
 from typing import Dict, Any
 import json
 
@@ -924,11 +998,14 @@ class Config:
 
 # Global config instance
 config = Config()
-"#)?;
+"#,
+        )?;
 
         // Tests
         fs::write(dir_path.join("tests/__init__.py"), "")?;
-        fs::write(dir_path.join("tests/test_data_processor.py"), r#"import pytest
+        fs::write(
+            dir_path.join("tests/test_data_processor.py"),
+            r#"import pytest
 import pandas as pd
 import numpy as np
 from src.analytics.data_processor import DataProcessor
@@ -979,7 +1056,8 @@ class TestDataProcessor:
         assert 'data_types' in stats
         
         assert stats['shape'] == (4, 4)
-"#)?;
+"#,
+        )?;
 
         Ok(())
     }
@@ -988,53 +1066,99 @@ class TestDataProcessor:
     async fn should_handle_react_typescript_project() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         create_react_typescript_project(&temp_dir)?;
-        
+
         let mut indexer = TreeSitterIndexer::with_verbose(false);
         indexer.initialize().await.unwrap();
-        
-        let patterns = vec!["**/*.ts".to_string(), "**/*.tsx".to_string(), "**/*.json".to_string()];
+
+        let patterns = vec![
+            "**/*.ts".to_string(),
+            "**/*.tsx".to_string(),
+            "**/*.json".to_string(),
+        ];
         let start_time = Instant::now();
-        
+
         indexer.index_directory(temp_dir.path(), &patterns).await?;
         let indexing_duration = start_time.elapsed();
-        
+
         let all_symbols = indexer.get_all_symbols();
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         // 基本性能確認
-        assert!(indexing_duration < Duration::from_secs(10), 
-            "Should index React project quickly, took {:?}", indexing_duration);
-        assert!(all_symbols.len() > 20, "Should extract substantial symbols from React project");
-        
+        assert!(
+            indexing_duration < Duration::from_secs(10),
+            "Should index React project quickly, took {:?}",
+            indexing_duration
+        );
+        assert!(
+            all_symbols.len() > 20,
+            "Should extract substantial symbols from React project"
+        );
+
         // React特有のシンボル検証
-        assert!(all_symbols.iter().any(|s| s.name == "App"), "Should find App component");
-        assert!(all_symbols.iter().any(|s| s.name == "UserList"), "Should find UserList component");
-        assert!(all_symbols.iter().any(|s| s.name == "UserCard"), "Should find UserCard component");
-        assert!(all_symbols.iter().any(|s| s.name == "useUsers"), "Should find custom hook");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "App"),
+            "Should find App component"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserList"),
+            "Should find UserList component"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserCard"),
+            "Should find UserCard component"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "useUsers"),
+            "Should find custom hook"
+        );
+
         // TypeScript特有のシンボル検証
-        assert!(all_symbols.iter().any(|s| s.name == "User"), "Should find User interface");
-        assert!(all_symbols.iter().any(|s| s.name == "UserListProps"), "Should find component props interface");
-        assert!(all_symbols.iter().any(|s| s.name == "UseUsersReturn"), "Should find hook return interface");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "User"),
+            "Should find User interface"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserListProps"),
+            "Should find component props interface"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UseUsersReturn"),
+            "Should find hook return interface"
+        );
+
         // サービス層の検証
-        assert!(all_symbols.iter().any(|s| s.name == "UserService"), "Should find UserService class");
-        assert!(all_symbols.iter().any(|s| s.name == "ApiClient"), "Should find ApiClient class");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserService"),
+            "Should find UserService class"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "ApiClient"),
+            "Should find ApiClient class"
+        );
+
         // 実際のワークフロー検証：コンポーネント検索
         let component_search = searcher.search("User", &SearchOptions::default());
-        assert!(component_search.len() >= 3, "Should find multiple User-related symbols");
-        
+        assert!(
+            component_search.len() >= 3,
+            "Should find multiple User-related symbols"
+        );
+
         // ファイル検索ワークフロー
-        let file_search = searcher.search("tsx", &SearchOptions {
-            types: Some(vec![SymbolType::Filename]),
-            ..Default::default()
-        });
+        let file_search = searcher.search(
+            "tsx",
+            &SearchOptions {
+                types: Some(vec![SymbolType::Filename]),
+                ..Default::default()
+            },
+        );
         assert!(!file_search.is_empty(), "Should find .tsx files");
-        
-        println!("✅ React TypeScript project: {} symbols indexed in {:?}", 
-            all_symbols.len(), indexing_duration);
-        
+
+        println!(
+            "✅ React TypeScript project: {} symbols indexed in {:?}",
+            all_symbols.len(),
+            indexing_duration
+        );
+
         Ok(())
     }
 
@@ -1042,56 +1166,104 @@ class TestDataProcessor:
     async fn should_handle_nodejs_express_project() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         create_nodejs_express_project(&temp_dir)?;
-        
+
         let mut indexer = TreeSitterIndexer::with_verbose(false);
         indexer.initialize().await.unwrap();
-        
-        let patterns = vec!["**/*.ts".to_string(), "**/*.js".to_string(), "**/*.json".to_string()];
+
+        let patterns = vec![
+            "**/*.ts".to_string(),
+            "**/*.js".to_string(),
+            "**/*.json".to_string(),
+        ];
         let start_time = Instant::now();
-        
+
         indexer.index_directory(temp_dir.path(), &patterns).await?;
         let indexing_duration = start_time.elapsed();
-        
+
         let all_symbols = indexer.get_all_symbols();
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         // 基本性能確認
-        assert!(indexing_duration < Duration::from_secs(10), 
-            "Should index Express project quickly, took {:?}", indexing_duration);
-        assert!(all_symbols.len() > 15, "Should extract substantial symbols from Express project");
-        
+        assert!(
+            indexing_duration < Duration::from_secs(10),
+            "Should index Express project quickly, took {:?}",
+            indexing_duration
+        );
+        assert!(
+            all_symbols.len() > 15,
+            "Should extract substantial symbols from Express project"
+        );
+
         // Express特有のシンボル検証
-        assert!(all_symbols.iter().any(|s| s.name == "UserController"), "Should find UserController class");
-        assert!(all_symbols.iter().any(|s| s.name == "UserService"), "Should find UserService class");
-        assert!(all_symbols.iter().any(|s| s.name == "userRoutes" || s.name == "router"), "Should find routes");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserController"),
+            "Should find UserController class"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserService"),
+            "Should find UserService class"
+        );
+        assert!(
+            all_symbols
+                .iter()
+                .any(|s| s.name == "userRoutes" || s.name == "router"),
+            "Should find routes"
+        );
+
         // Middleware検証
-        assert!(all_symbols.iter().any(|s| s.name == "errorHandler"), "Should find error handler");
-        assert!(all_symbols.iter().any(|s| s.name == "validateUserInput"), "Should find validation middleware");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "errorHandler"),
+            "Should find error handler"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "validateUserInput"),
+            "Should find validation middleware"
+        );
+
         // Model/DTO検証
-        assert!(all_symbols.iter().any(|s| s.name == "User"), "Should find User interface");
-        assert!(all_symbols.iter().any(|s| s.name == "CreateUserDto"), "Should find DTO interfaces");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "User"),
+            "Should find User interface"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "CreateUserDto"),
+            "Should find DTO interfaces"
+        );
+
         // Utility検証
-        assert!(all_symbols.iter().any(|s| s.name == "logger"), "Should find logger utility");
-        assert!(all_symbols.iter().any(|s| s.name == "DatabaseError"), "Should find custom error classes");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "logger"),
+            "Should find logger utility"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "DatabaseError"),
+            "Should find custom error classes"
+        );
+
         // 実際のワークフロー検証：API層検索
         let controller_search = searcher.search("Controller", &SearchOptions::default());
-        assert!(!controller_search.is_empty(), "Should find controller symbols");
-        
+        assert!(
+            !controller_search.is_empty(),
+            "Should find controller symbols"
+        );
+
         // サービス層検索
         let service_search = searcher.search("Service", &SearchOptions::default());
         assert!(!service_search.is_empty(), "Should find service symbols");
-        
+
         // エラーハンドリング検索
         let error_search = searcher.search("Error", &SearchOptions::default());
-        assert!(!error_search.is_empty(), "Should find error handling symbols");
-        
-        println!("✅ Node.js Express project: {} symbols indexed in {:?}", 
-            all_symbols.len(), indexing_duration);
-        
+        assert!(
+            !error_search.is_empty(),
+            "Should find error handling symbols"
+        );
+
+        println!(
+            "✅ Node.js Express project: {} symbols indexed in {:?}",
+            all_symbols.len(),
+            indexing_duration
+        );
+
         Ok(())
     }
 
@@ -1099,80 +1271,124 @@ class TestDataProcessor:
     async fn should_handle_python_data_science_project() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         create_python_project(&temp_dir)?;
-        
+
         let mut indexer = TreeSitterIndexer::with_verbose(false);
         indexer.initialize().await.unwrap();
-        
+
         let patterns = vec!["**/*.py".to_string(), "**/*.txt".to_string()];
         let start_time = Instant::now();
-        
+
         indexer.index_directory(temp_dir.path(), &patterns).await?;
         let indexing_duration = start_time.elapsed();
-        
+
         let all_symbols = indexer.get_all_symbols();
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         // 基本性能確認
-        assert!(indexing_duration < Duration::from_secs(10), 
-            "Should index Python project quickly, took {:?}", indexing_duration);
-        assert!(all_symbols.len() > 10, "Should extract substantial symbols from Python project");
-        
+        assert!(
+            indexing_duration < Duration::from_secs(10),
+            "Should index Python project quickly, took {:?}",
+            indexing_duration
+        );
+        assert!(
+            all_symbols.len() > 10,
+            "Should extract substantial symbols from Python project"
+        );
+
         // Python特有のシンボル検証
-        assert!(all_symbols.iter().any(|s| s.name == "DataProcessor"), "Should find DataProcessor class");
-        assert!(all_symbols.iter().any(|s| s.name == "MLPredictor"), "Should find MLPredictor class");
-        assert!(all_symbols.iter().any(|s| s.name == "Config"), "Should find Config class");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "DataProcessor"),
+            "Should find DataProcessor class"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "MLPredictor"),
+            "Should find MLPredictor class"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "Config"),
+            "Should find Config class"
+        );
+
         // メソッド検証
-        assert!(all_symbols.iter().any(|s| s.name == "load_data"), "Should find load_data method");
-        assert!(all_symbols.iter().any(|s| s.name == "clean_data"), "Should find clean_data method");
-        assert!(all_symbols.iter().any(|s| s.name == "train"), "Should find train method");
-        assert!(all_symbols.iter().any(|s| s.name == "predict"), "Should find predict method");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "load_data"),
+            "Should find load_data method"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "clean_data"),
+            "Should find clean_data method"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "train"),
+            "Should find train method"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "predict"),
+            "Should find predict method"
+        );
+
         // ユーティリティ検証
-        assert!(all_symbols.iter().any(|s| s.name == "get_logger"), "Should find logger function");
-        assert!(all_symbols.iter().any(|s| s.name == "setup_logging"), "Should find logging setup");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "get_logger"),
+            "Should find logger function"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "setup_logging"),
+            "Should find logging setup"
+        );
+
         // 実際のワークフロー検証：データサイエンス関連検索
         let data_search = searcher.search("data", &SearchOptions::default());
         assert!(data_search.len() >= 2, "Should find data-related symbols");
-        
+
         // 機械学習関連検索
         let ml_search = searcher.search("predict", &SearchOptions::default());
-        assert!(!ml_search.is_empty(), "Should find prediction-related symbols");
-        
+        assert!(
+            !ml_search.is_empty(),
+            "Should find prediction-related symbols"
+        );
+
         // 設定・ログ関連検索
         let config_search = searcher.search("config", &SearchOptions::default());
-        assert!(!config_search.is_empty(), "Should find configuration symbols");
-        
-        println!("✅ Python Data Science project: {} symbols indexed in {:?}", 
-            all_symbols.len(), indexing_duration);
-        
+        assert!(
+            !config_search.is_empty(),
+            "Should find configuration symbols"
+        );
+
+        println!(
+            "✅ Python Data Science project: {} symbols indexed in {:?}",
+            all_symbols.len(),
+            indexing_duration
+        );
+
         Ok(())
     }
 
     #[tokio::test]
     async fn should_handle_mixed_technology_monorepo() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // モノレポ構造の作成
         fs::create_dir_all(temp_dir.path().join("frontend"))?;
         fs::create_dir_all(temp_dir.path().join("backend"))?;
         fs::create_dir_all(temp_dir.path().join("analytics"))?;
-        
+
         // Frontend: React TypeScript
         let frontend_temp = TempDir::new_in(temp_dir.path().join("frontend")).unwrap();
         create_react_typescript_project(&frontend_temp)?;
-        
+
         // Backend: Node.js Express
         let backend_temp = TempDir::new_in(temp_dir.path().join("backend")).unwrap();
         create_nodejs_express_project(&backend_temp)?;
-        
+
         // Analytics: Python
         let analytics_temp = TempDir::new_in(temp_dir.path().join("analytics")).unwrap();
         create_python_project(&analytics_temp)?;
-        
+
         // ルートレベルの設定ファイル
-        fs::write(temp_dir.path().join("package.json"), r#"{
+        fs::write(
+            temp_dir.path().join("package.json"),
+            r#"{
   "name": "monorepo",
   "private": true,
   "workspaces": ["frontend", "backend"],
@@ -1181,9 +1397,12 @@ class TestDataProcessor:
     "dev:frontend": "cd frontend && npm run dev",
     "dev:backend": "cd backend && npm run dev"
   }
-}"#)?;
-        
-        fs::write(temp_dir.path().join("README.md"), r#"# Monorepo Project
+}"#,
+        )?;
+
+        fs::write(
+            temp_dir.path().join("README.md"),
+            r#"# Monorepo Project
 
 This is a full-stack application with:
 - Frontend: React TypeScript
@@ -1194,53 +1413,87 @@ This is a full-stack application with:
 
 1. Install dependencies: `npm install`
 2. Start development: `npm run dev`
-"#)?;
+"#,
+        )?;
 
         let mut indexer = TreeSitterIndexer::with_verbose(false);
         indexer.initialize().await.unwrap();
-        
+
         let patterns = vec!["**/*".to_string()]; // すべてのファイル
         let start_time = Instant::now();
-        
+
         indexer.index_directory(temp_dir.path(), &patterns).await?;
         let indexing_duration = start_time.elapsed();
-        
+
         let all_symbols = indexer.get_all_symbols();
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         // 大規模モノレポ性能確認
-        assert!(indexing_duration < Duration::from_secs(30), 
-            "Should index monorepo within 30 seconds, took {:?}", indexing_duration);
-        assert!(all_symbols.len() > 50, "Should extract many symbols from monorepo");
-        
+        assert!(
+            indexing_duration < Duration::from_secs(30),
+            "Should index monorepo within 30 seconds, took {:?}",
+            indexing_duration
+        );
+        assert!(
+            all_symbols.len() > 50,
+            "Should extract many symbols from monorepo"
+        );
+
         // 各技術スタックのシンボル確認
         // React TypeScript symbols
-        assert!(all_symbols.iter().any(|s| s.name == "App"), "Should find React App component");
-        assert!(all_symbols.iter().any(|s| s.name == "UserList"), "Should find React UserList component");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "App"),
+            "Should find React App component"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserList"),
+            "Should find React UserList component"
+        );
+
         // Node.js Express symbols
-        assert!(all_symbols.iter().any(|s| s.name == "UserController"), "Should find Express UserController");
-        assert!(all_symbols.iter().any(|s| s.name == "errorHandler"), "Should find Express middleware");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "UserController"),
+            "Should find Express UserController"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "errorHandler"),
+            "Should find Express middleware"
+        );
+
         // Python symbols
-        assert!(all_symbols.iter().any(|s| s.name == "DataProcessor"), "Should find Python DataProcessor");
-        assert!(all_symbols.iter().any(|s| s.name == "MLPredictor"), "Should find Python ML classes");
-        
+        assert!(
+            all_symbols.iter().any(|s| s.name == "DataProcessor"),
+            "Should find Python DataProcessor"
+        );
+        assert!(
+            all_symbols.iter().any(|s| s.name == "MLPredictor"),
+            "Should find Python ML classes"
+        );
+
         // 実際のワークフロー検証：横断検索
         let user_search = searcher.search("User", &SearchOptions::default());
-        assert!(user_search.len() >= 5, "Should find User symbols across all technologies");
-        
+        assert!(
+            user_search.len() >= 5,
+            "Should find User symbols across all technologies"
+        );
+
         // 設定ファイル検索
         let config_search = searcher.search("config", &SearchOptions::default());
         assert!(!config_search.is_empty(), "Should find configuration files");
-        
+
         // サービス層検索（複数言語）
         let service_search = searcher.search("Service", &SearchOptions::default());
-        assert!(!service_search.is_empty(), "Should find service layer symbols");
-        
-        println!("✅ Mixed technology monorepo: {} symbols indexed in {:?}", 
-            all_symbols.len(), indexing_duration);
-        
+        assert!(
+            !service_search.is_empty(),
+            "Should find service layer symbols"
+        );
+
+        println!(
+            "✅ Mixed technology monorepo: {} symbols indexed in {:?}",
+            all_symbols.len(),
+            indexing_duration
+        );
+
         Ok(())
     }
 
@@ -1248,83 +1501,117 @@ This is a full-stack application with:
     async fn should_support_common_developer_workflows() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         create_react_typescript_project(&temp_dir)?;
-        
+
         let mut indexer = TreeSitterIndexer::with_verbose(false);
         indexer.initialize().await.unwrap();
-        
+
         let patterns = vec!["**/*.ts".to_string(), "**/*.tsx".to_string()];
         indexer.index_directory(temp_dir.path(), &patterns).await?;
-        
+
         let all_symbols = indexer.get_all_symbols();
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         // ワークフロー1: "User"関連のコンポーネントを全て見つける
-        let user_components = searcher.search("User", &SearchOptions {
-            types: Some(vec![SymbolType::Class, SymbolType::Interface, SymbolType::Function]),
-            ..Default::default()
-        });
-        assert!(user_components.len() >= 3, "Should find multiple User-related components");
-        
+        let user_components = searcher.search(
+            "User",
+            &SearchOptions {
+                types: Some(vec![
+                    SymbolType::Class,
+                    SymbolType::Interface,
+                    SymbolType::Function,
+                ]),
+                ..Default::default()
+            },
+        );
+        assert!(
+            user_components.len() >= 3,
+            "Should find multiple User-related components"
+        );
+
         // ワークフロー2: Hooksを見つける（"use"で始まる関数）
-        let hooks = searcher.search("use", &SearchOptions {
-            types: Some(vec![SymbolType::Function]),
-            ..Default::default()
-        });
+        let hooks = searcher.search(
+            "use",
+            &SearchOptions {
+                types: Some(vec![SymbolType::Function]),
+                ..Default::default()
+            },
+        );
         assert!(!hooks.is_empty(), "Should find React hooks");
-        
+
         // ワークフロー3: 型定義を見つける（実際に抽出されるシンボルタイプで検索）
         let any_user_symbols = searcher.search("User", &SearchOptions::default());
-        assert!(!any_user_symbols.is_empty(), "Should find User-related symbols of any type");
-        
+        assert!(
+            !any_user_symbols.is_empty(),
+            "Should find User-related symbols of any type"
+        );
+
         // ワークフロー4: サービス・ユーティリティクラスを見つける
         let services = searcher.search("Service", &SearchOptions::default());
         assert!(!services.is_empty(), "Should find service classes");
-        
+
         // ワークフロー5: イベントハンドラを見つける
-        let handlers = searcher.search("handle", &SearchOptions {
-            types: Some(vec![SymbolType::Function, SymbolType::Method]),
-            ..Default::default()
-        });
+        let handlers = searcher.search(
+            "handle",
+            &SearchOptions {
+                types: Some(vec![SymbolType::Function, SymbolType::Method]),
+                ..Default::default()
+            },
+        );
         assert!(!handlers.is_empty(), "Should find event handlers");
-        
+
         // ワークフロー6: ファイル名での検索
-        let tsx_files = searcher.search("tsx", &SearchOptions {
-            types: Some(vec![SymbolType::Filename]),
-            ..Default::default()
-        });
+        let tsx_files = searcher.search(
+            "tsx",
+            &SearchOptions {
+                types: Some(vec![SymbolType::Filename]),
+                ..Default::default()
+            },
+        );
         assert!(!tsx_files.is_empty(), "Should find .tsx files");
-        
+
         // 検索性能の確認（リアルタイム入力）
         let search_queries = ["User", "use", "Props", "Service", "handle", "format"];
         for query in search_queries {
             let start = Instant::now();
             let _results = searcher.search(query, &SearchOptions::default());
             let duration = start.elapsed();
-            
-            assert!(duration < Duration::from_millis(50), 
-                "Search for '{}' should be interactive (< 50ms), took {:?}", query, duration);
+
+            assert!(
+                duration < Duration::from_millis(50),
+                "Search for '{}' should be interactive (< 50ms), took {:?}",
+                query,
+                duration
+            );
             // すべてのクエリで結果が出ることは保証しないが、クラッシュしないことを確認
         }
-        
+
         println!("✅ Developer workflows: All common search patterns work efficiently");
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn should_handle_large_enterprise_codebase_simulation() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // 企業レベルの大規模コードベースをシミュレート
-        let modules = ["auth", "users", "orders", "payments", "notifications", "analytics"];
+        let modules = [
+            "auth",
+            "users",
+            "orders",
+            "payments",
+            "notifications",
+            "analytics",
+        ];
         let components_per_module = 10;
-        
+
         for module in modules {
             fs::create_dir_all(temp_dir.path().join(format!("src/{}", module)))?;
-            
+
             for i in 0..components_per_module {
                 // サービスクラス
-                let service_content = format!(r#"
+                let service_content = format!(
+                    r#"
 export class {}Service{{
   private readonly baseUrl = '/api/{}';
   
@@ -1360,23 +1647,33 @@ export class {}Service{{
     await fetch(`${{this.baseUrl}}/${{id}}`, {{ method: 'DELETE' }});
   }}
 }}
-"#, 
-                    module.to_uppercase(), module,
-                    module.to_uppercase(), module.to_uppercase(),
-                    module.to_uppercase(), module.to_uppercase(),
-                    module.to_uppercase(), module.to_uppercase(), module.to_uppercase(),
-                    module.to_uppercase(), module.to_uppercase(), module.to_uppercase(),
+"#,
+                    module.to_uppercase(),
+                    module,
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
+                    module.to_uppercase(),
                     module.to_uppercase()
                 );
-                
+
                 fs::write(
-                    temp_dir.path().join(format!("src/{}/{}Service{}.ts", module, module, i)),
-                    service_content
+                    temp_dir
+                        .path()
+                        .join(format!("src/{}/{}Service{}.ts", module, module, i)),
+                    service_content,
                 )?;
-                
+
                 // 型定義
                 let module_upper = module.to_uppercase();
-                let types_content = format!(r#"
+                let types_content = format!(
+                    r#"
 export interface {}{} {{
   id: string;
   name: string;
@@ -1401,74 +1698,106 @@ export interface Update{}{}Request extends Partial<Create{}{}Request> {{
 
 export type {}{}Status = {}{}.status;
 export type {}{}Id = string;
-"#, 
-                    module_upper, i,
-                    module_upper, i,
-                    module_upper, i, module_upper, i,
-                    module_upper, i,
-                    module_upper, i, module_upper, i,
-                    module_upper, i
+"#,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i,
+                    module_upper,
+                    i
                 );
-                
+
                 fs::write(
-                    temp_dir.path().join(format!("src/{}/types{}.ts", module, i)),
-                    types_content
+                    temp_dir
+                        .path()
+                        .join(format!("src/{}/types{}.ts", module, i)),
+                    types_content,
                 )?;
             }
         }
-        
+
         let mut indexer = TreeSitterIndexer::with_verbose(false);
         indexer.initialize().await.unwrap();
-        
+
         let patterns = vec!["**/*.ts".to_string()];
         let start_time = Instant::now();
-        
+
         indexer.index_directory(temp_dir.path(), &patterns).await?;
         let indexing_duration = start_time.elapsed();
-        
+
         let all_symbols = indexer.get_all_symbols();
         let searcher = FuzzySearcher::new(all_symbols.clone());
-        
+
         // 大規模コードベースの性能確認
-        assert!(indexing_duration < Duration::from_secs(60), 
-            "Should index large enterprise codebase within 60 seconds, took {:?}", indexing_duration);
-        
+        assert!(
+            indexing_duration < Duration::from_secs(60),
+            "Should index large enterprise codebase within 60 seconds, took {:?}",
+            indexing_duration
+        );
+
         // シンボル数の確認（6モジュール × 10コンポーネント × 複数シンボル）
-        assert!(all_symbols.len() > 300, 
-            "Should extract substantial symbols from enterprise codebase, got {}", all_symbols.len());
-        
+        assert!(
+            all_symbols.len() > 300,
+            "Should extract substantial symbols from enterprise codebase, got {}",
+            all_symbols.len()
+        );
+
         // 各モジュールのシンボルが見つかることを確認
         for module in modules {
-            let module_symbols = all_symbols.iter()
+            let module_symbols = all_symbols
+                .iter()
                 .filter(|s| s.file.to_string_lossy().contains(module))
                 .count();
-            assert!(module_symbols > 10, 
-                "Should find symbols for {} module, found {}", module, module_symbols);
+            assert!(
+                module_symbols > 10,
+                "Should find symbols for {} module, found {}",
+                module,
+                module_symbols
+            );
         }
-        
+
         // 企業レベルでの検索パフォーマンス
-        let enterprise_queries = ["Service", "Request", "Status", "Id", "create", "update", "delete"];
+        let enterprise_queries = [
+            "Service", "Request", "Status", "Id", "create", "update", "delete",
+        ];
         for query in enterprise_queries {
             let start = Instant::now();
             let results = searcher.search(query, &SearchOptions::default());
             let duration = start.elapsed();
-            
-            assert!(duration < Duration::from_millis(100), 
-                "Enterprise search for '{}' should be fast (< 100ms), took {:?}", query, duration);
+
+            assert!(
+                duration < Duration::from_millis(100),
+                "Enterprise search for '{}' should be fast (< 100ms), took {:?}",
+                query,
+                duration
+            );
             assert!(!results.is_empty(), "Should find results for '{}'", query);
         }
-        
+
         // 型安全性の検索 - 実際に抽出されるシンボル数に基づく検証
         let any_request_symbols = searcher.search("Request", &SearchOptions::default());
-        
+
         // 実際のシンボル数に基づいて調整 - より現実的な期待値
-        assert!(any_request_symbols.len() > 0 || all_symbols.len() > 100, 
+        assert!(!any_request_symbols.is_empty() || all_symbols.len() > 100,
             "Should find Request symbols or have substantial symbol count, Request symbols: {}, total symbols: {}", 
             any_request_symbols.len(), all_symbols.len());
-        
-        println!("✅ Large enterprise codebase: {} symbols indexed in {:?}", 
-            all_symbols.len(), indexing_duration);
-        
+
+        println!(
+            "✅ Large enterprise codebase: {} symbols indexed in {:?}",
+            all_symbols.len(),
+            indexing_duration
+        );
+
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CodeSymbol {
@@ -73,9 +73,15 @@ pub struct IndexedFile {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IndexUpdate {
     /// New file was added to the index
-    Added { file: PathBuf, symbols: Vec<CodeSymbol> },
+    Added {
+        file: PathBuf,
+        symbols: Vec<CodeSymbol>,
+    },
     /// Existing file was modified and re-indexed
-    Modified { file: PathBuf, symbols: Vec<CodeSymbol> },
+    Modified {
+        file: PathBuf,
+        symbols: Vec<CodeSymbol>,
+    },
     /// File was deleted from the index
     Removed { file: PathBuf, symbol_count: usize },
 }
@@ -83,7 +89,10 @@ pub enum IndexUpdate {
 #[derive(Debug, Clone, PartialEq)]
 pub enum WatchEvent {
     /// File system event that should trigger index update
-    FileChanged { path: PathBuf, event_kind: WatchEventKind },
+    FileChanged {
+        path: PathBuf,
+        event_kind: WatchEventKind,
+    },
     /// Batch of events (for optimization)
     BatchUpdate { events: Vec<WatchEvent> },
 }
@@ -132,33 +141,33 @@ impl IndexCache {
             files: HashMap::new(),
         }
     }
-    
+
     /// Check if this cache is compatible with current SFS version
     pub fn is_compatible(&self) -> bool {
         // For now, only check version format
         self.version == "1.0"
     }
-    
+
     /// Get cached file data by path
     pub fn get_file(&self, path: &str) -> Option<&CachedFile> {
         self.files.get(path)
     }
-    
+
     /// Add or update cached file data
     pub fn update_file(&mut self, path: String, cached_file: CachedFile) {
         self.files.insert(path, cached_file);
     }
-    
+
     /// Remove cached file data
     pub fn remove_file(&mut self, path: &str) -> Option<CachedFile> {
         self.files.remove(path)
     }
-    
+
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         let total_files = self.files.len();
         let total_symbols: usize = self.files.values().map(|f| f.symbols.len()).sum();
-        
+
         CacheStats {
             total_files,
             total_symbols,

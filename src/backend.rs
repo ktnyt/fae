@@ -1,54 +1,47 @@
 use crate::{
+    file_watcher::FileWatcher,
     indexer::TreeSitterIndexer,
     searcher::FuzzySearcher,
-    file_watcher::FileWatcher,
-    types::{CodeSymbol, SearchResult, SearchMode, SearchOptions},
+    types::{CodeSymbol, SearchMode, SearchOptions, SearchResult},
 };
+use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
 use std::thread;
-use anyhow::Result;
+use std::time::{Duration, Instant};
 
 /// Events sent from backend to UI
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
-    IndexingProgress { 
-        processed: usize, 
-        total: usize, 
-        symbols: Vec<CodeSymbol> 
+    IndexingProgress {
+        processed: usize,
+        total: usize,
+        symbols: Vec<CodeSymbol>,
     },
-    IndexingComplete { 
-        duration: Duration, 
-        total_symbols: usize 
+    IndexingComplete {
+        duration: Duration,
+        total_symbols: usize,
     },
-    FileChanged { 
-        file: PathBuf, 
-        change_type: FileChangeType 
+    FileChanged {
+        file: PathBuf,
+        change_type: FileChangeType,
     },
-    SearchResults { 
-        query: String, 
-        results: Vec<SearchResult> 
+    SearchResults {
+        query: String,
+        results: Vec<SearchResult>,
     },
-    Error { 
-        message: String 
+    Error {
+        message: String,
     },
 }
 
 /// Commands sent from UI to backend
 #[derive(Debug, Clone)]
 pub enum UserCommand {
-    StartIndexing { 
-        directory: PathBuf 
-    },
-    Search { 
-        query: String, 
-        mode: SearchMode 
-    },
+    StartIndexing { directory: PathBuf },
+    Search { query: String, mode: SearchMode },
     EnableFileWatching,
-    CopyResult { 
-        index: usize 
-    },
+    CopyResult { index: usize },
     Quit,
 }
 
@@ -81,10 +74,14 @@ impl SearchBackend {
     pub fn new(
         verbose: bool,
         respect_gitignore: bool,
-    ) -> (Self, mpsc::Sender<UserCommand>, mpsc::Receiver<BackendEvent>) {
+    ) -> (
+        Self,
+        mpsc::Sender<UserCommand>,
+        mpsc::Receiver<BackendEvent>,
+    ) {
         let (event_sender, event_receiver) = mpsc::channel();
         let (command_sender, command_receiver) = mpsc::channel();
-        
+
         let backend = Self {
             indexer: TreeSitterIndexer::with_options(verbose, respect_gitignore),
             searcher: None,
@@ -99,15 +96,15 @@ impl SearchBackend {
             indexing_receiver: None,
             indexing_thread: None,
         };
-        
+
         (backend, command_sender, event_receiver)
     }
-    
+
     /// Main event loop for backend processing
     pub fn run(&mut self) -> Result<()> {
         // Initialize indexer
         self.indexer.initialize_sync()?;
-        
+
         loop {
             // Process commands from UI
             match self.command_receiver.try_recv() {
@@ -133,28 +130,28 @@ impl SearchBackend {
                     break;
                 }
             }
-            
+
             // Process file watcher events if enabled
             if let Err(e) = self.process_file_watcher_events() {
                 let _ = self.event_sender.send(BackendEvent::Error {
                     message: format!("File watching error: {}", e),
                 });
             }
-            
+
             // Process indexing progress if running
             if let Err(e) = self.process_indexing_progress() {
                 let _ = self.event_sender.send(BackendEvent::Error {
                     message: format!("Indexing progress error: {}", e),
                 });
             }
-            
+
             // Small delay to prevent busy waiting
             std::thread::sleep(Duration::from_millis(16));
         }
-        
+
         Ok(())
     }
-    
+
     fn handle_command(&mut self, command: UserCommand) -> Result<bool> {
         match command {
             UserCommand::StartIndexing { directory } => {
@@ -179,37 +176,37 @@ impl SearchBackend {
             }
         }
     }
-    
+
     fn start_indexing(&mut self, directory: PathBuf) -> Result<()> {
         self.directory_path = Some(directory.clone());
         self.is_indexing = true;
         self.indexing_start_time = Some(Instant::now());
-        
+
         // Start progressive indexing in background thread
         let (progress_sender, progress_receiver) = mpsc::channel();
         self.indexing_receiver = Some(progress_receiver);
-        
+
         let event_sender = self.event_sender.clone();
         let verbose = self.verbose;
         let respect_gitignore = self.respect_gitignore;
-        
+
         let handle = thread::spawn(move || {
             if let Err(e) = Self::progressive_indexing_worker(
-                directory, 
-                progress_sender, 
+                directory,
+                progress_sender,
                 event_sender,
                 verbose,
-                respect_gitignore
+                respect_gitignore,
             ) {
                 eprintln!("Progressive indexing error: {}", e);
             }
         });
-        
+
         self.indexing_thread = Some(handle);
-        
+
         Ok(())
     }
-    
+
     fn progressive_indexing_worker(
         directory: PathBuf,
         progress_sender: mpsc::Sender<(Vec<CodeSymbol>, usize, usize)>,
@@ -218,31 +215,30 @@ impl SearchBackend {
         respect_gitignore: bool,
     ) -> Result<()> {
         use ignore::WalkBuilder;
-        
+
         let mut builder = WalkBuilder::new(&directory);
-        builder.git_ignore(respect_gitignore)
-               .git_global(respect_gitignore)
-               .git_exclude(respect_gitignore)
-               .require_git(false)
-               .hidden(false)
-               .parents(true)
-               .ignore(true);
-        
+        builder
+            .git_ignore(respect_gitignore)
+            .git_global(respect_gitignore)
+            .git_exclude(respect_gitignore)
+            .require_git(false)
+            .hidden(false)
+            .parents(true)
+            .ignore(true);
+
         // Collect all files first
         let mut file_paths = Vec::new();
-        for entry in builder.build() {
-            if let Ok(dir_entry) = entry {
-                let path = dir_entry.path();
-                if path.is_file() {
-                    file_paths.push(path.to_path_buf());
-                }
+        for dir_entry in builder.build().flatten() {
+            let path = dir_entry.path();
+            if path.is_file() {
+                file_paths.push(path.to_path_buf());
             }
         }
-        
+
         let total_files = file_paths.len();
         let mut all_symbols = Vec::new();
         let mut processed = 0;
-        
+
         // Create a temporary indexer for this thread
         let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
         if let Err(e) = indexer.initialize_sync() {
@@ -251,19 +247,19 @@ impl SearchBackend {
             });
             return Err(e);
         }
-        
+
         let start_time = Instant::now();
-        
+
         // Process files progressively
         for file_path in file_paths {
             match indexer.create_file_symbols(&file_path) {
                 Ok(symbols) => {
                     all_symbols.extend(symbols.clone());
                     processed += 1;
-                    
+
                     // Send progress update
                     let _ = progress_sender.send((symbols, processed, total_files));
-                    
+
                     // Send progress event
                     let _ = event_sender.send(BackendEvent::IndexingProgress {
                         processed,
@@ -280,24 +276,32 @@ impl SearchBackend {
                     let _ = progress_sender.send((Vec::new(), processed, total_files));
                 }
             }
-            
+
             // Small delay to allow other processing
             thread::sleep(Duration::from_millis(10));
         }
-        
+
         let duration = start_time.elapsed();
-        
+
         // Send completion event
         let _ = event_sender.send(BackendEvent::IndexingComplete {
             duration,
             total_symbols: all_symbols.len(),
         });
-        
+
         Ok(())
     }
-    
+
     fn perform_search(&mut self, query: String, mode: SearchMode) -> Result<()> {
         if let Some(ref searcher) = self.searcher {
+            // Remove prefix from query based on search mode
+            let clean_query = match mode.name.as_str() {
+                "Symbol" => query.strip_prefix('#').unwrap_or(&query).to_string(),
+                "File" => query.strip_prefix('>').unwrap_or(&query).to_string(),
+                "Regex" => query.strip_prefix('/').unwrap_or(&query).to_string(),
+                _ => query.clone(),
+            };
+
             let results = match mode.name.as_str() {
                 "Symbol" => {
                     let search_options = SearchOptions {
@@ -316,7 +320,7 @@ impl SearchBackend {
                         ]),
                         ..Default::default()
                     };
-                    searcher.search(&query, &search_options)
+                    searcher.search(&clean_query, &search_options)
                 }
                 "File" => {
                     let search_options = SearchOptions {
@@ -326,28 +330,27 @@ impl SearchBackend {
                         ]),
                         ..Default::default()
                     };
-                    searcher.search(&query, &search_options)
+                    searcher.search(&clean_query, &search_options)
                 }
                 "Regex" => {
                     let search_options = SearchOptions::default();
-                    searcher.search_content(&query, &search_options)
+                    searcher.search_content(&clean_query, &search_options)
                 }
                 _ => {
                     // Default "Content" mode
                     let search_options = SearchOptions::default();
-                    searcher.search_content(&query, &search_options)
+                    searcher.search_content(&clean_query, &search_options)
                 }
             };
-            
-            let _ = self.event_sender.send(BackendEvent::SearchResults {
-                query,
-                results,
-            });
+
+            let _ = self
+                .event_sender
+                .send(BackendEvent::SearchResults { query, results });
         }
-        
+
         Ok(())
     }
-    
+
     fn enable_file_watching(&mut self) -> Result<()> {
         if let Some(ref directory) = self.directory_path {
             // Create basic patterns for file watching
@@ -367,12 +370,15 @@ impl SearchBackend {
                 "**/*.cs".to_string(),
                 "**/*.scala".to_string(),
             ];
-            
+
             match FileWatcher::new(directory, patterns, Some(100)) {
                 Ok(watcher) => {
                     self.file_watcher = Some(watcher);
                     if self.verbose {
-                        eprintln!("File watching enabled for directory: {}", directory.display());
+                        eprintln!(
+                            "File watching enabled for directory: {}",
+                            directory.display()
+                        );
                     }
                 }
                 Err(e) => {
@@ -382,14 +388,12 @@ impl SearchBackend {
                     return Err(e);
                 }
             }
-        } else {
-            if self.verbose {
-                eprintln!("Cannot enable file watching: no directory set");
-            }
+        } else if self.verbose {
+            eprintln!("Cannot enable file watching: no directory set");
         }
         Ok(())
     }
-    
+
     fn process_file_watcher_events(&mut self) -> Result<()> {
         if let Some(ref file_watcher) = self.file_watcher {
             // Try to receive file change events
@@ -417,7 +421,10 @@ impl SearchBackend {
                                 searcher.update_symbols(symbols);
                             }
                         }
-                        crate::types::IndexUpdate::Removed { file, symbol_count: _ } => {
+                        crate::types::IndexUpdate::Removed {
+                            file,
+                            symbol_count: _,
+                        } => {
                             let _ = self.event_sender.send(BackendEvent::FileChanged {
                                 file,
                                 change_type: FileChangeType::Deleted,
@@ -437,12 +444,12 @@ impl SearchBackend {
         }
         Ok(())
     }
-    
+
     fn process_indexing_progress(&mut self) -> Result<()> {
         if let Some(ref receiver) = self.indexing_receiver {
             // Process up to 5 progress updates per iteration to avoid blocking
             let mut updates_processed = 0;
-            
+
             while updates_processed < 5 {
                 match receiver.try_recv() {
                     Ok((symbols, processed, total)) => {
@@ -453,9 +460,9 @@ impl SearchBackend {
                             // Create initial searcher
                             self.searcher = Some(FuzzySearcher::new(symbols));
                         }
-                        
+
                         updates_processed += 1;
-                        
+
                         // Check if indexing is complete
                         if processed >= total {
                             self.is_indexing = false;
@@ -483,7 +490,7 @@ impl SearchBackend {
                 }
             }
         }
-        
+
         Ok(())
     }
 }

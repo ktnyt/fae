@@ -1,8 +1,7 @@
 use crate::{
     backend::{BackendEvent, FileChangeType},
-    types::{CodeSymbol, SearchResult, DefaultDisplayStrategy, SearchMode},
+    types::{CodeSymbol, DefaultDisplayStrategy, SearchMode, SearchResult},
 };
-use std::time::Duration;
 
 /// UI state for TUI application
 /// This contains only state information, no rendering logic
@@ -15,22 +14,21 @@ pub struct TuiState {
     pub query: String,
     pub current_search_mode: SearchMode,
     pub search_modes: Vec<SearchMode>,
-    
+
     // UI state
     pub should_quit: bool,
     pub show_help: bool,
     pub status_message: String,
     pub default_strategy: DefaultDisplayStrategy,
-    
+
     // Indexing state
     pub is_indexing: bool,
     pub indexing_progress: Option<IndexingProgress>,
-    
+
     // File watching state
     pub watch_enabled: bool,
     pub last_updated_file: Option<String>,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct IndexingProgress {
@@ -87,11 +85,15 @@ impl TuiState {
             last_updated_file: None,
         }
     }
-    
+
     /// Apply backend event to update state
     pub fn apply_backend_event(&mut self, event: BackendEvent) {
         match event {
-            BackendEvent::IndexingProgress { processed, total, symbols } => {
+            BackendEvent::IndexingProgress {
+                processed,
+                total,
+                symbols,
+            } => {
                 self.symbols.extend(symbols);
                 self.is_indexing = true;
                 self.indexing_progress = Some(IndexingProgress {
@@ -99,10 +101,13 @@ impl TuiState {
                     total,
                     percentage: (processed as f32 / total as f32 * 100.0) as u32,
                 });
-                self.status_message = format!("Indexing progress: {}/{} files ({}%)", 
-                                            processed, total, 
-                                            (processed as f32 / total as f32 * 100.0) as u32);
-                
+                self.status_message = format!(
+                    "Indexing progress: {}/{} files ({}%)",
+                    processed,
+                    total,
+                    (processed as f32 / total as f32 * 100.0) as u32
+                );
+
                 // Update current results if we have a query
                 if !self.query.trim().is_empty() {
                     self.update_search_results();
@@ -110,19 +115,24 @@ impl TuiState {
                     self.show_default_results();
                 }
             }
-            BackendEvent::IndexingComplete { duration, total_symbols } => {
+            BackendEvent::IndexingComplete {
+                duration,
+                total_symbols,
+            } => {
                 self.is_indexing = false;
                 self.indexing_progress = None;
-                
+
                 let duration_msg = if duration.as_millis() < 1000 {
                     format!("{}ms", duration.as_millis())
                 } else {
                     format!("{:.1}s", duration.as_secs_f64())
                 };
-                
-                self.status_message = format!("Indexing complete! Found {} symbols ({})", 
-                                            total_symbols, duration_msg);
-                
+
+                self.status_message = format!(
+                    "Indexing complete! Found {} symbols ({})",
+                    total_symbols, duration_msg
+                );
+
                 // Update current results
                 if !self.query.trim().is_empty() {
                     self.update_search_results();
@@ -131,19 +141,20 @@ impl TuiState {
                 }
             }
             BackendEvent::FileChanged { file, change_type } => {
-                let filename = file.file_name()
+                let filename = file
+                    .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                
+
                 self.last_updated_file = Some(filename.clone());
-                
+
                 self.status_message = match change_type {
                     FileChangeType::Created => format!("File added: {}", filename),
                     FileChangeType::Modified => format!("File modified: {}", filename),
                     FileChangeType::Deleted => format!("File deleted: {}", filename),
                 };
-                
+
                 // Update current results
                 if !self.query.trim().is_empty() {
                     self.update_search_results();
@@ -160,11 +171,11 @@ impl TuiState {
             }
         }
     }
-    
+
     /// Handle user input to update state
     pub fn handle_input(&mut self, input: TuiInput) -> Vec<TuiAction> {
         let mut actions = Vec::new();
-        
+
         match input {
             TuiInput::Quit => {
                 self.should_quit = true;
@@ -213,10 +224,10 @@ impl TuiState {
                 });
             }
         }
-        
+
         actions
     }
-    
+
     pub fn detect_search_mode(&self, query: &str) -> SearchMode {
         if query.starts_with('#') {
             return self.search_modes[1].clone(); // Symbol
@@ -227,12 +238,12 @@ impl TuiState {
         }
         self.search_modes[0].clone() // Content (default)
     }
-    
+
     fn update_search_results(&mut self) {
         // This would trigger a search action
         // The actual search is handled by the backend
     }
-    
+
     fn show_default_results(&mut self) {
         // This would show default results based on strategy
         // For now, just clear results if query is empty
@@ -240,34 +251,37 @@ impl TuiState {
             // Don't clear results here - let backend handle it
         }
     }
-    
+
     /// Get current display mode info for UI
     pub fn get_mode_info(&self) -> String {
         if self.query.is_empty() && self.current_search_mode.name == "Content" {
             format!("{} Recently Edited", self.current_search_mode.icon)
         } else {
-            format!("{} {} Search", self.current_search_mode.icon, self.current_search_mode.name)
+            format!(
+                "{} {} Search",
+                self.current_search_mode.icon, self.current_search_mode.name
+            )
         }
     }
-    
+
     /// Get status line information
     pub fn get_status_info(&self) -> Vec<StatusSpan> {
         let mut spans = vec![
             StatusSpan::Label("Status: ".to_string()),
             StatusSpan::Text(self.status_message.clone()),
         ];
-        
+
         if self.watch_enabled {
             spans.push(StatusSpan::Success(" | 👁 Watch: ON".to_string()));
         } else {
             spans.push(StatusSpan::Error(" | 👁 Watch: OFF".to_string()));
         }
-        
+
         if let Some(ref last_file) = self.last_updated_file {
             spans.push(StatusSpan::Label(" | Last: ".to_string()));
             spans.push(StatusSpan::Text(last_file.clone()));
         }
-        
+
         spans
     }
 }
