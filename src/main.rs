@@ -50,11 +50,11 @@ struct Cli {
     #[arg(long)]
     include_ignored: bool,
     
-    /// Enable real-time file watching and automatic index updates
+    /// Enable real-time file watching and automatic index updates (default behavior)
     #[arg(long)]
     watch: bool,
     
-    /// Disable real-time file watching (default behavior)
+    /// Disable real-time file watching
     #[arg(long)]
     no_watch: bool,
 }
@@ -96,15 +96,15 @@ impl From<SymbolTypeArg> for SymbolType {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     
-    // Determine watch mode: --watch enables, --no-watch disables, default is disabled
+    // Determine watch mode: --no-watch disables, --watch explicitly enables, default is enabled
     let watch_enabled = if cli.watch && cli.no_watch {
-        // If both flags are provided, show warning and default to disabled
-        eprintln!("⚠️  Warning: Both --watch and --no-watch flags provided. Defaulting to no-watch.");
-        false
-    } else if cli.watch {
+        // If both flags are provided, show warning and default to enabled
+        eprintln!("⚠️  Warning: Both --watch and --no-watch flags provided. Defaulting to watch enabled.");
         true
+    } else if cli.no_watch {
+        false
     } else {
-        false // Default behavior: no watching
+        true // Default behavior: watching enabled
     };
     
     if cli.tui {

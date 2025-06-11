@@ -49,6 +49,7 @@ pub struct TuiApp {
     pub file_watcher: Option<FileWatcher>,
     pub indexer: Option<TreeSitterIndexer>,
     pub watch_enabled: bool,
+    pub last_updated_file: Option<String>,
 }
 
 impl Default for TuiApp {
@@ -101,6 +102,7 @@ impl TuiApp {
             file_watcher: None,
             indexer: None,
             watch_enabled: false,
+            last_updated_file: None,
         }
     }
 
@@ -455,22 +457,22 @@ impl TuiApp {
                     self.show_default_results();
                 }
                 
-                // Update status message for file events
+                // Update status message for file events and track last updated file
                 match &index_update {
                     IndexUpdate::Added { file, symbols } => {
-                        self.status_message = format!("File added: {} ({} symbols)", 
-                                                     file.file_name().unwrap_or_default().to_string_lossy(), 
-                                                     symbols.len());
+                        let filename = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.last_updated_file = Some(filename.clone());
+                        self.status_message = format!("File added: {} ({} symbols)", filename, symbols.len());
                     }
                     IndexUpdate::Modified { file, symbols } => {
-                        self.status_message = format!("File modified: {} ({} symbols)", 
-                                                     file.file_name().unwrap_or_default().to_string_lossy(), 
-                                                     symbols.len());
+                        let filename = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.last_updated_file = Some(filename.clone());
+                        self.status_message = format!("File modified: {} ({} symbols)", filename, symbols.len());
                     }
                     IndexUpdate::Removed { file, symbol_count } => {
-                        self.status_message = format!("File deleted: {} ({} symbols removed)", 
-                                                     file.file_name().unwrap_or_default().to_string_lossy(), 
-                                                     symbol_count);
+                        let filename = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.last_updated_file = Some(filename.clone());
+                        self.status_message = format!("File deleted: {} ({} symbols removed)", filename, symbol_count);
                     }
                 }
                 
@@ -936,16 +938,24 @@ impl TuiApp {
     }
 
     fn render_status(&self, f: &mut Frame, area: Rect) {
+        let mut status_spans = vec![
+            Span::styled("Status: ", Style::default().fg(Color::Cyan)),
+            Span::raw(&self.status_message),
+            if self.watch_enabled {
+                Span::styled(" | 👁 Watch: ON", Style::default().fg(Color::Green))
+            } else {
+                Span::styled(" | 👁 Watch: OFF", Style::default().fg(Color::Red))
+            },
+        ];
+
+        // Add last updated file information if available
+        if let Some(ref last_file) = self.last_updated_file {
+            status_spans.push(Span::styled(" | Last: ", Style::default().fg(Color::Blue)));
+            status_spans.push(Span::styled(last_file, Style::default().fg(Color::White)));
+        }
+
         let status_text = Text::from(vec![
-            Line::from(vec![
-                Span::styled("Status: ", Style::default().fg(Color::Cyan)),
-                Span::raw(&self.status_message),
-                if self.watch_enabled {
-                    Span::styled(" | 👁 Watch: ON", Style::default().fg(Color::Green))
-                } else {
-                    Span::styled(" | 👁 Watch: OFF", Style::default().fg(Color::Red))
-                },
-            ]),
+            Line::from(status_spans),
             Line::from(vec![
                 Span::styled("Keys: ", Style::default().fg(Color::Yellow)),
                 Span::raw("↑/↓/C-p/C-n Navigate • Enter Copy • ? Help • Esc/C-c Quit"),
