@@ -120,8 +120,8 @@ sfs -d ./src
 
 **Search Modes:**
 
-- **Fuzzy** (default): `query` - Fuzzy search across all symbols
-- **Symbol**: `#query` - Search only symbol names (exclude files/dirs)
+- **Simple** (default): `query` - Simple text search across all items
+- **Symbol**: `#query` - Search only symbol names
 - **File**: `>query` - Search only file and directory names
 - **Regex**: `/query` - Regular expression search
 
@@ -177,12 +177,10 @@ sfs
 sfs -d ./src -v
 
 # In TUI, try these searches:
-# - "user" - fuzzy search for user-related symbols
-# - "#Component" - find only Component symbols (no files)
-# - ">index" - find only files/dirs named index
+# - "user" - simple text search for user-related items
+# - "#Component" - search only Component symbols
+# - ">index" - search only files/dirs named index
 # - "/^get.*" - regex search for symbols starting with "get"
-# - "@class" - search only for class declarations
-# - "!constant" - search only for constants
 ```
 
 ### CLI Mode Examples
