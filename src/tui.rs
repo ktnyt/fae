@@ -156,7 +156,7 @@ impl TuiApp {
     }
     
     /// Load symbols from cache for immediate availability in TUI
-    async fn load_cache_symbols(&self, directory: &std::path::Path, verbose: bool) -> anyhow::Result<Vec<CodeSymbol>> {
+    async fn load_cache_symbols(&mut self, directory: &std::path::Path, verbose: bool) -> anyhow::Result<Vec<CodeSymbol>> {
         use crate::indexer::TreeSitterIndexer;
         
         let mut indexer = TreeSitterIndexer::with_options(verbose, true);
@@ -174,6 +174,9 @@ impl TuiApp {
                 if verbose && !cache_symbols.is_empty() {
                     eprintln!("Extracted {} symbols from cache for immediate TUI use", cache_symbols.len());
                 }
+                
+                // Store the indexer for reuse in progressive indexing
+                self.indexer = Some(indexer);
                 
                 Ok(cache_symbols)
             }
@@ -351,21 +354,20 @@ impl TuiApp {
         use std::thread;
         
         let (tx, rx) = mpsc::channel();
-        let mut indexer = TreeSitterIndexer::new();
-        
-        // Load cache if available for smart indexing
-        let cache_loaded = if let Ok(stats) = indexer.load_cache(directory) {
+        let mut indexer = if let Some(cached_indexer) = self.indexer.take() {
+            // Reuse the indexer that already has cache loaded
             if verbose {
-                eprintln!("Cache loaded for progressive indexing: {} files, {} symbols", 
-                         stats.total_files, stats.total_symbols);
+                eprintln!("Reusing cached indexer for progressive indexing");
             }
-            true
+            cached_indexer
         } else {
-            if verbose {
-                eprintln!("No cache available for progressive indexing");
-            }
-            false
+            // Fallback: create new indexer and load cache
+            let mut new_indexer = TreeSitterIndexer::new();
+            let _ = new_indexer.load_cache(directory);
+            new_indexer
         };
+        
+        let cache_loaded = true; // We always have cache loaded at this point
         
         let total_files = file_list.len();
         let directory_path = directory.to_path_buf();

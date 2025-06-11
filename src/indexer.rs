@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use anyhow::{Result, anyhow};
-use rayon::prelude::*;
 use sha2::{Sha256, Digest};
 use chrono::Utc;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -218,42 +217,26 @@ impl TreeSitterIndexer {
             }
         }
         
-        // Process files in parallel using rayon
+        // Process files using cache-aware indexing
         let verbose = self.verbose;
-        let results: Vec<_> = file_paths
-            .par_iter()
-            .filter_map(|path| {
-                // Create a temporary indexer for parallel processing
-                let mut temp_indexer = TreeSitterIndexer::with_options(verbose, self.respect_gitignore);
-                if temp_indexer.initialize_sync().is_err() {
-                    if verbose {
-                        eprintln!("Warning: Failed to initialize indexer for {}", path.display());
-                    }
-                    return None;
-                }
-                
-                match temp_indexer.index_file_sync(path) {
-                    Ok(symbols) => Some((path.clone(), symbols)),
-                    Err(e) => {
-                        if verbose {
-                            eprintln!("Warning: Failed to index {}: {}", path.display(), e);
-                        }
-                        None
-                    }
-                }
-            })
-            .collect();
+        let mut results = Vec::new();
         
-        // Merge results back into main indexer and update cache
-        for (path, symbols) in results {
-            self.symbols_cache.insert(path.clone(), symbols.clone());
-            
-            // Update cache entry if cache is enabled
-            if let Err(e) = self.update_cache_entry(&path, &symbols) {
-                if self.verbose {
-                    eprintln!("Warning: Failed to update cache for {}: {}", path.display(), e);
+        for path in file_paths {
+            match self.load_or_index_file(&path) {
+                Ok(symbols) => {
+                    results.push((path, symbols));
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("Warning: Failed to index {}: {}", path.display(), e);
+                    }
                 }
             }
+        }
+        
+        // Merge results back into main indexer (cache already updated by load_or_index_file)
+        for (path, symbols) in results {
+            self.symbols_cache.insert(path.clone(), symbols.clone());
         }
         
         Ok(())
