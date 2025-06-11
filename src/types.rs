@@ -41,6 +41,13 @@ pub enum DefaultDisplayStrategy {
     Random,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchMode {
+    pub name: String,
+    pub prefix: String,
+    pub icon: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SearchOptions {
     pub include_files: Option<bool>,

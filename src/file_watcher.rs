@@ -77,9 +77,10 @@ impl EventDebouncer {
 
 /// Manages file system watching and event processing
 pub struct FileWatcher {
-    _watcher: Box<dyn Watcher>,
     event_receiver: Receiver<IndexUpdate>,
     debouncer: Arc<Mutex<EventDebouncer>>,
+    // Keep watcher alive through a separate thread handle
+    _thread_handle: std::thread::JoinHandle<()>,
 }
 
 impl FileWatcher {
@@ -102,12 +103,14 @@ impl FileWatcher {
 
         let debouncer = Arc::new(Mutex::new(EventDebouncer::new(debounce_ms.unwrap_or(100))));
 
-        // Spawn background thread to process file system events
+        // Spawn background thread to process file system events and keep watcher alive
         let debouncer_clone = Arc::clone(&debouncer);
         let patterns_clone = patterns.clone();
         let watch_path_clone = watch_path.to_path_buf();
 
-        std::thread::spawn(move || {
+        let thread_handle = std::thread::spawn(move || {
+            // Keep watcher alive in this thread
+            let _watcher = watcher;
             Self::process_events(
                 notify_rx,
                 update_tx,
@@ -118,9 +121,9 @@ impl FileWatcher {
         });
 
         Ok(FileWatcher {
-            _watcher: Box::new(watcher),
             event_receiver: update_rx,
             debouncer,
+            _thread_handle: thread_handle,
         })
     }
 
