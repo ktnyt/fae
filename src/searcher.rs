@@ -2,6 +2,15 @@ use crate::types::*;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
+use which::which;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContentSearchBackend {
+    Ripgrep,
+    Ag,
+    Fallback,
+}
 
 pub struct FuzzySearcher {
     symbols: Vec<CodeSymbol>,
@@ -23,6 +32,203 @@ impl FuzzySearcher {
             symbols,
             matcher: SkimMatcherV2::default(),
         }
+    }
+
+    /// Detect the best available content search backend
+    fn detect_content_search_backend() -> ContentSearchBackend {
+        if which("rg").is_ok() {
+            ContentSearchBackend::Ripgrep
+        } else if which("ag").is_ok() {
+            ContentSearchBackend::Ag
+        } else {
+            ContentSearchBackend::Fallback
+        }
+    }
+
+    /// High-performance content search using ripgrep
+    fn search_content_with_ripgrep(&self, query: &str, options: &SearchOptions) -> anyhow::Result<Vec<SearchResult>> {
+        let mut cmd = Command::new("rg");
+        
+        // Basic ripgrep options for optimal performance
+        cmd.arg("--line-number")       // Show line numbers
+           .arg("--no-heading")        // Don't group by file
+           .arg("--with-filename")     // Always show filename
+           .arg("--no-messages")       // Suppress error messages
+           .arg("--max-filesize")      // Limit file size (same as our fallback)
+           .arg("1M");                 // 1MB limit
+        
+        // Add search pattern (escape special regex characters for literal search)
+        let escaped_query = regex::escape(query);
+        cmd.arg(&escaped_query);
+        
+        // Get unique root directories to minimize search scope
+        let search_paths = self.get_optimized_search_paths();
+        if search_paths.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        // Add paths to search (prefer fewer, broader paths)
+        for path in &search_paths {
+            cmd.arg(path);
+        }
+        
+        let output = cmd.output().map_err(|e| {
+            anyhow::anyhow!("Failed to execute ripgrep: {}", e)
+        })?;
+        
+        if !output.status.success() {
+            // If ripgrep fails (e.g., no matches), return empty results
+            // Note: ripgrep returns exit code 1 for "no matches found", which is normal
+            return Ok(vec![]);
+        }
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut results = Vec::new();
+        
+        for line in stdout.lines() {
+            if let Some(parsed) = self.parse_ripgrep_line(line) {
+                results.push(parsed);
+            }
+        }
+        
+        // Apply limit early for performance
+        if let Some(limit) = options.limit {
+            results.truncate(limit);
+        }
+        
+        Ok(results)
+    }
+
+    /// Get optimized search paths to minimize ripgrep overhead
+    fn get_optimized_search_paths(&self) -> Vec<std::path::PathBuf> {
+        let mut all_dirs = std::collections::HashSet::new();
+        
+        // Collect all unique parent directories
+        for symbol in &self.symbols {
+            if let Some(parent) = symbol.file.parent() {
+                all_dirs.insert(parent.to_path_buf());
+            }
+        }
+        
+        // Convert to sorted vector for consistent behavior
+        let mut dir_list: Vec<_> = all_dirs.into_iter().collect();
+        dir_list.sort();
+        
+        // Optimize: remove subdirectories if parent is already included
+        let mut optimized = Vec::new();
+        for dir in &dir_list {
+            let is_subdir = optimized.iter().any(|parent: &std::path::PathBuf| {
+                dir.starts_with(parent)
+            });
+            
+            if !is_subdir {
+                optimized.push(dir.clone());
+            }
+        }
+        
+        optimized
+    }
+
+    /// Parse ripgrep output line: "file:line:content"
+    fn parse_ripgrep_line(&self, line: &str) -> Option<SearchResult> {
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        
+        let file_path = parts[0];
+        let line_num: usize = parts[1].parse().ok()?;
+        let content = parts[2].trim();
+        
+        Some(SearchResult {
+            symbol: CodeSymbol {
+                name: content.to_string(),
+                symbol_type: SymbolType::Variable, // Generic content type
+                file: file_path.into(),
+                line: line_num,
+                column: 1,
+                context: Some(content.to_string()),
+            },
+            score: 0.1, // Ripgrep results are considered high quality
+        })
+    }
+
+    /// High-performance content search using the_silver_searcher (ag)
+    fn search_content_with_ag(&self, query: &str, options: &SearchOptions) -> anyhow::Result<Vec<SearchResult>> {
+        let mut cmd = Command::new("ag");
+        
+        // Basic ag options for optimal performance
+        cmd.arg("--line-numbers")       // Show line numbers
+           .arg("--nogroup")            // Don't group by file
+           .arg("--filename")           // Always show filename
+           .arg("--silent")             // Suppress error messages
+           .arg("--max-filesize")       // Limit file size (same as ripgrep)
+           .arg("1M");                  // 1MB limit
+        
+        // Add search pattern (use literal search for consistency with ripgrep)
+        cmd.arg("--literal")            // Literal string search (not regex)
+           .arg(query);
+        
+        // Get optimized search paths
+        let search_paths = self.get_optimized_search_paths();
+        if search_paths.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        // Add paths to search
+        for path in &search_paths {
+            cmd.arg(path);
+        }
+        
+        let output = cmd.output().map_err(|e| {
+            anyhow::anyhow!("Failed to execute ag: {}", e)
+        })?;
+        
+        if !output.status.success() {
+            // If ag fails (e.g., no matches), return empty results
+            // Note: ag returns exit code 1 for "no matches found", which is normal
+            return Ok(vec![]);
+        }
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut results = Vec::new();
+        
+        for line in stdout.lines() {
+            if let Some(parsed) = self.parse_ag_line(line) {
+                results.push(parsed);
+            }
+        }
+        
+        // Apply limit early for performance
+        if let Some(limit) = options.limit {
+            results.truncate(limit);
+        }
+        
+        Ok(results)
+    }
+
+    /// Parse ag output line: "file:line:content"
+    fn parse_ag_line(&self, line: &str) -> Option<SearchResult> {
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        
+        let file_path = parts[0];
+        let line_num: usize = parts[1].parse().ok()?;
+        let content = parts[2].trim();
+        
+        Some(SearchResult {
+            symbol: CodeSymbol {
+                name: content.to_string(),
+                symbol_type: SymbolType::Variable, // Generic content type
+                file: file_path.into(),
+                line: line_num,
+                column: 1,
+                context: Some(content.to_string()),
+            },
+            score: 0.15, // Ag results are high quality but slightly lower than ripgrep
+        })
     }
 
     pub fn search(&self, query: &str, options: &SearchOptions) -> Vec<SearchResult> {
@@ -93,13 +299,42 @@ impl FuzzySearcher {
         self.symbols = symbols;
     }
 
-    // Search file contents directly (real-time search)
+    // High-performance content search with ripgrep->ag->fallback strategy
     pub fn search_content(&self, query: &str, options: &SearchOptions) -> Vec<SearchResult> {
         // Handle empty query
         if query.trim().is_empty() {
             return vec![];
         }
 
+        let backend = Self::detect_content_search_backend();
+        
+        match backend {
+            ContentSearchBackend::Ripgrep => {
+                if let Ok(results) = self.search_content_with_ripgrep(query, options) {
+                    return results;
+                }
+                // Fall back to ag if ripgrep fails
+                if let Ok(results) = self.search_content_with_ag(query, options) {
+                    return results;
+                }
+                // Final fallback to original implementation
+                self.search_content_fallback(query, options)
+            }
+            ContentSearchBackend::Ag => {
+                if let Ok(results) = self.search_content_with_ag(query, options) {
+                    return results;
+                }
+                // Fall back to original implementation
+                self.search_content_fallback(query, options)
+            }
+            ContentSearchBackend::Fallback => {
+                self.search_content_fallback(query, options)
+            }
+        }
+    }
+
+    // Original implementation as fallback
+    fn search_content_fallback(&self, query: &str, options: &SearchOptions) -> Vec<SearchResult> {
         let mut results: Vec<SearchResult> = Vec::new();
         let mut processed_files = std::collections::HashSet::new();
 

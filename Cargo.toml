@@ -23,6 +23,14 @@ path = "src/bin/benchmark_tree_sitter.rs"
 name = "test_tree_sitter_symbols"
 path = "src/bin/test_tree_sitter_symbols.rs"
 
+[[bin]]
+name = "test_content_search"
+path = "src/bin/test_content_search.rs"
+
+[[bin]]
+name = "test_backend_detection"
+path = "src/bin/test_backend_detection.rs"
+
 [dependencies]
 # TUI
 ratatui = "0.24"
@@ -66,6 +74,9 @@ rayon = "1.8"
 # エラーハンドリング
 anyhow = "1.0"
 thiserror = "1.0"
+
+# 外部ツール統合
+which = "4.4"         # ツール検出
 
 # 正規表現・ランダム
 regex = "1.10"
