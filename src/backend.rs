@@ -7,6 +7,7 @@ use crate::{
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use std::thread;
 use anyhow::Result;
 
 /// Events sent from backend to UI
@@ -71,6 +72,9 @@ pub struct SearchBackend {
     directory_path: Option<PathBuf>,
     verbose: bool,
     respect_gitignore: bool,
+    // Progressive indexing
+    indexing_receiver: Option<mpsc::Receiver<(Vec<CodeSymbol>, usize, usize)>>,
+    indexing_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl SearchBackend {
@@ -92,6 +96,8 @@ impl SearchBackend {
             directory_path: None,
             verbose,
             respect_gitignore,
+            indexing_receiver: None,
+            indexing_thread: None,
         };
         
         (backend, command_sender, event_receiver)
@@ -179,18 +185,50 @@ impl SearchBackend {
         self.is_indexing = true;
         self.indexing_start_time = Some(Instant::now());
         
-        // Use walkdir to get files directly for simplicity
+        // Start progressive indexing in background thread
+        let (progress_sender, progress_receiver) = mpsc::channel();
+        self.indexing_receiver = Some(progress_receiver);
+        
+        let event_sender = self.event_sender.clone();
+        let verbose = self.verbose;
+        let respect_gitignore = self.respect_gitignore;
+        
+        let handle = thread::spawn(move || {
+            if let Err(e) = Self::progressive_indexing_worker(
+                directory, 
+                progress_sender, 
+                event_sender,
+                verbose,
+                respect_gitignore
+            ) {
+                eprintln!("Progressive indexing error: {}", e);
+            }
+        });
+        
+        self.indexing_thread = Some(handle);
+        
+        Ok(())
+    }
+    
+    fn progressive_indexing_worker(
+        directory: PathBuf,
+        progress_sender: mpsc::Sender<(Vec<CodeSymbol>, usize, usize)>,
+        event_sender: mpsc::Sender<BackendEvent>,
+        verbose: bool,
+        respect_gitignore: bool,
+    ) -> Result<()> {
         use ignore::WalkBuilder;
         
         let mut builder = WalkBuilder::new(&directory);
-        builder.git_ignore(self.respect_gitignore)
-               .git_global(self.respect_gitignore)
-               .git_exclude(self.respect_gitignore)
+        builder.git_ignore(respect_gitignore)
+               .git_global(respect_gitignore)
+               .git_exclude(respect_gitignore)
                .require_git(false)
                .hidden(false)
                .parents(true)
                .ignore(true);
         
+        // Collect all files first
         let mut file_paths = Vec::new();
         for entry in builder.build() {
             if let Ok(dir_entry) = entry {
@@ -201,34 +239,59 @@ impl SearchBackend {
             }
         }
         
-        let mut total_symbols = Vec::new();
-        for file_path in &file_paths {
-            if let Ok(symbols) = self.indexer.create_file_symbols(file_path) {
-                total_symbols.extend(symbols);
-            }
+        let total_files = file_paths.len();
+        let mut all_symbols = Vec::new();
+        let mut processed = 0;
+        
+        // Create a temporary indexer for this thread
+        let mut indexer = TreeSitterIndexer::with_options(verbose, respect_gitignore);
+        if let Err(e) = indexer.initialize_sync() {
+            let _ = event_sender.send(BackendEvent::Error {
+                message: format!("Failed to initialize indexer: {}", e),
+            });
+            return Err(e);
         }
         
-        // Store symbols in indexer's cache
-        for file_path in &file_paths {
-            if let Ok(symbols) = self.indexer.create_file_symbols(file_path) {
-                let _ = self.indexer.add_file_symbols(file_path, symbols);
+        let start_time = Instant::now();
+        
+        // Process files progressively
+        for file_path in file_paths {
+            match indexer.create_file_symbols(&file_path) {
+                Ok(symbols) => {
+                    all_symbols.extend(symbols.clone());
+                    processed += 1;
+                    
+                    // Send progress update
+                    let _ = progress_sender.send((symbols, processed, total_files));
+                    
+                    // Send progress event
+                    let _ = event_sender.send(BackendEvent::IndexingProgress {
+                        processed,
+                        total: total_files,
+                        symbols: all_symbols.clone(),
+                    });
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("Failed to process file {}: {}", file_path.display(), e);
+                    }
+                    processed += 1;
+                    // Send progress even on error
+                    let _ = progress_sender.send((Vec::new(), processed, total_files));
+                }
             }
+            
+            // Small delay to allow other processing
+            thread::sleep(Duration::from_millis(10));
         }
         
-        let duration = self.indexing_start_time
-            .map(|start| start.elapsed())
-            .unwrap_or(Duration::from_secs(0));
+        let duration = start_time.elapsed();
         
-        // Update searcher with new symbols
-        self.searcher = Some(FuzzySearcher::new(total_symbols.clone()));
-        
-        let _ = self.event_sender.send(BackendEvent::IndexingComplete {
+        // Send completion event
+        let _ = event_sender.send(BackendEvent::IndexingComplete {
             duration,
-            total_symbols: total_symbols.len(),
+            total_symbols: all_symbols.len(),
         });
-        
-        self.is_indexing = false;
-        self.indexing_start_time = None;
         
         Ok(())
     }
@@ -376,8 +439,51 @@ impl SearchBackend {
     }
     
     fn process_indexing_progress(&mut self) -> Result<()> {
-        // This would be implemented for progressive indexing
-        // For now, we do synchronous indexing
+        if let Some(ref receiver) = self.indexing_receiver {
+            // Process up to 5 progress updates per iteration to avoid blocking
+            let mut updates_processed = 0;
+            
+            while updates_processed < 5 {
+                match receiver.try_recv() {
+                    Ok((symbols, processed, total)) => {
+                        // Update searcher with new symbols
+                        if let Some(ref mut searcher) = self.searcher {
+                            searcher.update_symbols(symbols);
+                        } else if !symbols.is_empty() {
+                            // Create initial searcher
+                            self.searcher = Some(FuzzySearcher::new(symbols));
+                        }
+                        
+                        updates_processed += 1;
+                        
+                        // Check if indexing is complete
+                        if processed >= total {
+                            self.is_indexing = false;
+                            self.indexing_receiver = None;
+                            // Wait for thread to complete
+                            if let Some(handle) = self.indexing_thread.take() {
+                                let _ = handle.join();
+                            }
+                            break;
+                        }
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // No more progress updates available
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        // Progress thread has finished
+                        self.is_indexing = false;
+                        self.indexing_receiver = None;
+                        if let Some(handle) = self.indexing_thread.take() {
+                            let _ = handle.join();
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
         Ok(())
     }
 }
