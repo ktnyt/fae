@@ -636,15 +636,6 @@ impl TuiApp {
     }
 
     pub fn perform_search(&mut self) {
-        // If we're still indexing, defer heavy search operations
-        if self.is_indexing {
-            // Just update search mode and show a simple message during indexing
-            self.current_search_mode = self.detect_search_mode(&self.query);
-            self.current_results.clear();
-            self.selected_index = 0;
-            return;
-        }
-        
         if let Some(ref searcher) = self.searcher {
             // Detect and update search mode
             self.current_search_mode = self.detect_search_mode(&self.query);
@@ -864,7 +855,7 @@ impl TuiApp {
     }
 
     fn render_results(&mut self, f: &mut Frame, area: Rect) {
-        // Show special message during indexing if no results and user has typed something
+        // Show special message during indexing only if no results and user has typed something
         if self.is_indexing && !self.query.trim().is_empty() && self.current_results.is_empty() {
             let indexing_message = ListItem::new(Line::from(vec![
                 Span::styled("⏳ ", Style::default().fg(Color::Yellow)),
@@ -925,7 +916,11 @@ impl TuiApp {
             })
             .collect();
 
-        let results_count = format!("Results: {}", self.current_results.len());
+        let results_count = if self.is_indexing {
+            format!("Results: {} (indexing...)", self.current_results.len())
+        } else {
+            format!("Results: {}", self.current_results.len())
+        };
         let results_list = List::new(items)
             .block(
                 Block::default()
