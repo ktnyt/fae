@@ -1,193 +1,175 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct CodeSymbol {
-    pub name: String,
-    pub symbol_type: SymbolType,
-    pub file: PathBuf,
-    pub line: usize,
-    pub column: usize,
-    pub context: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SymbolType {
-    Function,
-    Variable,
-    Class,
-    Interface,
-    Type,
-    Enum,
-    Constant,
-    Method,
-    Property,
-    Filename,
-    Dirname,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DefaultDisplayStrategy {
-    /// Show recently modified files first
-    RecentlyModified,
-    /// Show project important files (README, config files, main files)
-    ProjectImportant,
-    /// Show balanced mix of different symbol types
-    SymbolBalance,
-    /// Show files with most symbols first
-    MostSymbols,
-    /// Show random selection
-    Random,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchMode {
-    pub name: String,
-    pub prefix: String,
-    pub icon: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct SearchOptions {
-    pub include_files: Option<bool>,
-    pub include_dirs: Option<bool>,
-    pub types: Option<Vec<SymbolType>>,
-    pub threshold: Option<f64>,
-    pub limit: Option<usize>,
-}
-
+/// 検索モード
 #[derive(Debug, Clone, PartialEq)]
+pub enum SearchMode {
+    Content,     // デフォルト
+    Symbol,      // #prefix
+    File,        // >prefix  
+    Regex,       // /prefix
+}
+
+/// 検索結果の表示用データ
+#[derive(Debug, Clone)]
 pub struct SearchResult {
-    pub symbol: CodeSymbol,
+    /// ファイルパス（絶対パス - 表示時に相対パス変換）
+    pub file_path: PathBuf,
+    /// 行番号（1ベース）
+    pub line: u32,
+    /// 列番号（1ベース）
+    pub column: u32,
+    /// 表示用のコンテキスト情報
+    pub display_info: DisplayInfo,
+    /// 検索スコア（ソート用）
     pub score: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IndexedFile {
+/// 表示用情報（検索モード別）
+#[derive(Debug, Clone)]
+pub enum DisplayInfo {
+    /// コンテンツ検索の結果
+    Content {
+        /// ヒット箇所を含む行の内容
+        line_content: String,
+        /// ヒット開始位置（行内での文字位置）
+        match_start: usize,
+        /// ヒット終了位置
+        match_end: usize,
+    },
+    /// シンボル検索の結果
+    Symbol {
+        /// シンボル名
+        name: String,
+        /// シンボルの種類
+        symbol_type: SymbolType,
+    },
+    /// ファイル検索の結果
+    File {
+        /// ファイル名のみ
+        file_name: String,
+    },
+    /// 正規表現検索の結果
+    Regex {
+        /// ヒット箇所を含む行の内容
+        line_content: String,
+        /// マッチしたテキスト
+        matched_text: String,
+        /// ヒット開始位置
+        match_start: usize,
+        /// ヒット終了位置
+        match_end: usize,
+    },
+}
+
+/// シンボルの種類
+#[derive(Debug, Clone, PartialEq)]
+pub enum SymbolType {
+    Function,
+    Class,
+    Variable,
+    Constant,
+    Interface,
+    Type,
+}
+
+impl SymbolType {
+    /// 表示用アイコンを取得
+    pub fn icon(&self) -> &'static str {
+        match self {
+            SymbolType::Function => "🔧",
+            SymbolType::Class => "🏗️",
+            SymbolType::Variable => "📦",
+            SymbolType::Constant => "🔒",
+            SymbolType::Interface => "🔌",
+            SymbolType::Type => "📝",
+        }
+    }
+}
+
+/// キャッシュされたファイル情報
+#[derive(Debug, Clone)]
+pub struct CachedFileInfo {
+    /// ファイルパス
     pub path: PathBuf,
-    pub symbols: Vec<CodeSymbol>,
-    pub last_modified: u64,
+    /// ファイルハッシュ（変更検知用）
+    pub hash: u64,
+    /// 最終更新時刻
+    pub modified_time: SystemTime,
+    /// ファイル内容（シンボル検索用にキャッシュ）
+    pub content: Option<String>,
+    /// 抽出されたシンボル
+    pub symbols: Vec<CachedSymbol>,
+    /// 最後にアクセスされた時刻（LRU用）
+    pub last_accessed: SystemTime,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum IndexUpdate {
-    /// New file was added to the index
-    Added {
-        file: PathBuf,
-        symbols: Vec<CodeSymbol>,
-    },
-    /// Existing file was modified and re-indexed
-    Modified {
-        file: PathBuf,
-        symbols: Vec<CodeSymbol>,
-    },
-    /// File was deleted from the index
-    Removed { file: PathBuf, symbol_count: usize },
+/// キャッシュされたシンボル情報
+#[derive(Debug, Clone)]
+pub struct CachedSymbol {
+    /// シンボル名
+    pub name: String,
+    /// シンボルの種類
+    pub symbol_type: SymbolType,
+    /// 行番号（1ベース）
+    pub line: u32,
+    /// 列番号（1ベース）
+    pub column: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum WatchEvent {
-    /// File system event that should trigger index update
-    FileChanged {
-        path: PathBuf,
-        event_kind: WatchEventKind,
-    },
-    /// Batch of events (for optimization)
-    BatchUpdate { events: Vec<WatchEvent> },
+/// キャッシュエントリ（メモリ効率重視）
+#[derive(Debug)]
+pub struct CacheEntry {
+    /// ファイル情報
+    pub file_info: CachedFileInfo,
+    /// メモリ使用量（バイト）
+    pub memory_size: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum WatchEventKind {
-    Created,
-    Modified,
-    Deleted,
-    Renamed { from: PathBuf, to: PathBuf },
-}
-
-/// Cache entry for a single file containing hash and symbols
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CachedFile {
-    /// SHA-256 hash of file content
-    pub hash: String,
-    /// Timestamp when this cache entry was created
-    pub last_modified: String, // ISO 8601 format
-    /// Symbols extracted from this file
-    pub symbols: Vec<CodeSymbol>,
-    /// File size in bytes for additional validation
-    pub size: u64,
-}
-
-/// Index cache data structure for .sfscache file
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IndexCache {
-    /// Cache format version for compatibility checking
-    pub version: String,
-    /// Timestamp when cache was created
-    pub cache_created: String, // ISO 8601 format
-    /// SFS version that created this cache
-    pub sfs_version: String,
-    /// Map of file paths to cached file data
-    pub files: HashMap<String, CachedFile>, // String keys for JSON compatibility
-}
-
-impl IndexCache {
-    /// Create a new empty cache
-    pub fn new() -> Self {
-        Self {
-            version: "1.0".to_string(),
-            cache_created: chrono::Utc::now().to_rfc3339(),
-            sfs_version: env!("CARGO_PKG_VERSION").to_string(),
-            files: HashMap::new(),
-        }
-    }
-
-    /// Check if this cache is compatible with current SFS version
-    pub fn is_compatible(&self) -> bool {
-        // For now, only check version format
-        self.version == "1.0"
-    }
-
-    /// Get cached file data by path
-    pub fn get_file(&self, path: &str) -> Option<&CachedFile> {
-        self.files.get(path)
-    }
-
-    /// Add or update cached file data
-    pub fn update_file(&mut self, path: String, cached_file: CachedFile) {
-        self.files.insert(path, cached_file);
-    }
-
-    /// Remove cached file data
-    pub fn remove_file(&mut self, path: &str) -> Option<CachedFile> {
-        self.files.remove(path)
-    }
-
-    /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
-        let total_files = self.files.len();
-        let total_symbols: usize = self.files.values().map(|f| f.symbols.len()).sum();
-
-        CacheStats {
-            total_files,
-            total_symbols,
-            cache_created: self.cache_created.clone(),
-            sfs_version: self.sfs_version.clone(),
-        }
+impl CacheEntry {
+    /// キャッシュエントリの推定メモリサイズを計算
+    pub fn estimate_memory_size(file_info: &CachedFileInfo) -> usize {
+        let path_size = file_info.path.as_os_str().len();
+        let content_size = file_info.content.as_ref().map_or(0, |c| c.len());
+        let symbols_size = file_info.symbols.len() * 64; // 大まかな見積もり
+        
+        path_size + content_size + symbols_size + 128 // 固定オーバーヘッド
     }
 }
 
-impl Default for IndexCache {
-    fn default() -> Self {
-        Self::new()
-    }
+/// 表示用のフォーマット済み検索結果
+#[derive(Debug, Clone)]
+pub struct FormattedResult {
+    /// 左側（パスまたはシンボル名）
+    pub left_part: String,
+    /// 右側（プレビューまたはパス）
+    pub right_part: String,
+    /// 色分け情報
+    pub color_info: ColorInfo,
 }
 
-/// Cache statistics for reporting
-#[derive(Debug, Clone, PartialEq)]
-pub struct CacheStats {
-    pub total_files: usize,
-    pub total_symbols: usize,
-    pub cache_created: String,
-    pub sfs_version: String,
+/// 色分け情報
+#[derive(Debug, Clone)]
+pub struct ColorInfo {
+    /// パス部分の色
+    pub path_color: Color,
+    /// 行/列番号の色
+    pub location_color: Color,
+    /// プレビュー/シンボル名の色
+    pub content_color: Color,
+    /// ハイライト部分の色
+    pub highlight_color: Color,
+}
+
+/// 色の定義
+#[derive(Debug, Clone)]
+pub enum Color {
+    Reset,
+    Gray,
+    Blue,
+    Green,
+    Yellow,
+    Red,
+    Cyan,
+    White,
 }

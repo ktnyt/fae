@@ -1,314 +1,362 @@
-use crate::types::*;
-use anyhow::{anyhow, Result};
-use lru::LruCache;
-use serde::{Deserialize, Serialize};
+use crate::types::{CacheEntry, CachedFileInfo, CachedSymbol};
+use crate::tree_sitter::extract_symbols_from_file;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use std::fs;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
-/// チャンクID: ファイルをグループ化する単位
-pub type ChunkId = usize;
+/// LRUキャッシュのデフォルト設定
+const DEFAULT_MAX_MEMORY_MB: usize = 100; // 100MB
+const DEFAULT_MAX_ENTRIES: usize = 1000;
 
-/// シンボルチャンクの位置情報
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChunkLocation {
-    pub chunk_id: ChunkId,
-    pub offset: usize,
-    pub count: usize,
-}
-
-/// ファイルメタデータ（軽量、常時メモリ保持）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileMetadata {
-    pub hash: String,
-    pub last_modified: String,
-    pub size: u64,
-    pub symbol_locations: Vec<ChunkLocation>,
-}
-
-/// キャッシュインデックス（メタデータのみ）
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CacheIndex {
-    pub version: String,
-    pub cache_created: String,
-    pub sfs_version: String,
-    pub files: HashMap<String, FileMetadata>,
-    pub chunk_info: HashMap<ChunkId, ChunkInfo>,
-}
-
-/// チャンク情報
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChunkInfo {
-    pub file_path: String,
-    pub symbol_count: usize,
-    pub compressed_size: usize,
-}
-
-/// メモリ効率的キャッシュマネージャー
-pub struct MemoryEfficientCacheManager {
-    /// 軽量インデックス（常時メモリ保持）
-    index: CacheIndex,
-
-    /// シンボルチャンクのLRUキャッシュ
-    symbol_cache: LruCache<ChunkId, Vec<CodeSymbol>>,
-
-    /// キャッシュディレクトリパス
-    cache_dir: PathBuf,
-
+/// スマートキャッシュマネージャー
+/// 
+/// メモリ効率を重視した設計:
+/// - LRUベースの自動削除
+/// - ファイルハッシュによる変更検知
+/// - 段階的ロード（必要時のみコンテンツ読み込み）
+/// - ディスク永続化（将来実装）
+pub struct CacheManager {
+    /// メモリ内キャッシュ（パス -> エントリ）
+    cache: HashMap<PathBuf, CacheEntry>,
+    /// LRU順序管理（最近使用順）
+    lru_order: Vec<PathBuf>,
     /// 最大メモリ使用量（バイト）
-    max_memory_usage: usize,
-
+    max_memory_bytes: usize,
+    /// 最大エントリ数
+    max_entries: usize,
     /// 現在のメモリ使用量
-    current_memory_usage: usize,
-
-    /// チャンクあたりの最大シンボル数
-    symbols_per_chunk: usize,
+    current_memory_bytes: usize,
 }
 
-impl MemoryEfficientCacheManager {
+impl CacheManager {
     /// 新しいキャッシュマネージャーを作成
-    pub fn new(cache_dir: PathBuf, max_memory_mb: usize) -> Self {
-        let max_memory_usage = max_memory_mb * 1024 * 1024; // MB to bytes
-        let max_chunks = max_memory_usage / (1000 * std::mem::size_of::<CodeSymbol>());
-        let cache_capacity = NonZeroUsize::new(max_chunks.max(10)).unwrap();
+    pub fn new() -> Self {
+        Self::with_limits(DEFAULT_MAX_MEMORY_MB, DEFAULT_MAX_ENTRIES)
+    }
 
+    /// 制限値を指定してキャッシュマネージャーを作成
+    pub fn with_limits(max_memory_mb: usize, max_entries: usize) -> Self {
         Self {
-            index: CacheIndex {
-                version: "2.0".to_string(),
-                cache_created: chrono::Utc::now().to_rfc3339(),
-                sfs_version: env!("CARGO_PKG_VERSION").to_string(),
-                files: HashMap::new(),
-                chunk_info: HashMap::new(),
-            },
-            symbol_cache: LruCache::new(cache_capacity),
-            cache_dir,
-            max_memory_usage,
-            current_memory_usage: 0,
-            symbols_per_chunk: 1000, // 1チャンクあたり1000シンボル
+            cache: HashMap::new(),
+            lru_order: Vec::new(),
+            max_memory_bytes: max_memory_mb * 1024 * 1024,
+            max_entries,
+            current_memory_bytes: 0,
         }
     }
 
-    /// キャッシュインデックスをロード
-    pub fn load_index(&mut self, directory: &Path) -> Result<CacheStats> {
-        let index_path = directory.join(".sfscache_v2.gz");
-
-        if !index_path.exists() {
-            return Ok(CacheStats {
-                total_files: 0,
-                total_symbols: 0,
-                cache_created: "N/A".to_string(),
-                sfs_version: "N/A".to_string(),
-            });
+    /// ファイルのシンボル情報を取得（キャッシュ優先）
+    pub fn get_symbols(&mut self, file_path: &Path) -> Result<Vec<CachedSymbol>> {
+        // キャッシュから取得を試行
+        if let Some(cached_symbols) = self.get_cached_symbols(file_path)? {
+            return Ok(cached_symbols);
         }
 
-        let cache_content = {
-            use flate2::read::GzDecoder;
-            use std::io::Read;
-            let file = std::fs::File::open(&index_path)?;
-            let mut decoder = GzDecoder::new(file);
-            let mut decompressed = String::new();
-            decoder.read_to_string(&mut decompressed)?;
-            decompressed
+        // キャッシュにない場合は新規解析
+        self.analyze_and_cache_file(file_path)
+    }
+
+    /// ファイル内容を取得（キャッシュ優先）
+    pub fn get_file_content(&mut self, file_path: &Path) -> Result<String> {
+        // キャッシュから取得を試行
+        let cached_content = self.cache.get(file_path)
+            .and_then(|entry| entry.file_info.content.clone());
+        
+        if let Some(content) = cached_content {
+            // LRU更新
+            self.update_lru(file_path);
+            return Ok(content);
+        }
+
+        // キャッシュにない場合はファイルから読み込み
+        let content = fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+
+        // キャッシュに保存（コンテンツ付き）
+        self.cache_file_with_content(file_path, &content)?;
+
+        Ok(content)
+    }
+
+    /// ファイルがキャッシュされているかチェック
+    pub fn is_cached(&self, file_path: &Path) -> bool {
+        self.cache.contains_key(file_path)
+    }
+
+    /// ファイルのキャッシュを無効化
+    pub fn invalidate_file(&mut self, file_path: &Path) {
+        if let Some(entry) = self.cache.remove(file_path) {
+            self.current_memory_bytes = self.current_memory_bytes.saturating_sub(entry.memory_size);
+            self.lru_order.retain(|p| p != file_path);
+        }
+    }
+
+    /// 全キャッシュをクリア
+    pub fn clear(&mut self) {
+        self.cache.clear();
+        self.lru_order.clear();
+        self.current_memory_bytes = 0;
+    }
+
+    /// キャッシュ統計情報を取得
+    pub fn stats(&self) -> CacheStats {
+        CacheStats {
+            entry_count: self.cache.len(),
+            memory_usage_mb: self.current_memory_bytes / (1024 * 1024),
+            max_memory_mb: self.max_memory_bytes / (1024 * 1024),
+            hit_ratio: 0.0, // TODO: ヒット率の実装
+        }
+    }
+
+    /// キャッシュからシンボルを取得（変更検知付き）
+    fn get_cached_symbols(&mut self, file_path: &Path) -> Result<Option<Vec<CachedSymbol>>> {
+        if !self.cache.contains_key(file_path) {
+            return Ok(None);
+        }
+
+        // ファイルの変更時刻をチェック
+        let metadata = fs::metadata(file_path)
+            .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
+        
+        let current_modified = metadata.modified()
+            .with_context(|| "Failed to get file modification time")?;
+
+        let (modified_time, symbols) = {
+            let entry = self.cache.get(file_path).unwrap();
+            (entry.file_info.modified_time, entry.file_info.symbols.clone())
+        };
+        
+        // 変更されている場合はキャッシュを無効化
+        if current_modified > modified_time {
+            self.invalidate_file(file_path);
+            return Ok(None);
+        }
+
+        // LRU更新
+        self.update_lru(file_path);
+
+        Ok(Some(symbols))
+    }
+
+    /// ファイルを解析してキャッシュに保存
+    fn analyze_and_cache_file(&mut self, file_path: &Path) -> Result<Vec<CachedSymbol>> {
+        // ファイル読み込み
+        let content = fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+
+        // メタデータ取得
+        let metadata = fs::metadata(file_path)
+            .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
+        
+        let modified_time = metadata.modified()
+            .with_context(|| "Failed to get file modification time")?;
+
+        // Tree-sitterベースのシンボル解析
+        let symbols = self.extract_symbols_with_tree_sitter(file_path)?;
+
+        // キャッシュエントリ作成
+        let file_info = CachedFileInfo {
+            path: file_path.to_path_buf(),
+            hash: self.calculate_file_hash(&content),
+            modified_time,
+            content: Some(content), // シンボル解析時はコンテンツも保存
+            symbols: symbols.clone(),
+            last_accessed: SystemTime::now(),
         };
 
-        self.index = serde_json::from_str(&cache_content)?;
-        self.cache_dir = directory.to_path_buf();
+        let memory_size = CacheEntry::estimate_memory_size(&file_info);
+        let entry = CacheEntry { file_info, memory_size };
 
-        let stats = self.get_stats();
-        Ok(stats)
+        // キャッシュに追加
+        self.add_to_cache(file_path.to_path_buf(), entry);
+
+        Ok(symbols)
     }
 
-    /// 特定ファイルのシンボルを取得（オンデマンド）
-    pub fn get_file_symbols(&mut self, file_path: &str) -> Result<Vec<CodeSymbol>> {
-        // 借用チェッカー対応: symbol_locationsを先に取得
-        let symbol_locations = self
-            .index
-            .files
-            .get(file_path)
-            .ok_or_else(|| anyhow!("File not found in cache: {}", file_path))?
-            .symbol_locations
-            .clone();
+    /// ファイル内容付きでキャッシュに保存
+    fn cache_file_with_content(&mut self, file_path: &Path, content: &str) -> Result<()> {
+        let metadata = fs::metadata(file_path)
+            .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
+        
+        let modified_time = metadata.modified()
+            .with_context(|| "Failed to get file modification time")?;
 
-        let mut all_symbols = Vec::new();
+        let file_info = CachedFileInfo {
+            path: file_path.to_path_buf(),
+            hash: self.calculate_file_hash(content),
+            modified_time,
+            content: Some(content.to_string()),
+            symbols: Vec::new(), // シンボルは後で解析
+            last_accessed: SystemTime::now(),
+        };
 
-        for location in &symbol_locations {
-            let symbols = self.get_chunk_symbols(location.chunk_id)?;
-            let file_symbols: Vec<CodeSymbol> = symbols
-                .into_iter()
-                .skip(location.offset)
-                .take(location.count)
-                .collect();
-            all_symbols.extend(file_symbols);
-        }
+        let memory_size = CacheEntry::estimate_memory_size(&file_info);
+        let entry = CacheEntry { file_info, memory_size };
 
-        Ok(all_symbols)
+        self.add_to_cache(file_path.to_path_buf(), entry);
+
+        Ok(())
     }
 
-    /// チャンクからシンボルを取得（LRUキャッシュ使用）
-    fn get_chunk_symbols(&mut self, chunk_id: ChunkId) -> Result<Vec<CodeSymbol>> {
-        // LRUキャッシュから確認
-        if let Some(symbols) = self.symbol_cache.get(&chunk_id) {
-            return Ok(symbols.clone());
+    /// キャッシュにエントリを追加（LRU管理付き）
+    fn add_to_cache(&mut self, path: PathBuf, entry: CacheEntry) {
+        // 既存エントリがある場合は削除
+        if let Some(old_entry) = self.cache.remove(&path) {
+            self.current_memory_bytes = self.current_memory_bytes.saturating_sub(old_entry.memory_size);
+            self.lru_order.retain(|p| p != &path);
         }
 
-        // ディスクからロード
-        let chunk_path = self.cache_dir.join(format!("chunk_{:06}.bin.gz", chunk_id));
-        let symbols = self.load_chunk_from_disk(&chunk_path)?;
+        // メモリ使用量更新
+        self.current_memory_bytes += entry.memory_size;
 
-        // メモリ使用量を更新
-        let symbols_memory = symbols.len() * std::mem::size_of::<CodeSymbol>();
+        // 新しいエントリを追加
+        self.cache.insert(path.clone(), entry);
+        self.lru_order.push(path);
 
+        // 制限値チェック
+        self.enforce_limits();
+    }
+
+    /// LRU順序を更新
+    fn update_lru(&mut self, file_path: &Path) {
+        // 既存位置を削除
+        self.lru_order.retain(|p| p != file_path);
+        // 最後に追加（最新使用）
+        self.lru_order.push(file_path.to_path_buf());
+    }
+
+    /// キャッシュ制限を強制
+    fn enforce_limits(&mut self) {
         // メモリ制限チェック
-        while self.current_memory_usage + symbols_memory > self.max_memory_usage {
-            if let Some((_, evicted_symbols)) = self.symbol_cache.pop_lru() {
-                self.current_memory_usage -=
-                    evicted_symbols.len() * std::mem::size_of::<CodeSymbol>();
-            } else {
-                break;
+        while self.current_memory_bytes > self.max_memory_bytes && !self.lru_order.is_empty() {
+            let oldest_path = self.lru_order.remove(0);
+            if let Some(entry) = self.cache.remove(&oldest_path) {
+                self.current_memory_bytes = self.current_memory_bytes.saturating_sub(entry.memory_size);
             }
         }
 
-        // キャッシュに追加
-        self.current_memory_usage += symbols_memory;
-        self.symbol_cache.put(chunk_id, symbols.clone());
+        // エントリ数制限チェック
+        while self.cache.len() > self.max_entries && !self.lru_order.is_empty() {
+            let oldest_path = self.lru_order.remove(0);
+            if let Some(entry) = self.cache.remove(&oldest_path) {
+                self.current_memory_bytes = self.current_memory_bytes.saturating_sub(entry.memory_size);
+            }
+        }
+    }
 
+    /// ファイルハッシュを計算
+    fn calculate_file_hash(&self, content: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Tree-sitterベースのシンボル抽出
+    fn extract_symbols_with_tree_sitter(&self, file_path: &Path) -> Result<Vec<CachedSymbol>> {
+        // Tree-sitterでシンボルを抽出
+        let symbol_metadata = extract_symbols_from_file(file_path)?;
+        
+        // SymbolMetadata を CachedSymbol に変換
+        let symbols = symbol_metadata
+            .into_iter()
+            .map(|meta| CachedSymbol {
+                name: meta.name,
+                symbol_type: meta.symbol_type,
+                line: meta.line,
+                column: meta.column,
+            })
+            .collect();
+        
         Ok(symbols)
     }
 
-    /// チャンクをディスクからロード
-    fn load_chunk_from_disk(&self, chunk_path: &Path) -> Result<Vec<CodeSymbol>> {
-        use flate2::read::GzDecoder;
-        use std::io::Read;
+}
 
-        let file = std::fs::File::open(chunk_path)?;
-        let mut decoder = GzDecoder::new(file);
-        let mut compressed_data = Vec::new();
-        decoder.read_to_end(&mut compressed_data)?;
+impl Default for CacheManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-        let symbols: Vec<CodeSymbol> = serde_json::from_slice(&compressed_data)?;
-        Ok(symbols)
+/// キャッシュ統計情報
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    /// エントリ数
+    pub entry_count: usize,
+    /// メモリ使用量（MB）
+    pub memory_usage_mb: usize,
+    /// 最大メモリ（MB）
+    pub max_memory_mb: usize,
+    /// ヒット率
+    pub hit_ratio: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::SymbolType;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    #[test]
+    fn test_cache_manager_creation() {
+        let cache = CacheManager::new();
+        assert_eq!(cache.cache.len(), 0);
+        assert_eq!(cache.current_memory_bytes, 0);
     }
 
-    /// ファイルのキャッシュエントリを更新
-    pub fn update_file_cache(
-        &mut self,
-        file_path: &str,
-        hash: String,
-        symbols: Vec<CodeSymbol>,
-    ) -> Result<()> {
-        // シンボルをチャンク分割
-        let chunks = self.split_symbols_into_chunks(symbols);
-        let mut symbol_locations = Vec::new();
-
-        for (chunk_symbols, chunk_id) in chunks {
-            // チャンクをディスクに保存
-            self.save_chunk_to_disk(chunk_id, &chunk_symbols)?;
-
-            // 位置情報を記録
-            symbol_locations.push(ChunkLocation {
-                chunk_id,
-                offset: 0,
-                count: chunk_symbols.len(),
-            });
-
-            // チャンク情報を更新
-            self.index.chunk_info.insert(
-                chunk_id,
-                ChunkInfo {
-                    file_path: file_path.to_string(),
-                    symbol_count: chunk_symbols.len(),
-                    compressed_size: 0, // TODO: 実際のサイズを計算
-                },
-            );
-        }
-
-        // ファイルメタデータを更新
-        let file_meta = FileMetadata {
-            hash,
-            last_modified: chrono::Utc::now().to_rfc3339(),
-            size: 0, // TODO: ファイルサイズ
-            symbol_locations,
-        };
-
-        self.index.files.insert(file_path.to_string(), file_meta);
+    #[test]
+    fn test_file_content_caching() -> Result<()> {
+        let mut cache = CacheManager::new();
+        
+        // 一時ファイル作成
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "fn test_function() {{")?;
+        writeln!(temp_file, "    println!(\"Hello\");")?;
+        writeln!(temp_file, "}}")?;
+        
+        let file_path = temp_file.path();
+        
+        // 初回読み込み
+        let content1 = cache.get_file_content(file_path)?;
+        assert!(content1.contains("test_function"));
+        assert!(cache.is_cached(file_path));
+        
+        // 2回目読み込み（キャッシュから）
+        let content2 = cache.get_file_content(file_path)?;
+        assert_eq!(content1, content2);
+        
         Ok(())
     }
 
-    /// シンボルをチャンクに分割
-    fn split_symbols_into_chunks(
-        &self,
-        symbols: Vec<CodeSymbol>,
-    ) -> Vec<(Vec<CodeSymbol>, ChunkId)> {
-        let mut chunks = Vec::new();
-        let mut chunk_id = self.get_next_chunk_id();
-
-        for chunk_symbols in symbols.chunks(self.symbols_per_chunk) {
-            chunks.push((chunk_symbols.to_vec(), chunk_id));
-            chunk_id += 1;
-        }
-
-        chunks
-    }
-
-    /// 次のチャンクIDを取得
-    fn get_next_chunk_id(&self) -> ChunkId {
-        self.index.chunk_info.keys().max().unwrap_or(&0) + 1
-    }
-
-    /// チャンクをディスクに保存
-    fn save_chunk_to_disk(&self, chunk_id: ChunkId, symbols: &[CodeSymbol]) -> Result<()> {
-        use flate2::{write::GzEncoder, Compression};
-        use std::io::Write;
-
-        let chunk_path = self.cache_dir.join(format!("chunk_{:06}.bin.gz", chunk_id));
-
-        // JSONシリアライズ + gzip圧縮
-        let json_data = serde_json::to_vec(symbols)?;
-        let file = std::fs::File::create(chunk_path)?;
-        let mut encoder = GzEncoder::new(file, Compression::best());
-        encoder.write_all(&json_data)?;
-        encoder.finish()?;
-
+    #[test]
+    fn test_symbol_extraction() -> Result<()> {
+        let mut cache = CacheManager::new();
+        
+        // Rustファイルの一時作成
+        let mut temp_file = NamedTempFile::with_suffix(".rs")?;
+        writeln!(temp_file, "fn hello_world() {{")?;
+        writeln!(temp_file, "    println!(\"Hello\");")?;
+        writeln!(temp_file, "}}")?;
+        writeln!(temp_file, "struct MyStruct {{")?;
+        writeln!(temp_file, "    value: i32,")?;
+        writeln!(temp_file, "}}")?;
+        
+        let file_path = temp_file.path();
+        
+        // シンボル抽出
+        let symbols = cache.get_symbols(file_path)?;
+        
+        assert_eq!(symbols.len(), 2);
+        assert_eq!(symbols[0].name, "hello_world");
+        assert_eq!(symbols[0].symbol_type, SymbolType::Function);
+        assert_eq!(symbols[1].name, "MyStruct");
+        assert_eq!(symbols[1].symbol_type, SymbolType::Class);
+        
         Ok(())
-    }
-
-    /// インデックスをディスクに保存
-    pub fn save_index(&self, directory: &Path) -> Result<()> {
-        use flate2::{write::GzEncoder, Compression};
-        use std::io::Write;
-
-        let index_path = directory.join(".sfscache_v2.gz");
-        let json_data = serde_json::to_string(&self.index)?;
-
-        let file = std::fs::File::create(index_path)?;
-        let mut encoder = GzEncoder::new(file, Compression::best());
-        encoder.write_all(json_data.as_bytes())?;
-        encoder.finish()?;
-
-        Ok(())
-    }
-
-    /// キャッシュ統計を取得
-    pub fn get_stats(&self) -> CacheStats {
-        let total_files = self.index.files.len();
-        let total_symbols: usize = self.index.chunk_info.values().map(|c| c.symbol_count).sum();
-
-        CacheStats {
-            total_files,
-            total_symbols,
-            cache_created: self.index.cache_created.clone(),
-            sfs_version: self.index.sfs_version.clone(),
-        }
-    }
-
-    /// 現在のメモリ使用量（MB）
-    pub fn memory_usage_mb(&self) -> f64 {
-        self.current_memory_usage as f64 / 1024.0 / 1024.0
-    }
-
-    /// キャッシュヒット率
-    pub fn cache_hit_rate(&self) -> f64 {
-        // TODO: ヒット率の統計を実装
-        0.0
     }
 }
