@@ -141,9 +141,9 @@ error
 
 For detailed technical specifications and development information, see:
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - System design and data structures
-- [DEVELOPMENT.md](./DEVELOPMENT.md) - Development phases and testing strategy
-- [DESIGN.md](./DESIGN.md) - Overview design document
+- [Architecture](./docs/ARCHITECTURE.md) - System design and data structures
+- [Development Guide](./docs/DEVELOPMENT.md) - Development phases and testing strategy
+- [Design Document](./docs/DESIGN.md) - Overview design document
 
 ## License
 
