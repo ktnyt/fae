@@ -1,4 +1,4 @@
-use crate::searchers::ContentSearcher;
+use crate::searchers::EnhancedContentSearcher;
 use crate::search_coordinator::SearchCoordinator;
 use crate::display::{
     ContentHeadingFormatter, ContentInlineFormatter,
@@ -37,6 +37,10 @@ pub struct Cli {
     /// Force grouped output with file headers (same as rg --heading)
     #[arg(long)]
     pub heading: bool,
+    
+    /// Show available search backends information
+    #[arg(long)]
+    pub backends: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -71,6 +75,11 @@ pub fn run_cli() -> Result<()> {
     
     if cli.verbose {
         println!("Project root: {}", project_root.display());
+    }
+    
+    // バックエンド情報表示モードの確認
+    if cli.backends {
+        return show_backend_info(&project_root, cli.verbose);
     }
     
     // インデックス構築モードの確認
@@ -119,8 +128,13 @@ fn run_content_search(project_root: &PathBuf, query: &str, verbose: bool, headin
         println!("Running content search for: '{}'", query);
     }
     
-    let searcher = ContentSearcher::new(project_root.clone())
-        .context("Failed to create content searcher")?;
+    let searcher = EnhancedContentSearcher::new(project_root.clone())
+        .context("Failed to create enhanced content searcher")?;
+    
+    if verbose {
+        let (primary, available) = searcher.backend_info();
+        println!("Using backend: {} (available: {})", primary, available.join(", "));
+    }
     
     let start_time = std::time::Instant::now();
     let stream = searcher.search_stream(query)
@@ -329,6 +343,38 @@ fn run_regex_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Resu
     Ok(())
 }
 
+/// バックエンド情報の表示
+fn show_backend_info(project_root: &PathBuf, verbose: bool) -> Result<()> {
+    println!("Search Backend Information");
+    println!("==========================");
+    
+    let searcher = EnhancedContentSearcher::new(project_root.clone())
+        .context("Failed to create enhanced content searcher")?;
+    
+    let (primary, available) = searcher.backend_info();
+    
+    println!("Primary backend: {}", primary);
+    println!("Available backends:");
+    
+    for (i, backend) in available.iter().enumerate() {
+        let marker = if i == 0 { "→" } else { " " };
+        println!("  {} {} {}", marker, backend, if i == 0 { "(active)" } else { "" });
+    }
+    
+    if verbose {
+        println!();
+        println!("Backend priorities:");
+        println!("  1. ripgrep (rg) - fastest, Rust-based");
+        println!("  2. ag (the_silver_searcher) - fast, C-based");
+        println!("  3. built-in - fallback, always available");
+        println!();
+        println!("To install external backends:");
+        println!("  ripgrep: cargo install ripgrep");
+        println!("  ag: brew install the_silver_searcher (macOS)");
+    }
+    
+    Ok(())
+}
 
 
 #[cfg(test)]
@@ -357,6 +403,17 @@ mod tests {
         
         // Content search should find the function
         let result = run_content_search(&temp_dir.path().to_path_buf(), "testFunction", false, false);
+        assert!(result.is_ok());
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_backend_info_cli() -> Result<()> {
+        let temp_dir = create_test_project()?;
+        
+        // Backend info should work
+        let result = show_backend_info(&temp_dir.path().to_path_buf(), false);
         assert!(result.is_ok());
         
         Ok(())

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Instant;
+use log::{info, warn};
 
 /// インデックス構築とマルチモード検索を調整するコーディネーター
 pub struct SearchCoordinator {
@@ -91,7 +92,7 @@ impl SearchCoordinator {
         let files = self.index_manager.discover_files()
             .context("Failed to discover files")?;
         
-        println!("Found {} files to index", files.len());
+        info!("Found {} files to index", files.len());
 
         // 並列シンボル抽出
         let symbols = self.extract_symbols_parallel(&files)?;
@@ -328,8 +329,8 @@ impl SearchCoordinator {
                     Ok(file_symbols) => Some(file_symbols),
                     Err(_) => {
                         // ログ出力してスキップ
-                        eprintln!("Warning: Failed to extract symbols from: {}", 
-                                  file_info.relative_path.display());
+                        warn!("Failed to extract symbols from: {}", 
+                              file_info.relative_path.display());
                         None
                     }
                 }

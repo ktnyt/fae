@@ -1,17 +1,23 @@
 use fae::cli;
 use std::process;
+use log::error;
 
 fn main() {
+    // ログ初期化（環境変数 RUST_LOG で制御）
+    env_logger::init();
+    
     if let Err(err) = cli::run_cli() {
-        eprintln!("Error: {}", err);
+        error!("CLI execution failed: {}", err);
         
-        // エラーチェーンを表示
+        // エラーチェーンをログに記録
         let mut source = err.source();
         while let Some(err) = source {
-            eprintln!("Caused by: {}", err);
+            error!("Caused by: {}", err);
             source = err.source();
         }
         
+        // ユーザー向けエラーメッセージ
+        eprintln!("Error: {}", err);
         process::exit(1);
     }
 }

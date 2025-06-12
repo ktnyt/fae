@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::sync::{OnceLock, mpsc};
 use std::thread;
+use log::{debug, warn};
 
 /// コンテンツ検索エンジン（grep風）
 #[derive(Clone)]
@@ -62,9 +63,12 @@ impl ContentSearcher {
         let handle = thread::spawn(move || {
             // ファイル一覧を取得
             let files = match searcher.index_manager.discover_files() {
-                Ok(files) => files,
+                Ok(files) => {
+                    debug!("Content search discovered {} files", files.len());
+                    files
+                }
                 Err(err) => {
-                    eprintln!("Warning: Failed to discover files: {}", err);
+                    warn!("Failed to discover files: {}", err);
                     return;
                 }
             };
@@ -84,8 +88,8 @@ impl ContentSearcher {
                         }
                     }
                     Err(err) => {
-                        eprintln!("Warning: Failed to search in file {}: {}", 
-                                  file_info.relative_path.display(), err);
+                        warn!("Failed to search in file {}: {}", 
+                              file_info.relative_path.display(), err);
                     }
                 }
             }
@@ -104,14 +108,16 @@ impl ContentSearcher {
         // ファイル一覧を取得
         let files = self.index_manager.discover_files()
             .context("Failed to discover files for content search")?;
+        
+        debug!("Content search discovered {} files for batch processing", files.len());
 
         // 並列でファイル内容を検索
         let mut results: Vec<SearchResult> = files
             .par_iter()
             .map(|file_info| {
                 self.search_in_file(file_info, query).unwrap_or_else(|err| {
-                    eprintln!("Warning: Failed to search in file {}: {}", 
-                              file_info.relative_path.display(), err);
+                    warn!("Failed to search in file {}: {}", 
+                          file_info.relative_path.display(), err);
                     Vec::new()
                 })
             })

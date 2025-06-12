@@ -3,6 +3,7 @@ use ignore::{WalkBuilder, DirEntry};
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::collections::HashSet;
+use log::warn;
 
 /// ファイル発見・監視・Git統合を担当するマネージャー
 #[derive(Clone)]
@@ -61,7 +62,7 @@ impl IndexManager {
                 }
                 Err(err) => {
                     // ファイルアクセスエラーは警告として記録
-                    eprintln!("Warning: Failed to access file: {}", err);
+                    warn!("Failed to access file: {}", err);
                 }
             }
         }

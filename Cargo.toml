@@ -37,9 +37,11 @@ rayon = "1.8"
 # ファイル監視
 notify = "6.1"
 
-# エラーハンドリング・正規表現
+# エラーハンドリング・正規表現・ログ
 anyhow = "1.0"
 regex = "1.10"
+log = "0.4"
+env_logger = "0.10"
 
 [dev-dependencies]
 tempfile = "3.8"      # テスト用
