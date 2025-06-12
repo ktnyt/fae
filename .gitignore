@@ -11,3 +11,4 @@ target/
 
 # Backup directories
 sfs_backup_*
+.fae

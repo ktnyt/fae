@@ -55,6 +55,7 @@ pub use types::{
 };
 
 pub use cache_manager::{CacheManager, CacheStats};
+pub use cli::{SearchRunner, SearchStrategy, SearchResultStream};
 pub use display::{DisplayFormatter, CliFormatter, TuiFormatter, ResultFormatter};
 pub use index_manager::{IndexManager, FileInfo};
 pub use search_coordinator::{SearchCoordinator, IndexProgress, IndexResult, SymbolSearchStream};
