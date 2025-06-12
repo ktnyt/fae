@@ -27,13 +27,10 @@
 //! // シンボルをファジー検索
 //! let search_results = cache.fuzzy_search_symbols("main", 10);
 //! for hit in search_results {
-//!     println!("Found: {} (score: {})", hit.symbol_name, hit.score);
+//!     println!("Found: {} (score: {})", hit.metadata.name, hit.score);
 //!     
-//!     // 詳細情報を取得
-//!     let details = cache.get_symbol_details(&hit.symbol_name);
-//!     for detail in details {
-//!         println!("  {}:{}:{}", detail.file_path.display(), detail.line, detail.column);
-//!     }
+//!     // 完全な詳細情報がヒットに含まれている
+//!     println!("  {}:{}:{}", hit.metadata.file_path.display(), hit.metadata.line, hit.metadata.column);
 //! }
 //! ```
 
@@ -60,7 +57,7 @@ pub use display::{DisplayFormatter, CliFormatter, TuiFormatter, ResultFormatter}
 pub use index_manager::{IndexManager, FileInfo};
 pub use search_coordinator::{SearchCoordinator, IndexProgress, IndexResult, SymbolSearchStream};
 pub use searchers::{ContentSearcher, ContentSearchStream, RegexSearcher, RegexSearchStream};
-pub use symbol_index::{SymbolIndex, MetadataStorage, SymbolMetadata, SearchHit};
+pub use symbol_index::{SymbolIndex, SymbolMetadata, SearchHit};
 
 // Tree-sitter integration (to be implemented)
 pub use tree_sitter::extract_symbols_from_file;

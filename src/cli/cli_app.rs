@@ -95,7 +95,7 @@ pub fn run_cli() -> Result<()> {
             runner.run_with_strategy(&ContentStrategy, &clean_query)
         }
         SearchMode::Symbol => {
-            runner.run_with_strategy(&SymbolStrategy, &clean_query)
+            runner.run_with_strategy(&SymbolStrategy::new(), &clean_query)
         }
         SearchMode::File => {
             runner.run_with_strategy(&FileStrategy, &clean_query)

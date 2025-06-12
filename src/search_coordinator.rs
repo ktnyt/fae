@@ -1,6 +1,6 @@
 use crate::index_manager::{IndexManager, FileInfo};
 use crate::cache_manager::CacheManager;
-use crate::symbol_index::{SymbolIndex, SymbolMetadata, MetadataStorage, SearchHit};
+use crate::symbol_index::{SymbolIndex, SymbolMetadata, SearchHit};
 use crate::tree_sitter::extract_symbols_from_file;
 use anyhow::{Context, Result};
 use rayon::prelude::*;
@@ -16,8 +16,6 @@ pub struct SearchCoordinator {
     index_manager: IndexManager,
     /// キャッシュマネージャー
     cache_manager: CacheManager,
-    /// メタデータストレージ
-    metadata_storage: Option<MetadataStorage>,
     /// プロジェクトルート
     project_root: PathBuf,
     /// 構築済みシンボルインデックス
@@ -73,12 +71,10 @@ impl SearchCoordinator {
     pub fn new(project_root: PathBuf) -> Result<Self> {
         let index_manager = IndexManager::new(project_root.clone());
         let cache_manager = CacheManager::new();
-        let metadata_storage = MetadataStorage::new(&project_root).ok();
 
         Ok(Self {
             index_manager,
             cache_manager,
-            metadata_storage,
             project_root,
             symbol_index: None,
         })
@@ -102,12 +98,6 @@ impl SearchCoordinator {
         
         // 内部にシンボルインデックスを保存
         self.symbol_index = Some(symbol_index.clone());
-        
-        // メタデータストレージに保存
-        if let Some(ref mut storage) = self.metadata_storage {
-            storage.save_metadata(symbols.clone())
-                .context("Failed to save metadata")?;
-        }
 
         let build_time_ms = start_time.elapsed().as_millis() as u64;
         
@@ -207,12 +197,6 @@ impl SearchCoordinator {
         
         // 内部にシンボルインデックスを保存
         self.symbol_index = Some(symbol_index.clone());
-        
-        // メタデータストレージに保存
-        if let Some(ref mut storage) = self.metadata_storage {
-            storage.save_metadata(symbols.clone())
-                .context("Failed to save metadata")?;
-        }
 
         let build_time_ms = start_time.elapsed().as_millis() as u64;
         let final_processed = *processed_files.lock().unwrap();
@@ -245,52 +229,19 @@ impl SearchCoordinator {
             self.cache_manager.fuzzy_search_symbols(query, 1000)
         };
 
-        // 各ヒットに対してメタデータを取得してSearchResultに変換
-        let _query = query.to_string();
+        // 各ヒットが完全なメタデータを持っているので直接SearchResultに変換
         let project_root = self.project_root.clone();
         let (sender, receiver) = mpsc::channel();
 
-        // メタデータストレージを取得
-        let mut metadata_storage = if let Some(ref _metadata_storage) = self.metadata_storage {
-            // 新しいインスタンスを作成（スレッド間で移動するため）
-            MetadataStorage::new(&self.project_root).ok()
-        } else {
-            None
-        };
-
         let handle = thread::spawn(move || {
             for hit in hits {
-                // シンボルの詳細情報を取得
-                let (file_path, line, column, symbol_type) = if let Some(ref mut storage) = metadata_storage {
-                    // メタデータストレージから詳細情報を取得
-                    if let Ok(metadata_entries) = storage.find_metadata(&hit.symbol_name) {
-                        if let Some(first_entry) = metadata_entries.first() {
-                            (
-                                project_root.join(&first_entry.file_path),
-                                first_entry.line,
-                                first_entry.column,
-                                first_entry.symbol_type.clone(),
-                            )
-                        } else {
-                            // メタデータが見つからない場合のフォールバック
-                            (project_root.join("unknown.rs"), 1, 1, crate::types::SymbolType::Function)
-                        }
-                    } else {
-                        // 検索エラーの場合のフォールバック
-                        (project_root.join("error.rs"), 1, 1, crate::types::SymbolType::Function)
-                    }
-                } else {
-                    // メタデータストレージがない場合のフォールバック
-                    (project_root.join("no_metadata.rs"), 1, 1, crate::types::SymbolType::Function)
-                };
-
                 let result = crate::types::SearchResult {
-                    file_path,
-                    line,
-                    column,
+                    file_path: project_root.join(&hit.metadata.file_path),
+                    line: hit.metadata.line,
+                    column: hit.metadata.column,
                     display_info: crate::types::DisplayInfo::Symbol {
-                        name: hit.symbol_name.clone(),
-                        symbol_type,
+                        name: hit.metadata.name.clone(),
+                        symbol_type: hit.metadata.symbol_type.clone(),
                     },
                     score: hit.score as f64 / 100.0, // SkimMatcherのスコアをf64に正規化
                 };
@@ -324,16 +275,16 @@ impl SearchCoordinator {
             return cache_details;
         }
         
-        // メタデータストレージから取得
-        if let Some(ref _storage) = self.metadata_storage {
-            if let Ok(mut storage_mut) = MetadataStorage::new(&self.project_root) {
-                if let Ok(metadata) = storage_mut.find_metadata(symbol_name) {
-                    return metadata;
-                }
-            }
+        // シンボルインデックスから直接取得
+        if let Some(ref symbol_index) = self.symbol_index {
+            symbol_index.symbols()
+                .iter()
+                .filter(|s| s.name == symbol_name)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
         }
-        
-        Vec::new()
     }
 
     /// プロジェクトルートを取得
