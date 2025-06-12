@@ -17,17 +17,32 @@
 //! use std::path::Path;
 //! 
 //! let mut cache = CacheManager::new();
-//! let symbols = cache.get_symbols(Path::new("src/main.rs")).unwrap();
 //! 
+//! // ファイルからシンボルを抽出してキャッシュ
+//! let symbols = cache.get_symbols(Path::new("src/main.rs")).unwrap();
 //! for symbol in symbols {
 //!     println!("{}: {} at line {}", symbol.symbol_type.icon(), symbol.name, symbol.line);
+//! }
+//! 
+//! // シンボルをファジー検索
+//! let search_results = cache.fuzzy_search_symbols("main", 10);
+//! for hit in search_results {
+//!     println!("Found: {} (score: {})", hit.symbol_name, hit.score);
+//!     
+//!     // 詳細情報を取得
+//!     let details = cache.get_symbol_details(&hit.symbol_name);
+//!     for detail in details {
+//!         println!("  {}:{}:{}", detail.file_path.display(), detail.line, detail.column);
+//!     }
 //! }
 //! ```
 
 pub mod types;
 pub mod cache_manager;
 pub mod display;
+pub mod index_manager;
 pub mod languages;
+pub mod search_coordinator;
 pub mod symbol_index;
 pub mod tree_sitter;
 
@@ -39,6 +54,8 @@ pub use types::{
 
 pub use cache_manager::{CacheManager, CacheStats};
 pub use display::DisplayFormatter;
+pub use index_manager::{IndexManager, FileInfo};
+pub use search_coordinator::{SearchCoordinator, IndexProgress, IndexResult};
 pub use symbol_index::{SymbolIndex, MetadataStorage, SymbolMetadata, SearchHit};
 
 // Tree-sitter integration (to be implemented)

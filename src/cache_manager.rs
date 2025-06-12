@@ -1,4 +1,5 @@
 use crate::types::{CacheEntry, CachedFileInfo, CachedSymbol};
+use crate::symbol_index::{SymbolIndex, SymbolMetadata, SearchHit};
 use crate::tree_sitter::extract_symbols_from_file;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ const DEFAULT_MAX_ENTRIES: usize = 1000;
 /// - LRUベースの自動削除
 /// - ファイルハッシュによる変更検知
 /// - 段階的ロード（必要時のみコンテンツ読み込み）
-/// - ディスク永続化（将来実装）
+/// - SymbolIndex統合による効率的なシンボル検索
 pub struct CacheManager {
     /// メモリ内キャッシュ（パス -> エントリ）
     cache: HashMap<PathBuf, CacheEntry>,
@@ -30,6 +31,8 @@ pub struct CacheManager {
     max_entries: usize,
     /// 現在のメモリ使用量
     current_memory_bytes: usize,
+    /// シンボルインデックス（ファジー検索用）
+    symbol_index: SymbolIndex,
 }
 
 impl CacheManager {
@@ -46,6 +49,7 @@ impl CacheManager {
             max_memory_bytes: max_memory_mb * 1024 * 1024,
             max_entries,
             current_memory_bytes: 0,
+            symbol_index: SymbolIndex::new(),
         }
     }
 
@@ -256,9 +260,12 @@ impl CacheManager {
     }
 
     /// Tree-sitterベースのシンボル抽出
-    fn extract_symbols_with_tree_sitter(&self, file_path: &Path) -> Result<Vec<CachedSymbol>> {
+    fn extract_symbols_with_tree_sitter(&mut self, file_path: &Path) -> Result<Vec<CachedSymbol>> {
         // Tree-sitterでシンボルを抽出
         let symbol_metadata = extract_symbols_from_file(file_path)?;
+        
+        // SymbolIndexを更新
+        self.update_symbol_index(&symbol_metadata);
         
         // SymbolMetadata を CachedSymbol に変換
         let symbols = symbol_metadata
@@ -272,6 +279,63 @@ impl CacheManager {
             .collect();
         
         Ok(symbols)
+    }
+
+    /// SymbolIndexを新しいシンボルで更新
+    fn update_symbol_index(&mut self, new_symbols: &[SymbolMetadata]) {
+        // 既存のシンボルインデックスから全シンボルを取得
+        let mut all_symbols = self.get_all_cached_symbols();
+        
+        // 新しいシンボルを追加
+        all_symbols.extend_from_slice(new_symbols);
+        
+        // SymbolIndexを再構築
+        self.symbol_index = SymbolIndex::from_symbols(all_symbols);
+    }
+
+    /// キャッシュされた全シンボルを取得
+    fn get_all_cached_symbols(&self) -> Vec<SymbolMetadata> {
+        let mut all_symbols = Vec::new();
+        
+        for entry in self.cache.values() {
+            for symbol in &entry.file_info.symbols {
+                all_symbols.push(SymbolMetadata {
+                    name: symbol.name.clone(),
+                    file_path: entry.file_info.path.clone(),
+                    line: symbol.line,
+                    column: symbol.column,
+                    symbol_type: symbol.symbol_type.clone(),
+                });
+            }
+        }
+        
+        all_symbols
+    }
+
+    /// シンボルをファジー検索
+    pub fn fuzzy_search_symbols(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        self.symbol_index.fuzzy_search(query, limit)
+    }
+
+    /// 特定のシンボル名の詳細情報を取得
+    pub fn get_symbol_details(&self, symbol_name: &str) -> Vec<SymbolMetadata> {
+        let mut results = Vec::new();
+        
+        for entry in self.cache.values() {
+            for symbol in &entry.file_info.symbols {
+                if symbol.name == symbol_name {
+                    results.push(SymbolMetadata {
+                        name: symbol.name.clone(),
+                        file_path: entry.file_info.path.clone(),
+                        line: symbol.line,
+                        column: symbol.column,
+                        symbol_type: symbol.symbol_type.clone(),
+                    });
+                }
+            }
+        }
+        
+        results
     }
 
 }

@@ -321,6 +321,24 @@ impl Default for SymbolIndex {
     }
 }
 
+impl std::fmt::Debug for SymbolIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SymbolIndex")
+            .field("symbol_names", &self.symbol_names)
+            .field("symbol_count", &self.symbol_names.len())
+            .finish()
+    }
+}
+
+impl Clone for SymbolIndex {
+    fn clone(&self) -> Self {
+        Self {
+            symbol_names: self.symbol_names.clone(),
+            matcher: SkimMatcherV2::default(), // 新しいインスタンスを作成
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
