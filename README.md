@@ -1,133 +1,154 @@
 # fae - Fast And Elegant code search
 
-妖精のように軽やかで魔法のようにコードを発見するリアルタイム検索ツール
+Lightweight and magical code discovery tool with real-time search capabilities
 
-## 概要
+## Overview
 
-**fae** は、コードベースを様々な切り口からリアルタイムで検索できるTUIベースのインタラクティブツールです。大規模プロジェクトでも高速動作し、直感的な操作でコードの発見を支援します。
+**fae** is an interactive TUI-based tool for real-time multi-dimensional code search across large codebases. It provides fast, intuitive code discovery with high performance even on large projects.
 
-> **🚧 開発状況**: 現在Phase 4まで完了（コアエンジン実装済み）。TUI実装はPhase 7で予定。
+> **✅ Development Status**: Phase 4-5 complete (all features implemented, 128 tests passing). Production ready.
 
-## 主な機能
+## Features
 
-### マルチモード検索
-- **コンテンツ検索** (デフォルト) - ファイル内容のテキスト検索
-- **シンボル検索** (`#prefix`) - 関数・クラス・変数名での検索
-- **ファイル検索** (`>prefix`) - ファイル名・パスでの検索
-- **正規表現検索** (`/prefix`) - 高度なパターンマッチング
+### Multi-Mode Search
+- **Content Search** (default) - Full-text search within file contents
+- **Symbol Search** (`#prefix`) - Functions, classes, variables by name
+- **File Search** (`>prefix`) - File names and paths
+- **Regex Search** (`/prefix`) - Advanced pattern matching
 
-### 主要特徴
-- **高速シンボル検索** ✅ - Tree-sitter + ファジー検索（4言語対応）
-- **並列インデックス構築** ✅ - rayon並列処理による高速インデックシング
-- **スマートファイル発見** ✅ - .gitignore対応・バイナリ検出・サイズ制限
-- **メモリ効率設計** ✅ - 軽量インデックス + 分離メタデータストレージ
-- **包括的テスト** ✅ - 31テスト全通過（ユニット・統合・デバッグ）
-- **リアルタイム検索** 🔄 - 入力に応じた即座の結果更新（TUI実装中）
-- **直感的操作** 🔄 - ファジー検索とキーボードナビゲーション（TUI実装中）
+### Key Features
+- **Fast Symbol Search** ✅ - Tree-sitter + fuzzy search (4 languages)
+- **Parallel Index Building** ✅ - High-speed indexing with rayon
+- **Smart File Discovery** ✅ - .gitignore support, binary detection, size limits
+- **External Backend Integration** ✅ - ripgrep/ag support + fallback
+- **Streaming Search** ✅ - Real-time ag/rg-style output
+- **Comprehensive Testing** ✅ - 128 tests passing (CLI, E2E, performance, error handling)
+- **Production Quality** ✅ - Strategy Pattern, structured logging, Unix philosophy
+- **TUI Ready** 🔄 - Same search engine for TUI implementation (Phase 6-7)
 
-## インストール
+## Installation
 
 ```bash
-# Rust環境での開発版インストール
+# Development installation with Rust
 git clone https://github.com/ktnyt/fae.git
 cd fae
 cargo build --release
 cargo install --path .
 ```
 
-## 使い方
+## Usage
 
-### 現在利用可能な機能（開発版）
+### CLI Commands (All Features Implemented)
 
 ```bash
-# プロジェクトのビルドとテスト実行
+# Build and test
 cargo build --release
 cargo test
 
-# ライブラリAPIとしての利用（Rust）
+# Basic usage
+fae "search_query"           # Content search (default)
+fae "#function_name"         # Symbol search
+fae ">file_name"             # File search
+fae "/regex_pattern"         # Regex search
+
+# Options
+fae "search" --heading       # TTY format (with file headers)
+fae "search" | head -10      # Pipeline support
+fae --index                  # Build index and show symbol info
+fae --backends               # Show external backend info
+
+# Environment variables
+RUST_LOG=debug fae "search"  # Debug logging
+```
+
+### Library API (Rust)
+
+```rust
 use fae::{SearchCoordinator, IndexManager};
 
-// インデックス構築とシンボル検索
+// Index building and symbol search
 let mut coordinator = SearchCoordinator::new(project_root)?;
 let result = coordinator.build_index()?;
 let hits = coordinator.search_symbols("handleClick", 10);
 ```
 
-### 将来予定のTUI操作
+### Performance Characteristics (Measured)
 
-1. **検索入力**: 検索クエリを入力
-2. **モード切替**: プレフィックスで自動切替
-   - `#function` → シンボル検索
-   - `>main.rs` → ファイル検索  
-   - `/regex.*` → 正規表現検索
-3. **ナビゲーション**: 
-   - `↑/↓` または `Ctrl+P/N` で選択
-   - `Enter` で結果をクリップボードにコピー
-   - `Esc/Ctrl+C` で終了
+- **Index Building**: 75.60ms (49 files, 421 symbols)
+- **Content Search**: 70-167ms (external backend)
+- **Symbol Search**: 393-603ms (Tree-sitter based)
+- **Memory Usage**: <100MB (typical projects)
+- **External Backends**: ripgrep → ag → built-in fallback
 
-### 検索例
+### Search Examples
 
 ```bash
-# シンボル検索: 関数名 "handle" を含むシンボル
+# Symbol search: symbols containing "handle"
 #handle
 
-# ファイル検索: "component" を含むファイル
+# File search: files containing "component"
 >component
 
-# 正規表現検索: import文の検索
+# Regex search: import statements
 /^import.*from
 
-# コンテンツ検索: ファイル内容から "error" を検索
+# Content search: "error" in file contents
 error
 ```
 
-## 実装状況
+## Implementation Status
 
-### ✅ 完了機能（Phase 1-4）
+### ✅ Completed Features (Phase 1-5)
 
-- **シンボルインデックス**: ファジー検索・メタデータストレージ・重複排除
-- **Tree-sitter統合**: 4言語対応・統合クエリ最適化・並列処理
-- **ファイル発見エンジン**: .gitignore対応・バイナリ検出・サイズ制限
-- **インデックス構築**: 並列シンボル抽出・プログレッシブ構築・進捗報告
+- **4 Search Modes**: Content, Symbol (#), File (>), Regex (/) fully implemented
+- **Tree-sitter Integration**: 4 languages, unified query optimization, parallel processing
+- **External Backend Integration**: ripgrep/ag support, auto-detection, fallback
+- **Streaming Search**: ag/rg-style real-time output, pipeline support
+- **Strategy Pattern CLI**: TUI-ready architecture, search mode separation
+- **Comprehensive Quality Assurance**: 128 tests (CLI, E2E, performance, error handling)
+- **Structured Logging**: RUST_LOG environment variable, debug support
 
-### 🔄 次フェーズ（Phase 5-6）
+### 🔄 Next Phase (Phase 6-7)
 
-- **マルチモード検索**: コンテンツ・シンボル・ファイル・正規表現検索
-- **Git統合**: 変更ファイル検出・ブランチ情報連携
+- **TUI Implementation**: ratatui-based real-time search, keyboard navigation
+- **Git Integration**: Changed file detection, branch information
+- **File Watching**: Real-time index updates, notify integration
 
-### 対応言語
+### Supported Languages
 
-- **TypeScript** (`.ts`, `.tsx`) ✅ - Interface, Class, Function, Method, Constant対応
-- **JavaScript** (`.js`, `.jsx`) ✅ - Class, Function, Method, ArrowFunction, Constant対応  
-- **Python** (`.py`) ✅ - Class, Function, Assignment対応
-- **Rust** (`.rs`) ✅ - Struct, Enum, Function, Const対応
+- **TypeScript** (`.ts`, `.tsx`) ✅ - Interface, Class, Function, Method, Constant
+- **JavaScript** (`.js`, `.jsx`) ✅ - Class, Function, Method, ArrowFunction, Constant
+- **Python** (`.py`) ✅ - Class, Function, Assignment
+- **Rust** (`.rs`) ✅ - Struct, Enum, Function, Const
 
-## 設計哲学
+## Design Philosophy
 
-- **リアルタイム・ファースト**: 入力に応じた即座の結果更新
-- **メモリ効率**: 巨大プロジェクトでもスマートなキャッシュ戦略
-- **非同期設計**: UIブロッキングなしの快適な操作性
-- **テスト駆動**: 全機能に対して網羅的なテスト
+- **Simplicity First**: Clear, maintainable design avoiding unnecessary complexity
+- **Streaming First**: Real-time search result output in ag/rg style
+- **Unix Philosophy**: Do one thing well, support pipeline composition
+- **Strategy Pattern**: Search mode separation, TUI/CLI reusability
+- **External Backend Utilization**: Performance optimization via ripgrep/ag integration
+- **Test-Driven Development**: Comprehensive quality assurance with 128 tests
 
-## 除外対象
+## Exclusions
 
-- バイナリファイル
-- `.gitignore` に記載されたファイル
-- 1MB を超える大きなファイル
-- 典型的な除外ディレクトリ (`node_modules/`, `target/`, `.git/` 等)
+- Binary files
+- Files listed in `.gitignore`
+- Large files over 1MB
+- Common exclusion directories (`node_modules/`, `target/`, `.git/`, etc.)
 
-## 開発・貢献
+## Development & Contributing
 
-詳細な技術仕様や開発情報については以下のドキュメントを参照してください：
+For detailed technical specifications and development information, see:
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - システム設計・データ構造
-- [DEVELOPMENT.md](./DEVELOPMENT.md) - 開発フェーズ・テスト戦略  
-- [DESIGN.md](./DESIGN.md) - 概要設計書
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - System design and data structures
+- [DEVELOPMENT.md](./DEVELOPMENT.md) - Development phases and testing strategy
+- [DESIGN.md](./DESIGN.md) - Overview design document
 
-## ライセンス
+## License
 
 [MIT License](./LICENSE)
 
 ---
 
-*妖精のように軽やかで魔法のようにコードを発見する - fae*
+*Discover code like a fairy - light, magical, and elegant*
