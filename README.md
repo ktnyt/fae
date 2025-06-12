@@ -6,6 +6,8 @@
 
 **fae** は、コードベースを様々な切り口からリアルタイムで検索できるTUIベースのインタラクティブツールです。大規模プロジェクトでも高速動作し、直感的な操作でコードの発見を支援します。
 
+> **🚧 開発状況**: 現在Phase 4まで完了（コアエンジン実装済み）。TUI実装はPhase 7で予定。
+
 ## 主な機能
 
 ### マルチモード検索
@@ -15,10 +17,13 @@
 - **正規表現検索** (`/prefix`) - 高度なパターンマッチング
 
 ### 主要特徴
-- **リアルタイム検索** - 入力に応じた即座の結果更新
-- **高性能** - 軽量シンボルインデックス + 分離メタデータで高速検索
-- **メモリ効率** - 巨大プロジェクトでもスマートなキャッシュ戦略
-- **直感的操作** - ファジー検索とキーボードナビゲーション
+- **高速シンボル検索** ✅ - Tree-sitter + ファジー検索（4言語対応）
+- **並列インデックス構築** ✅ - rayon並列処理による高速インデックシング
+- **スマートファイル発見** ✅ - .gitignore対応・バイナリ検出・サイズ制限
+- **メモリ効率設計** ✅ - 軽量インデックス + 分離メタデータストレージ
+- **包括的テスト** ✅ - 31テスト全通過（ユニット・統合・デバッグ）
+- **リアルタイム検索** 🔄 - 入力に応じた即座の結果更新（TUI実装中）
+- **直感的操作** 🔄 - ファジー検索とキーボードナビゲーション（TUI実装中）
 
 ## インストール
 
@@ -32,17 +37,23 @@ cargo install --path .
 
 ## 使い方
 
-### 基本的な使用方法
+### 現在利用可能な機能（開発版）
 
 ```bash
-# TUI起動（対話モード）
-fae
+# プロジェクトのビルドとテスト実行
+cargo build --release
+cargo test
 
-# CLI検索（結果を標準出力）
-fae "handleClick"
+# ライブラリAPIとしての利用（Rust）
+use fae::{SearchCoordinator, IndexManager};
+
+// インデックス構築とシンボル検索
+let mut coordinator = SearchCoordinator::new(project_root)?;
+let result = coordinator.build_index()?;
+let hits = coordinator.search_symbols("handleClick", 10);
 ```
 
-### TUIでの操作
+### 将来予定のTUI操作
 
 1. **検索入力**: 検索クエリを入力
 2. **モード切替**: プレフィックスで自動切替
@@ -70,12 +81,26 @@ fae "handleClick"
 error
 ```
 
-## 対応言語（初期）
+## 実装状況
 
-- TypeScript (`.ts`, `.tsx`)
-- JavaScript (`.js`, `.jsx`) 
-- Python (`.py`)
-- Rust (`.rs`)
+### ✅ 完了機能（Phase 1-4）
+
+- **シンボルインデックス**: ファジー検索・メタデータストレージ・重複排除
+- **Tree-sitter統合**: 4言語対応・統合クエリ最適化・並列処理
+- **ファイル発見エンジン**: .gitignore対応・バイナリ検出・サイズ制限
+- **インデックス構築**: 並列シンボル抽出・プログレッシブ構築・進捗報告
+
+### 🔄 次フェーズ（Phase 5-6）
+
+- **マルチモード検索**: コンテンツ・シンボル・ファイル・正規表現検索
+- **Git統合**: 変更ファイル検出・ブランチ情報連携
+
+### 対応言語
+
+- **TypeScript** (`.ts`, `.tsx`) ✅ - Interface, Class, Function, Method, Constant対応
+- **JavaScript** (`.js`, `.jsx`) ✅ - Class, Function, Method, ArrowFunction, Constant対応  
+- **Python** (`.py`) ✅ - Class, Function, Assignment対応
+- **Rust** (`.rs`) ✅ - Struct, Enum, Function, Const対応
 
 ## 設計哲学
 
