@@ -1,4 +1,17 @@
+use fae::cli;
+use std::process;
+
 fn main() {
-    println!("fae - Fast And Elegant code search");
-    println!("Phase 2: Tree-sitter integration implementation in progress...");
+    if let Err(err) = cli::run_cli() {
+        eprintln!("Error: {}", err);
+        
+        // エラーチェーンを表示
+        let mut source = err.source();
+        while let Some(err) = source {
+            eprintln!("Caused by: {}", err);
+            source = err.source();
+        }
+        
+        process::exit(1);
+    }
 }

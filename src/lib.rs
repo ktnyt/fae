@@ -39,10 +39,12 @@
 
 pub mod types;
 pub mod cache_manager;
+pub mod cli;
 pub mod display;
 pub mod index_manager;
 pub mod languages;
 pub mod search_coordinator;
+pub mod searchers;
 pub mod symbol_index;
 pub mod tree_sitter;
 
@@ -53,9 +55,10 @@ pub use types::{
 };
 
 pub use cache_manager::{CacheManager, CacheStats};
-pub use display::DisplayFormatter;
+pub use display::{DisplayFormatter, CliFormatter, TuiFormatter, ResultFormatter};
 pub use index_manager::{IndexManager, FileInfo};
 pub use search_coordinator::{SearchCoordinator, IndexProgress, IndexResult};
+pub use searchers::ContentSearcher;
 pub use symbol_index::{SymbolIndex, MetadataStorage, SymbolMetadata, SearchHit};
 
 // Tree-sitter integration (to be implemented)

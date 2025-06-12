@@ -1,6 +1,15 @@
 use crate::types::{SearchResult, DisplayInfo, FormattedResult, ColorInfo, Color};
 use std::path::Path;
 
+/// 検索結果フォーマッターのトレイト
+pub trait ResultFormatter {
+    /// 検索結果をフォーマット
+    fn format_result(&self, result: &SearchResult) -> FormattedResult;
+    
+    /// フォーマット済み結果を文字列に変換（色付き）
+    fn to_colored_string(&self, formatted: &FormattedResult) -> String;
+}
+
 /// 検索結果の表示フォーマッター
 pub struct DisplayFormatter {
     /// 現在のターミナル幅
@@ -9,15 +18,28 @@ pub struct DisplayFormatter {
     enable_colors: bool,
     /// プロジェクトルート（相対パス計算用）
     project_root: std::path::PathBuf,
+    /// 長いテキストを折りたたむか（CLI用はfalse）
+    enable_truncation: bool,
 }
 
 impl DisplayFormatter {
-    /// 新しいフォーマッターを作成
+    /// 新しいフォーマッターを作成（TUI用、折りたたみ有効）
     pub fn new(project_root: std::path::PathBuf) -> Self {
         Self {
             terminal_width: Self::detect_terminal_width(),
             enable_colors: Self::detect_color_support(),
             project_root,
+            enable_truncation: true,
+        }
+    }
+
+    /// CLI用フォーマッターを作成（折りたたみ無効）
+    pub fn new_for_cli(project_root: std::path::PathBuf) -> Self {
+        Self {
+            terminal_width: Self::detect_terminal_width(),
+            enable_colors: Self::detect_color_support(),
+            project_root,
+            enable_truncation: false,
         }
     }
 
@@ -50,9 +72,14 @@ impl DisplayFormatter {
         let relative_path = self.get_relative_path(&result.file_path);
         let location = format!("{}:{}:{}", relative_path, result.line, result.column);
         
-        // ターミナル幅に基づいてプレビューを調整
-        let available_width = self.terminal_width.saturating_sub(location.len() + 4); // マージン考慮
-        let preview = self.create_context_preview(line_content, match_start, match_end, available_width);
+        // CLI用は折りたたみなし、TUI用は幅制限
+        let preview = if self.enable_truncation {
+            let available_width = self.terminal_width.saturating_sub(location.len() + 4); // マージン考慮
+            self.create_context_preview(line_content, match_start, match_end, available_width)
+        } else {
+            // CLI用: 全行を表示、タブ文字のみ正規化
+            line_content.replace('\t', "    ").trim().to_string()
+        };
         
         FormattedResult {
             left_part: location,
@@ -118,8 +145,12 @@ impl DisplayFormatter {
             .to_string_lossy()
             .to_string();
 
-        // パスが長い場合は省略
-        self.truncate_path(&relative_path)
+        // CLI用は省略なし、TUI用は省略
+        if self.enable_truncation {
+            self.truncate_path(&relative_path)
+        } else {
+            relative_path
+        }
     }
 
     /// パスを省略（先頭と末尾を残す）
@@ -171,7 +202,11 @@ impl DisplayFormatter {
         
         // マッチ部分が表示幅より長い場合
         if match_length >= max_width {
-            return format!("{}...", &line_content[match_start..match_start + max_width - 3]);
+            let safe_truncated = line_content.chars()
+                .skip(match_start)
+                .take(max_width - 3)
+                .collect::<String>();
+            return format!("{}...", safe_truncated);
         }
 
         // 前後のコンテキストを計算
@@ -194,8 +229,12 @@ impl DisplayFormatter {
             preview.push_str("...");
         }
         
-        // 実際のコンテンツ
-        preview.push_str(&line_content[preview_start..preview_end]);
+        // 実際のコンテンツ（UTF-8安全に取得）
+        let safe_content = line_content.chars()
+            .skip(preview_start)
+            .take(preview_end - preview_start)
+            .collect::<String>();
+        preview.push_str(&safe_content);
         
         // 終了部分が省略されている場合
         if preview_end < line_content.len() {
@@ -256,6 +295,162 @@ impl DisplayFormatter {
     }
 }
 
+/// CLI専用フォーマッター（折りたたみなし）
+pub struct CliFormatter {
+    project_root: std::path::PathBuf,
+    enable_colors: bool,
+}
+
+impl CliFormatter {
+    pub fn new(project_root: std::path::PathBuf) -> Self {
+        Self {
+            project_root,
+            enable_colors: detect_color_support(),
+        }
+    }
+    
+    fn get_relative_path(&self, absolute_path: &Path) -> String {
+        absolute_path
+            .strip_prefix(&self.project_root)
+            .unwrap_or(absolute_path)
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
+impl ResultFormatter for CliFormatter {
+    fn format_result(&self, result: &SearchResult) -> FormattedResult {
+        match &result.display_info {
+            DisplayInfo::Content { line_content, match_start: _, match_end: _ } => {
+                let relative_path = self.get_relative_path(&result.file_path);
+                let location = format!("{}:{}:{}", relative_path, result.line, result.column);
+                let content = line_content.replace('\t', "    ").trim().to_string();
+                
+                FormattedResult {
+                    left_part: location,
+                    right_part: content,
+                    color_info: ColorInfo {
+                        path_color: Color::Blue,
+                        location_color: Color::Gray,
+                        content_color: Color::White,
+                        highlight_color: Color::Yellow,
+                    },
+                }
+            }
+            DisplayInfo::Symbol { name, symbol_type } => {
+                let relative_path = self.get_relative_path(&result.file_path);
+                let location = format!("{}:{}", relative_path, result.line);
+                let symbol_display = format!("{} {}", symbol_type.icon(), name);
+                
+                FormattedResult {
+                    left_part: symbol_display,
+                    right_part: location,
+                    color_info: ColorInfo {
+                        path_color: Color::Blue,
+                        location_color: Color::Gray,
+                        content_color: Color::Green,
+                        highlight_color: Color::Yellow,
+                    },
+                }
+            }
+            DisplayInfo::File { file_name } => {
+                let relative_path = self.get_relative_path(&result.file_path);
+                let parent_dir = Path::new(&relative_path)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "./".to_string());
+
+                FormattedResult {
+                    left_part: format!("📄 {}", file_name),
+                    right_part: parent_dir,
+                    color_info: ColorInfo {
+                        path_color: Color::Blue,
+                        location_color: Color::Gray,
+                        content_color: Color::Cyan,
+                        highlight_color: Color::Yellow,
+                    },
+                }
+            }
+            DisplayInfo::Regex { line_content, matched_text: _, match_start: _, match_end: _ } => {
+                let relative_path = self.get_relative_path(&result.file_path);
+                let location = format!("{}:{}:{}", relative_path, result.line, result.column);
+                let content = line_content.replace('\t', "    ").trim().to_string();
+                
+                FormattedResult {
+                    left_part: location,
+                    right_part: content,
+                    color_info: ColorInfo {
+                        path_color: Color::Blue,
+                        location_color: Color::Gray,
+                        content_color: Color::White,
+                        highlight_color: Color::Yellow,
+                    },
+                }
+            }
+        }
+    }
+
+    fn to_colored_string(&self, formatted: &FormattedResult) -> String {
+        if !self.enable_colors {
+            return format!("{:<50} {}", formatted.left_part, formatted.right_part);
+        }
+
+        // ANSI カラーコードを適用
+        format!(
+            "{}{:<50}{} {}{}{}",
+            color_to_ansi(&formatted.color_info.content_color),
+            formatted.left_part,
+            color_to_ansi(&Color::Reset),
+            color_to_ansi(&formatted.color_info.path_color),
+            formatted.right_part,
+            color_to_ansi(&Color::Reset),
+        )
+    }
+}
+
+/// TUI専用フォーマッター（折りたたみあり）
+pub struct TuiFormatter {
+    formatter: DisplayFormatter,
+}
+
+impl TuiFormatter {
+    pub fn new(project_root: std::path::PathBuf) -> Self {
+        Self {
+            formatter: DisplayFormatter::new(project_root),
+        }
+    }
+}
+
+impl ResultFormatter for TuiFormatter {
+    fn format_result(&self, result: &SearchResult) -> FormattedResult {
+        self.formatter.format_result(result)
+    }
+
+    fn to_colored_string(&self, formatted: &FormattedResult) -> String {
+        self.formatter.to_colored_string(formatted)
+    }
+}
+
+/// カラーサポート検出
+fn detect_color_support() -> bool {
+    std::env::var("NO_COLOR").is_err() && 
+    std::env::var("TERM").is_ok_and(|term| term != "dumb")
+}
+
+/// Color enum を ANSI エスケープシーケンスに変換
+fn color_to_ansi(color: &Color) -> &'static str {
+    match color {
+        Color::Reset => "\x1b[0m",
+        Color::Gray => "\x1b[90m",
+        Color::Blue => "\x1b[34m",
+        Color::Green => "\x1b[32m",
+        Color::Yellow => "\x1b[33m",
+        Color::Red => "\x1b[31m",
+        Color::Cyan => "\x1b[36m",
+        Color::White => "\x1b[37m",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +462,7 @@ mod tests {
             terminal_width: 100,
             enable_colors: false,
             project_root: PathBuf::from("/test/project"),
+            enable_truncation: true,
         }
     }
 
