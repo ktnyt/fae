@@ -72,6 +72,7 @@ impl ExternalSearchBackend for RipgrepBackend {
             .args([
                 "--vimgrep",           // file:line:column:content 形式
                 "-i",                  // 大文字小文字を無視
+                "-F",                  // リテラル検索（正規表現として解釈しない）
                 "--type-not", "binary", // バイナリファイルを除外
                 "--max-filesize", "1M", // 1MB以上のファイルを除外
                 query,
@@ -89,6 +90,35 @@ impl ExternalSearchBackend for RipgrepBackend {
             
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!("ripgrep failed: {}", stderr));
+        }
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        self.parse_rg_output(&stdout, project_root)
+    }
+    
+    fn search_regex(&self, project_root: &Path, pattern: &str) -> Result<Vec<SearchResult>> {
+        let output = Command::new("rg")
+            .args([
+                "--vimgrep",           // file:line:column:content 形式
+                "--regex",             // 正規表現モードを明示的に有効化
+                "-i",                  // 大文字小文字を無視
+                "--type-not", "binary", // バイナリファイルを除外
+                "--max-filesize", "1M", // 1MB以上のファイルを除外
+                pattern,
+            ])
+            .current_dir(project_root)
+            .output()
+            .with_context(|| format!("Failed to execute ripgrep regex search for pattern: {}", pattern))?;
+        
+        if !output.status.success() {
+            // rgは結果が見つからない場合にexit code 1を返すので、
+            // それは正常な動作として扱う
+            if output.status.code() == Some(1) {
+                return Ok(Vec::new());
+            }
+            
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("ripgrep regex search failed: {}", stderr));
         }
         
         let stdout = String::from_utf8_lossy(&output.stdout);

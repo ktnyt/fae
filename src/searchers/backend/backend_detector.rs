@@ -76,6 +76,34 @@ impl BackendDetector {
         Err(anyhow::anyhow!("No search backends available"))
     }
     
+    /// 最適なバックエンドで正規表現検索を実行
+    pub fn search_regex(&self, project_root: &Path, pattern: &str) -> Result<Vec<SearchResult>> {
+        // 優先度の高いバックエンドから順に試行
+        for backend in &self.available_backends {
+            match backend.search_regex(project_root, pattern) {
+                Ok(results) => {
+                    debug!("Used backend: {} for regex search (found {} results)", backend.name(), results.len());
+                    // 各バックエンドの自然な順序を保持
+                    return Ok(results);
+                }
+                Err(err) => {
+                    warn!("{} backend regex search failed: {}", backend.name(), err);
+                    continue;
+                }
+            }
+        }
+        
+        // 全ての外部バックエンドが失敗した場合はフォールバック
+        if let Some(fallback) = &self.fallback_searcher {
+            debug!("Used backend: fallback (built-in) for regex search");
+            // フォールバックでは通常のコンテンツ検索を使用（将来的にregex crateを統合予定）
+            return fallback.search(pattern, 1000); // デフォルト制限
+        }
+        
+        // フォールバックも利用できない場合
+        Err(anyhow::anyhow!("No search backends available for regex"))
+    }
+    
     /// 利用可能なバックエンドの一覧を取得
     pub fn available_backends(&self) -> Vec<&str> {
         let mut backends: Vec<&str> = self.available_backends

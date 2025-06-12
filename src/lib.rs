@@ -59,7 +59,7 @@ pub use cli::{SearchRunner, SearchStrategy, SearchResultStream};
 pub use display::{DisplayFormatter, CliFormatter, TuiFormatter, ResultFormatter};
 pub use index_manager::{IndexManager, FileInfo};
 pub use search_coordinator::{SearchCoordinator, IndexProgress, IndexResult, SymbolSearchStream};
-pub use searchers::{ContentSearcher, ContentSearchStream};
+pub use searchers::{ContentSearcher, ContentSearchStream, RegexSearcher, RegexSearchStream};
 pub use symbol_index::{SymbolIndex, MetadataStorage, SymbolMetadata, SearchHit};
 
 // Tree-sitter integration (to be implemented)

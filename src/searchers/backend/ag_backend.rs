@@ -71,6 +71,7 @@ impl ExternalSearchBackend for AgBackend {
         let output = Command::new("ag")
             .args([
                 "--vimgrep",           // file:line:column:content 形式
+                "--literal",           // リテラル検索（正規表現として解釈しない）
                 "-i",                  // 大文字小文字を無視
                 query,
             ])
@@ -87,6 +88,33 @@ impl ExternalSearchBackend for AgBackend {
             
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!("ag failed: {}", stderr));
+        }
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        self.parse_ag_output(&stdout, project_root)
+    }
+    
+    fn search_regex(&self, project_root: &Path, pattern: &str) -> Result<Vec<SearchResult>> {
+        let output = Command::new("ag")
+            .args([
+                "--vimgrep",           // file:line:column:content 形式
+                "--ignore-case",       // 大文字小文字を無視
+                "--skip-vcs-ignores",  // VCSの無視ファイルを読む
+                pattern,
+            ])
+            .current_dir(project_root)
+            .output()
+            .with_context(|| format!("Failed to execute ag regex search for pattern: {}", pattern))?;
+        
+        if !output.status.success() {
+            // agは結果が見つからない場合にexit code 1を返すので、
+            // それは正常な動作として扱う
+            if output.status.code() == Some(1) {
+                return Ok(Vec::new());
+            }
+            
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("ag regex search failed: {}", stderr));
         }
         
         let stdout = String::from_utf8_lossy(&output.stdout);
