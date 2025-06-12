@@ -9,6 +9,13 @@ target/
 # Claude
 .claude
 
+# Index and cache
+.fae/
+
 # Backup directories
-sfs_backup_*
-.fae
+sfs_backup_*/
+*_backup_*/
+
+# Old configuration
+project-memory.json
+mise.toml
