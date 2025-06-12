@@ -2,11 +2,12 @@ use fae::cli;
 use std::process;
 use log::error;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // ログ初期化（環境変数 RUST_LOG で制御）
     env_logger::init();
     
-    if let Err(err) = cli::run_cli() {
+    if let Err(err) = cli::run_cli().await {
         error!("CLI execution failed: {}", err);
         
         // エラーチェーンをログに記録

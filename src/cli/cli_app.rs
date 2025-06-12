@@ -1,6 +1,6 @@
 use super::{SearchRunner, ContentStrategy, SymbolStrategy, FileStrategy, RegexStrategy};
 use anyhow::{Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::Parser;
 use std::path::PathBuf;
 use std::env;
 use log::debug;
@@ -31,6 +31,10 @@ pub struct Cli {
     /// Show available search backends information
     #[arg(long)]
     pub backends: bool,
+    
+    /// Start interactive TUI mode
+    #[arg(long)]
+    pub tui: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,7 +60,7 @@ fn detect_mode(query: &str) -> (SearchMode, String) {
 }
 
 /// CLI実行エントリーポイント
-pub fn run_cli() -> Result<()> {
+pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     
     // プロジェクトディレクトリの決定
@@ -75,11 +79,14 @@ pub fn run_cli() -> Result<()> {
         return run_index_build(&project_root);
     }
     
-    // クエリがない場合はヘルプを表示
+    // TUIモードの確認
+    if cli.tui {
+        return run_tui_mode(&project_root).await;
+    }
+    
+    // クエリがない場合はTUIモードを起動
     let Some(raw_query) = &cli.query else {
-        let mut cmd = Cli::command();
-        cmd.print_help()?;
-        return Ok(());
+        return run_tui_mode(&project_root).await;
     };
     
     // クエリからモードを検出
@@ -171,6 +178,22 @@ fn run_index_build(project_root: &PathBuf) -> Result<()> {
     println!("Use 'fae \"#<query>\"' to search symbols.");
     
     Ok(())
+}
+
+/// TUIモードを実行
+async fn run_tui_mode(project_root: &PathBuf) -> Result<()> {
+    use crate::tui::{TuiEngine};
+    use crate::cli::SearchRunner;
+    
+    println!("Starting TUI mode...");
+    
+    // SearchRunnerを作成
+    let search_runner = SearchRunner::new(project_root.clone(), false);
+    
+    // TuiEngineを作成・実行
+    let mut tui_engine = TuiEngine::new(project_root.clone(), search_runner)?;
+    
+    tui_engine.run().await
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use ignore::{WalkBuilder, DirEntry};
 #[derive(Clone)]
 pub struct FileSearcher {
     /// ファイル発見エンジン
-    index_manager: IndexManager,
+    _index_manager: IndexManager,
     /// プロジェクトルート
     project_root: PathBuf,
 }
@@ -44,7 +44,7 @@ impl FileSearcher {
         let index_manager = IndexManager::new(project_root.clone());
         
         Ok(Self {
-            index_manager,
+            _index_manager: index_manager,
             project_root,
         })
     }

@@ -5,23 +5,23 @@ use std::path::PathBuf;
 
 /// ファイル検索用ヘッダー形式フォーマッター（TTY用）
 pub struct FileHeadingFormatter {
-    project_root: PathBuf,
+    _project_root: PathBuf,
 }
 
 /// ファイル検索用インライン形式フォーマッター（Pipe用）
 pub struct FileInlineFormatter {
-    project_root: PathBuf,
+    _project_root: PathBuf,
 }
 
 impl FileHeadingFormatter {
     pub fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self { _project_root: project_root }
     }
 }
 
 impl FileInlineFormatter {
     pub fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self { _project_root: project_root }
     }
 }
 

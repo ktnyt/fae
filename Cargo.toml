@@ -32,6 +32,8 @@ clap = { version = "4.4", features = ["derive"] }
 
 # 非同期・並列処理
 tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
 rayon = "1.8"
 
 # ファイル監視
@@ -45,3 +47,4 @@ env_logger = "0.10"
 
 [dev-dependencies]
 tempfile = "3.8"      # テスト用
+tokio-test = "0.4"    # 非同期テスト用

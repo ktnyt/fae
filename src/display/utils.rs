@@ -157,6 +157,7 @@ pub fn apply_color(text: &str, color: &Color, is_tty: bool) -> String {
 }
 
 /// UTF-8安全な文字列切り詰め
+#[allow(dead_code)]
 pub fn truncate_utf8_safe(text: &str, max_len: usize) -> String {
     if max_len < 3 {
         return "...".to_string();

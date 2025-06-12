@@ -8,6 +8,7 @@ use log::{debug, info};
 /// 
 /// 各種検索戦略を統一的に実行する責任を持つ。
 /// CLI/TUI両方で使用可能な汎用実行エンジン。
+#[derive(Debug, Clone)]
 pub struct SearchRunner {
     project_root: PathBuf,
     heading: bool,
@@ -130,6 +131,51 @@ impl SearchRunner {
             info!("Found {} {} matches in {:.2}ms", 
                  count, search_type, elapsed.as_secs_f64() * 1000.0);
         }
+    }
+    
+    /// TUI用: 検索結果をVecとして収集
+    /// 
+    /// CLI版と異なり、結果を出力せずにVecとして返す。
+    /// TUIが結果をメモリに保持して表示・ナビゲーションする用途。
+    /// 
+    /// # Arguments
+    /// * `strategy` - 使用する検索戦略
+    /// * `query` - 検索クエリ（プレフィックス除去済み）
+    pub fn collect_results_with_strategy<S: SearchStrategy>(
+        &self,
+        strategy: &S,
+        query: &str,
+    ) -> Result<Vec<crate::types::SearchResult>> {
+        use crate::types::SearchResult;
+        
+        info!("Collecting {} search results for: '{}'", strategy.name(), query);
+        
+        // 検索前の準備処理
+        strategy.prepare(&self.project_root)?;
+        
+        // メタ情報をログに記録
+        if let Some(meta) = strategy.meta_info(&self.project_root)? {
+            debug!("{}", meta);
+        }
+        
+        let start_time = std::time::Instant::now();
+        
+        // 検索ストリームの作成と結果収集
+        let stream = strategy.create_stream(&self.project_root, query)?;
+        let results: Vec<SearchResult> = stream.collect();
+        
+        let elapsed = start_time.elapsed();
+        let count = results.len();
+        
+        // ログレベルでサマリー記録
+        if count == 0 {
+            debug!("No {} matches found for '{}'", strategy.name(), query);
+        } else {
+            info!("Collected {} {} matches in {:.2}ms", 
+                 count, strategy.name(), elapsed.as_secs_f64() * 1000.0);
+        }
+        
+        Ok(results)
     }
 }
 

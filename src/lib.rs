@@ -44,6 +44,7 @@ pub mod search_coordinator;
 pub mod searchers;
 pub mod symbol_index;
 pub mod tree_sitter;
+pub mod tui;
 
 // Re-export commonly used types
 pub use types::{
