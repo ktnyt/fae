@@ -299,6 +299,7 @@ impl DisplayFormatter {
 pub struct CliFormatter {
     project_root: std::path::PathBuf,
     enable_colors: bool,
+    is_tty: bool,
 }
 
 impl CliFormatter {
@@ -306,6 +307,7 @@ impl CliFormatter {
         Self {
             project_root,
             enable_colors: detect_color_support(),
+            is_tty: is_stdout_tty(),
         }
     }
     
@@ -323,34 +325,62 @@ impl ResultFormatter for CliFormatter {
         match &result.display_info {
             DisplayInfo::Content { line_content, match_start: _, match_end: _ } => {
                 let relative_path = self.get_relative_path(&result.file_path);
-                let location = format!("{}:{}:{}", relative_path, result.line, result.column);
                 let content = line_content.replace('\t', "    ").trim().to_string();
                 
-                FormattedResult {
-                    left_part: location,
-                    right_part: content,
-                    color_info: ColorInfo {
-                        path_color: Color::Blue,
-                        location_color: Color::Gray,
-                        content_color: Color::White,
-                        highlight_color: Color::Yellow,
-                    },
+                if self.is_tty {
+                    // TTY形式: --group/--heading style (ファイル名は別途処理)
+                    FormattedResult {
+                        left_part: format!("{}:{}", result.line, content),
+                        right_part: relative_path, // ファイル名は右側に保存
+                        color_info: ColorInfo {
+                            path_color: Color::Blue,
+                            location_color: Color::Gray,
+                            content_color: Color::White,
+                            highlight_color: Color::Yellow,
+                        },
+                    }
+                } else {
+                    // Pipe形式: ファイル名:行番号:内容
+                    FormattedResult {
+                        left_part: format!("{}:{}:{}", relative_path, result.line, content),
+                        right_part: String::new(),
+                        color_info: ColorInfo {
+                            path_color: Color::Blue,
+                            location_color: Color::Gray,
+                            content_color: Color::White,
+                            highlight_color: Color::Yellow,
+                        },
+                    }
                 }
             }
             DisplayInfo::Symbol { name, symbol_type } => {
                 let relative_path = self.get_relative_path(&result.file_path);
-                let location = format!("{}:{}", relative_path, result.line);
-                let symbol_display = format!("{} {}", symbol_type.icon(), name);
+                let symbol_display = format!("{}{}", symbol_type.icon(), name);
                 
-                FormattedResult {
-                    left_part: symbol_display,
-                    right_part: location,
-                    color_info: ColorInfo {
-                        path_color: Color::Blue,
-                        location_color: Color::Gray,
-                        content_color: Color::Green,
-                        highlight_color: Color::Yellow,
-                    },
+                if self.is_tty {
+                    // TTY形式: シンボル名のみ（ファイル名は別途処理）
+                    FormattedResult {
+                        left_part: symbol_display,
+                        right_part: relative_path, // ファイル名は右側に保存
+                        color_info: ColorInfo {
+                            path_color: Color::Blue,
+                            location_color: Color::Gray,
+                            content_color: Color::Green,
+                            highlight_color: Color::Yellow,
+                        },
+                    }
+                } else {
+                    // Pipe形式: シンボル名:ファイル名:行番号
+                    FormattedResult {
+                        left_part: format!("{}:{}:{}", symbol_display, relative_path, result.line),
+                        right_part: String::new(),
+                        color_info: ColorInfo {
+                            path_color: Color::Blue,
+                            location_color: Color::Gray,
+                            content_color: Color::Green,
+                            highlight_color: Color::Yellow,
+                        },
+                    }
                 }
             }
             DisplayInfo::File { file_name } => {
@@ -392,17 +422,14 @@ impl ResultFormatter for CliFormatter {
 
     fn to_colored_string(&self, formatted: &FormattedResult) -> String {
         if !self.enable_colors {
-            return format!("{:<50} {}", formatted.left_part, formatted.right_part);
+            return formatted.left_part.clone();
         }
 
-        // ANSI カラーコードを適用
+        // ag形式に合わせたカラー出力: ファイル名:行番号:内容
         format!(
-            "{}{:<50}{} {}{}{}",
-            color_to_ansi(&formatted.color_info.content_color),
-            formatted.left_part,
-            color_to_ansi(&Color::Reset),
+            "{}{}{}",
             color_to_ansi(&formatted.color_info.path_color),
-            formatted.right_part,
+            formatted.left_part,
             color_to_ansi(&Color::Reset),
         )
     }
@@ -433,8 +460,24 @@ impl ResultFormatter for TuiFormatter {
 
 /// カラーサポート検出
 fn detect_color_support() -> bool {
-    std::env::var("NO_COLOR").is_err() && 
-    std::env::var("TERM").is_ok_and(|term| term != "dumb")
+    // NO_COLOR環境変数でカラー無効化
+    if std::env::var("NO_COLOR").is_ok() {
+        return false;
+    }
+    
+    // FORCE_COLOR環境変数でカラー強制有効化（テスト用）
+    if std::env::var("FORCE_COLOR").is_ok() {
+        return true;
+    }
+    
+    // 標準出力がTTYかつTERMが適切に設定されている場合のみカラー有効
+    is_stdout_tty() && std::env::var("TERM").is_ok_and(|term| term != "dumb")
+}
+
+/// 標準出力がTTYかどうか判定
+fn is_stdout_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
 }
 
 /// Color enum を ANSI エスケープシーケンスに変換

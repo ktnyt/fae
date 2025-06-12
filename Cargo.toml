@@ -22,6 +22,7 @@ tree-sitter-rust = "0.20"
 # 検索・ファイル操作
 fuzzy-matcher = "0.3"
 ignore = "0.4"        # .gitignore対応
+lru = "0.12"          # キャッシュ
 
 # クリップボード
 arboard = "3.2"

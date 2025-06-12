@@ -1,10 +1,12 @@
 use crate::searchers::ContentSearcher;
 use crate::search_coordinator::SearchCoordinator;
 use crate::display::{CliFormatter, ResultFormatter};
+use crate::types::SearchResult;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use std::path::PathBuf;
 use std::env;
+use std::collections::HashMap;
 
 /// fae - Fast And Elegant code search
 #[derive(Parser)]
@@ -134,21 +136,11 @@ fn run_content_search(project_root: &PathBuf, query: &str, limit: usize, verbose
     
     let formatter = CliFormatter::new(project_root.clone());
     
-    for result in results.iter() {
-        let formatted = formatter.format_result(&result);
-        
-        if verbose {
-            // スコア付きで表示
-            println!("{:<50} {} (score: {:.2})", 
-                     formatted.left_part, 
-                     formatted.right_part, 
-                     result.score);
-        } else {
-            // 標準表示
-            println!("{:<50} {}", 
-                     formatted.left_part, 
-                     formatted.right_part);
-        }
+    // TTY形式の場合はファイル名でグループ化
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        print_tty_format(&formatter, &results, verbose)?;
+    } else {
+        print_pipe_format(&formatter, &results, verbose)?;
     }
     
     if verbose {
@@ -199,8 +191,8 @@ fn run_symbol_search(project_root: &PathBuf, query: &str, limit: usize, verbose:
         return Ok(());
     }
     
-    // 各シンボルヒットをSearchResultに変換してDisplayFormatterを使用
-    let formatter = CliFormatter::new(project_root.clone());
+    // 各シンボルヒットをSearchResultに変換
+    let mut results: Vec<crate::types::SearchResult> = Vec::new();
     
     for hit in hits.iter() {
         // シンボル詳細を取得
@@ -218,27 +210,22 @@ fn run_symbol_search(project_root: &PathBuf, query: &str, limit: usize, verbose:
                 },
                 score: hit.score as f64,
             };
-            
-            let formatted = formatter.format_result(&search_result);
-            
-            if verbose {
-                // スコア付きで表示
-                println!("{:<50} {} (score: {:.2})", 
-                         formatted.left_part, 
-                         formatted.right_part, 
-                         hit.score);
-            } else {
-                // 標準表示
-                println!("{:<50} {}", 
-                         formatted.left_part, 
-                         formatted.right_part);
-            }
+            results.push(search_result);
         }
+    }
+    
+    let formatter = CliFormatter::new(project_root.clone());
+    
+    // TTY形式の場合はファイル名でグループ化
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        print_symbol_tty_format(&formatter, &results, verbose)?;
+    } else {
+        print_symbol_pipe_format(&formatter, &results, verbose)?;
     }
     
     if verbose {
         println!();
-        println!("Total: {} symbol matches", hits.len());
+        println!("Total: {} symbol matches", results.len());
     }
     
     Ok(())
@@ -294,6 +281,114 @@ fn run_regex_search(_project_root: &PathBuf, query: &str, _limit: usize, verbose
     
     // TODO: 正規表現検索の実装
     println!("Regex search not yet implemented. Query: '{}'", query);
+    
+    Ok(())
+}
+
+/// TTY形式でContent Search結果を表示（--group style）
+fn print_tty_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
+    // ファイル名でグループ化
+    let mut groups: HashMap<String, Vec<&SearchResult>> = HashMap::new();
+    
+    for result in results {
+        let formatted = formatter.format_result(result);
+        let file_name = &formatted.right_part; // TTY形式ではファイル名がright_partに格納
+        groups.entry(file_name.clone()).or_insert_with(Vec::new).push(result);
+    }
+    
+    // ファイル名でソートして表示
+    let mut sorted_files: Vec<_> = groups.keys().collect();
+    sorted_files.sort();
+    
+    for (i, file_name) in sorted_files.iter().enumerate() {
+        if i > 0 {
+            println!(); // ファイル間に空行
+        }
+        
+        // ファイル名ヘッダー
+        println!("{}", file_name);
+        
+        // そのファイルの検索結果
+        let file_results = &groups[*file_name];
+        for result in file_results {
+            let formatted = formatter.format_result(result);
+            
+            if verbose {
+                println!("{} (score: {:.2})", formatted.left_part, result.score);
+            } else {
+                println!("{}", formatted.left_part);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Pipe形式でContent Search結果を表示（--no-group style）
+fn print_pipe_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
+    for result in results {
+        let formatted = formatter.format_result(result);
+        
+        if verbose {
+            println!("{} (score: {:.2})", formatted.left_part, result.score);
+        } else {
+            println!("{}", formatted.left_part);
+        }
+    }
+    
+    Ok(())
+}
+
+/// TTY形式でSymbol Search結果を表示（--group style）
+fn print_symbol_tty_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
+    // ファイル名でグループ化
+    let mut groups: HashMap<String, Vec<&SearchResult>> = HashMap::new();
+    
+    for result in results {
+        let formatted = formatter.format_result(result);
+        let file_name = &formatted.right_part; // TTY形式ではファイル名がright_partに格納
+        groups.entry(file_name.clone()).or_insert_with(Vec::new).push(result);
+    }
+    
+    // ファイル名でソートして表示
+    let mut sorted_files: Vec<_> = groups.keys().collect();
+    sorted_files.sort();
+    
+    for (i, file_name) in sorted_files.iter().enumerate() {
+        if i > 0 {
+            println!(); // ファイル間に空行
+        }
+        
+        // ファイル名ヘッダー
+        println!("{}", file_name);
+        
+        // そのファイルのシンボル検索結果
+        let file_results = &groups[*file_name];
+        for result in file_results {
+            let formatted = formatter.format_result(result);
+            
+            if verbose {
+                println!("{} (score: {:.2})", formatted.left_part, result.score);
+            } else {
+                println!("{}", formatted.left_part);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Pipe形式でSymbol Search結果を表示（--no-group style）
+fn print_symbol_pipe_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
+    for result in results {
+        let formatted = formatter.format_result(result);
+        
+        if verbose {
+            println!("{} (score: {:.2})", formatted.left_part, result.score);
+        } else {
+            println!("{}", formatted.left_part);
+        }
+    }
     
     Ok(())
 }
