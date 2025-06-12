@@ -46,8 +46,10 @@ pub enum DisplayInfo {
     },
     /// ファイル検索の結果
     File {
-        /// ファイル名のみ
-        file_name: String,
+        /// 相対パス
+        path: PathBuf,
+        /// ディレクトリかどうか
+        is_directory: bool,
     },
     /// 正規表現検索の結果
     Regex {

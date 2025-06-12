@@ -50,11 +50,12 @@ impl ResultFormatter for CliFormatter {
                     },
                 }
             }
-            DisplayInfo::File { file_name: _ } => {
+            DisplayInfo::File { path: _, is_directory } => {
                 let relative_path = get_relative_path(&result.file_path, &self.project_root);
+                let icon = if *is_directory { "📁" } else { "📄" };
                 
                 FormattedResult {
-                    left_part: format!("📄 {}", relative_path),
+                    left_part: format!("{} {}", icon, relative_path),
                     right_part: String::new(),
                     color_info: ColorInfo {
                         path_color: Color::Blue,

@@ -1,5 +1,5 @@
 use crate::types::{SearchResult, DisplayInfo, FormattedResult, ColorInfo, Color};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use super::utils::{detect_color_support, detect_terminal_width, create_context_preview, truncate_path, color_to_ansi};
 
 /// 検索結果の表示フォーマッター
@@ -44,8 +44,8 @@ impl DisplayFormatter {
             DisplayInfo::Symbol { name, symbol_type } => {
                 self.format_symbol_result(result, name, symbol_type)
             }
-            DisplayInfo::File { file_name } => {
-                self.format_file_result(result, file_name)
+            DisplayInfo::File { path, is_directory } => {
+                self.format_file_result(result, path, *is_directory)
             }
             DisplayInfo::Regex { line_content, matched_text: _, match_start, match_end } => {
                 self.format_content_result(result, line_content, *match_start, *match_end)
@@ -109,18 +109,23 @@ impl DisplayFormatter {
     }
 
     /// ファイル検索結果をフォーマット
-    fn format_file_result(&self, result: &SearchResult, file_name: &str) -> FormattedResult {
+    fn format_file_result(&self, result: &SearchResult, path: &PathBuf, is_directory: bool) -> FormattedResult {
         let relative_path = self.get_relative_path(&result.file_path);
         let parent_dir = Path::new(&relative_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "./".to_string());
 
+        let icon = if is_directory { "📁" } else { "📄" };
+        let file_name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+
         FormattedResult {
-            left_part: format!("📄 {}", file_name),
+            left_part: format!("{} {}", icon, file_name),
             right_part: parent_dir,
             color_info: ColorInfo {
-                path_color: Color::Blue,
+                path_color: if is_directory { Color::Blue } else { Color::White },
                 location_color: Color::Gray,
                 content_color: Color::Cyan,
                 highlight_color: Color::Yellow,

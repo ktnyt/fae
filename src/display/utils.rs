@@ -146,3 +146,26 @@ pub fn create_context_preview(
     // 空白文字を正規化
     preview.replace('\t', "    ").trim().to_string()
 }
+
+/// 色を適用（TTY判定付き）
+pub fn apply_color(text: &str, color: &Color, is_tty: bool) -> String {
+    if is_tty {
+        format!("{}{}{}", color_to_ansi(color), text, color_to_ansi(&Color::Reset))
+    } else {
+        text.to_string()
+    }
+}
+
+/// UTF-8安全な文字列切り詰め
+pub fn truncate_utf8_safe(text: &str, max_len: usize) -> String {
+    if max_len < 3 {
+        return "...".to_string();
+    }
+    
+    if text.chars().count() <= max_len {
+        text.to_string()
+    } else {
+        let truncated: String = text.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
+    }
+}

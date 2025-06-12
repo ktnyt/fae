@@ -1,8 +1,9 @@
-use crate::searchers::EnhancedContentSearcher;
+use crate::searchers::{EnhancedContentSearcher, FileSearcher};
 use crate::search_coordinator::SearchCoordinator;
 use crate::display::{
     ContentHeadingFormatter, ContentInlineFormatter,
     SymbolHeadingFormatter, SymbolInlineFormatter,
+    FileHeadingFormatter, FileInlineFormatter,
     ResultFormatter
 };
 use anyhow::{Context, Result};
@@ -104,7 +105,7 @@ pub fn run_cli() -> Result<()> {
             run_symbol_search(&project_root, &clean_query, cli.heading)
         }
         SearchMode::File => {
-            run_file_search(&project_root, &clean_query)
+            run_file_search(&project_root, &clean_query, cli.heading)
         }
         SearchMode::Regex => {
             run_regex_search(&project_root, &clean_query)
@@ -283,11 +284,47 @@ fn run_index_build(project_root: &PathBuf) -> Result<()> {
 }
 
 /// ファイル検索の実行
-fn run_file_search(_project_root: &PathBuf, query: &str) -> Result<()> {
+fn run_file_search(project_root: &PathBuf, query: &str, heading: bool) -> Result<()> {
     info!("Running file search for: '{}'", query);
     
-    // TODO: ファイル名検索の実装
-    println!("File search not yet implemented. Query: '{}'", query);
+    let searcher = FileSearcher::new(project_root.clone())
+        .context("Failed to create file searcher")?;
+    
+    let start_time = std::time::Instant::now();
+    let stream = searcher.search_stream(query)
+        .context("File search failed")?;
+    
+    let mut results_count = 0;
+    
+    for result in stream {
+        let _relative_path = result.file_path.strip_prefix(project_root)
+            .unwrap_or(&result.file_path)
+            .to_path_buf();
+        
+        if heading {
+            // TTY形式の場合（実際はファイル検索ではファイルごとのグルーピングは意味がない）
+            let formatter = FileHeadingFormatter::new(project_root.clone());
+            let formatted = formatter.format_result(&result);
+            let output = formatter.to_colored_string(&formatted);
+            println!("{}", output);
+        } else {
+            // Pipe形式の場合
+            let formatter = FileInlineFormatter::new(project_root.clone());
+            let formatted = formatter.format_result(&result);
+            let output = formatter.to_colored_string(&formatted);
+            println!("{}", output);
+        }
+        
+        results_count += 1;
+    }
+    
+    let elapsed = start_time.elapsed();
+    
+    if results_count == 0 {
+        println!("No files found matching '{}'", query);
+    } else {
+        info!("Found {} files in {:.2}ms", results_count, elapsed.as_secs_f64() * 1000.0);
+    }
     
     Ok(())
 }

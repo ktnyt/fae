@@ -69,15 +69,20 @@ impl ResultFormatter for TuiFormatter {
                     },
                 }
             }
-            DisplayInfo::File { file_name } => {
+            DisplayInfo::File { path, is_directory } => {
                 let relative_path = self.get_relative_path(&result.file_path);
                 let parent_dir = Path::new(&relative_path)
                     .parent()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| "./".to_string());
 
+                let icon = if *is_directory { "📁" } else { "📄" };
+                let file_name = path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+
                 FormattedResult {
-                    left_part: format!("📄 {}", file_name),
+                    left_part: format!("{} {}", icon, file_name),
                     right_part: parent_dir,
                     color_info: ColorInfo {
                         path_color: Color::Blue,

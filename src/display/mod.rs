@@ -4,6 +4,7 @@ mod traits;
 mod display_formatter;
 mod content_formatters;
 mod symbol_formatters;
+mod file_formatters;
 mod cli_formatter;
 mod tui_formatter;
 mod utils;
@@ -13,6 +14,7 @@ pub use traits::ResultFormatter;
 pub use display_formatter::DisplayFormatter;
 pub use content_formatters::{ContentHeadingFormatter, ContentInlineFormatter};
 pub use symbol_formatters::{SymbolHeadingFormatter, SymbolInlineFormatter};
+pub use file_formatters::{FileHeadingFormatter, FileInlineFormatter};
 pub use cli_formatter::CliFormatter;
 pub use tui_formatter::TuiFormatter;
 
