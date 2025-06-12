@@ -5,14 +5,30 @@ use rayon::prelude::*;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
+use std::thread;
 
 /// コンテンツ検索エンジン（grep風）
+#[derive(Clone)]
 pub struct ContentSearcher {
     /// ファイル発見エンジン
     index_manager: IndexManager,
     /// プロジェクトルート
     project_root: PathBuf,
+}
+
+/// ストリーミング検索結果のイテレーター
+pub struct ContentSearchStream {
+    receiver: mpsc::Receiver<SearchResult>,
+    _handle: thread::JoinHandle<()>,
+}
+
+impl Iterator for ContentSearchStream {
+    type Item = SearchResult;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        self.receiver.recv().ok()
+    }
 }
 
 /// 大文字小文字を無視するための正規表現キャッシュ
@@ -27,6 +43,55 @@ impl ContentSearcher {
             index_manager,
             project_root,
         })
+    }
+
+    /// ストリーミングコンテンツ検索を実行
+    pub fn search_stream(&self, query: &str) -> Result<ContentSearchStream> {
+        // 空のクエリは空のストリームを返す
+        if query.trim().is_empty() {
+            let (sender, receiver) = mpsc::channel();
+            drop(sender); // すぐにチャンネルを閉じる
+            let handle = thread::spawn(|| {}); // 空のスレッド
+            return Ok(ContentSearchStream { receiver, _handle: handle });
+        }
+
+        let query = query.to_string();
+        let searcher = self.clone();
+        let (sender, receiver) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            // ファイル一覧を取得
+            let files = match searcher.index_manager.discover_files() {
+                Ok(files) => files,
+                Err(err) => {
+                    eprintln!("Warning: Failed to discover files: {}", err);
+                    return;
+                }
+            };
+
+            // ファイルごとに順次検索（行番号順で結果出力のため）
+            for file_info in files {
+                match searcher.search_in_file(&file_info, &query) {
+                    Ok(mut results) => {
+                        // ファイル内では行番号順にソート
+                        results.sort_by_key(|r| r.line);
+                        
+                        for result in results {
+                            if sender.send(result).is_err() {
+                                // receiverが閉じられた場合は終了
+                                return;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("Warning: Failed to search in file {}: {}", 
+                                  file_info.relative_path.display(), err);
+                    }
+                }
+            }
+        });
+
+        Ok(ContentSearchStream { receiver, _handle: handle })
     }
 
     /// コンテンツ検索を実行
@@ -229,6 +294,57 @@ mod tests {
         for i in 1..results.len() {
             assert!(results[i-1].score >= results[i].score);
         }
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_streaming_search() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        create_simple_test_file(&temp_dir, "test1.ts", "function hello() { console.log('world'); }")?;
+        create_simple_test_file(&temp_dir, "test2.rs", "fn hello() { println!('world'); }")?;
+        
+        let searcher = ContentSearcher::new(temp_dir.path().to_path_buf())?;
+        let stream = searcher.search_stream("hello")?;
+        
+        let results: Vec<_> = stream.collect();
+        assert_eq!(results.len(), 2);
+        
+        // ファイル名順で結果を確認
+        let mut file_names: Vec<_> = results.iter()
+            .map(|r| r.file_path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        file_names.sort();
+        
+        assert_eq!(file_names, vec!["test1.ts", "test2.rs"]);
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_streaming_search_empty_query() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let searcher = ContentSearcher::new(temp_dir.path().to_path_buf())?;
+        let stream = searcher.search_stream("")?;
+        
+        let results: Vec<_> = stream.collect();
+        assert_eq!(results.len(), 0);
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_streaming_search_limit() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        create_simple_test_file(&temp_dir, "test1.ts", "hello\nhello\nhello")?;
+        create_simple_test_file(&temp_dir, "test2.rs", "hello\nhello")?;
+        
+        let searcher = ContentSearcher::new(temp_dir.path().to_path_buf())?;
+        let stream = searcher.search_stream("hello")?;
+        
+        // 最初の3件だけ取得
+        let results: Vec<_> = stream.take(3).collect();
+        assert_eq!(results.len(), 3);
         
         Ok(())
     }

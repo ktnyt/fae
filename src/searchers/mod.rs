@@ -9,4 +9,4 @@
 pub mod content_search;
 
 // Re-export for easier access
-pub use content_search::ContentSearcher;
+pub use content_search::{ContentSearcher, ContentSearchStream};

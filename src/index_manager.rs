@@ -5,6 +5,7 @@ use std::fs;
 use std::collections::HashSet;
 
 /// ファイル発見・監視・Git統合を担当するマネージャー
+#[derive(Clone)]
 pub struct IndexManager {
     /// プロジェクトルートディレクトリ
     project_root: PathBuf,

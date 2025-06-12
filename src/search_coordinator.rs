@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 use std::time::Instant;
 
 /// インデックス構築とマルチモード検索を調整するコーディネーター
@@ -35,6 +36,20 @@ pub struct IndexProgress {
     pub elapsed_ms: u64,
     /// 現在処理中のファイル
     pub current_file: Option<PathBuf>,
+}
+
+/// シンボル検索ストリームのイテレーター
+pub struct SymbolSearchStream {
+    receiver: mpsc::Receiver<crate::types::SearchResult>,
+    _handle: thread::JoinHandle<()>,
+}
+
+impl Iterator for SymbolSearchStream {
+    type Item = crate::types::SearchResult;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        self.receiver.recv().ok()
+    }
 }
 
 /// インデックス構築結果
@@ -209,6 +224,53 @@ impl SearchCoordinator {
             build_time_ms,
             error_files: final_errors,
         })
+    }
+
+    /// ストリーミングシンボル検索
+    pub fn search_symbols_stream(&self, query: &str) -> Result<SymbolSearchStream> {
+        // 空のクエリは空のストリームを返す
+        if query.trim().is_empty() {
+            let (sender, receiver) = mpsc::channel();
+            drop(sender); // すぐにチャンネルを閉じる
+            let handle = thread::spawn(|| {}); // 空のスレッド
+            return Ok(SymbolSearchStream { receiver, _handle: handle });
+        }
+
+        // シンボル検索の実行
+        let hits = if let Some(ref symbol_index) = self.symbol_index {
+            symbol_index.fuzzy_search(query, 1000) // 大きめの制限で全結果を取得
+        } else {
+            // フォールバックとしてキャッシュマネージャーを使用
+            self.cache_manager.fuzzy_search_symbols(query, 1000)
+        };
+
+        // 各ヒットに対してメタデータを取得してSearchResultに変換
+        let _query = query.to_string();
+        let project_root = self.project_root.clone();
+        let (sender, receiver) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            for hit in hits {
+                // シンボルの詳細情報を取得（暫定的にSearchResultを作成）
+                let result = crate::types::SearchResult {
+                    file_path: project_root.join("dummy.rs"), // TODO: 実際のファイルパスを取得
+                    line: 1, // TODO: 実際の行番号を取得
+                    column: 1,
+                    display_info: crate::types::DisplayInfo::Symbol {
+                        name: hit.symbol_name.clone(),
+                        symbol_type: crate::types::SymbolType::Function, // TODO: 実際のシンボルタイプを取得
+                    },
+                    score: hit.score as f64 / 100.0, // SkimMatcherのスコアをf64に正規化
+                };
+
+                if sender.send(result).is_err() {
+                    // receiverが閉じられた場合は終了
+                    return;
+                }
+            }
+        });
+
+        Ok(SymbolSearchStream { receiver, _handle: handle })
     }
 
     /// ファジーシンボル検索
@@ -394,6 +456,52 @@ mod tests {
         
         // UserData や processUser などがヒットするはず
         assert!(!results.is_empty());
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_streaming_symbol_search() -> Result<()> {
+        let temp_dir = create_test_project()?;
+        let mut coordinator = SearchCoordinator::new(temp_dir.path().to_path_buf())?;
+        
+        // インデックス構築
+        coordinator.build_index()?;
+        
+        // ストリーミングシンボル検索
+        let stream = coordinator.search_symbols_stream("User")?;
+        let results: Vec<_> = stream.collect();
+        
+        // UserData や processUser などがヒットするはず
+        assert!(!results.is_empty());
+        
+        // 結果がSearchResult形式であることを確認
+        for result in &results {
+            match &result.display_info {
+                crate::types::DisplayInfo::Symbol { name, symbol_type: _ } => {
+                    assert!(name.contains("User"));
+                }
+                _ => panic!("Expected Symbol display info"),
+            }
+        }
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_streaming_symbol_search_empty_query() -> Result<()> {
+        let temp_dir = create_test_project()?;
+        let mut coordinator = SearchCoordinator::new(temp_dir.path().to_path_buf())?;
+        
+        // インデックス構築
+        coordinator.build_index()?;
+        
+        // 空クエリでのストリーミング検索
+        let stream = coordinator.search_symbols_stream("")?;
+        let results: Vec<_> = stream.collect();
+        
+        // 空クエリは結果なし
+        assert_eq!(results.len(), 0);
         
         Ok(())
     }

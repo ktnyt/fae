@@ -8,3 +8,6 @@ target/
 
 # Claude
 .claude
+
+# Backup directories
+sfs_backup_*
