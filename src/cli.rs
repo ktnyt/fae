@@ -1,12 +1,14 @@
 use crate::searchers::ContentSearcher;
 use crate::search_coordinator::SearchCoordinator;
-use crate::display::{CliFormatter, ResultFormatter};
-use crate::types::SearchResult;
+use crate::display::{
+    ContentHeadingFormatter, ContentInlineFormatter,
+    SymbolHeadingFormatter, SymbolInlineFormatter,
+    ResultFormatter
+};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use std::path::PathBuf;
 use std::env;
-use std::collections::HashMap;
 
 /// fae - Fast And Elegant code search
 #[derive(Parser)]
@@ -23,9 +25,6 @@ pub struct Cli {
     #[arg(short, long)]
     pub directory: Option<PathBuf>,
     
-    /// Maximum number of results to show
-    #[arg(short, long, default_value = "20")]
-    pub limit: usize,
     
     /// Build and display project index
     #[arg(long)]
@@ -34,6 +33,10 @@ pub struct Cli {
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,
+    
+    /// Force grouped output with file headers (same as rg --heading)
+    #[arg(long)]
+    pub heading: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -92,16 +95,16 @@ pub fn run_cli() -> Result<()> {
     // モードに応じて処理を分岐
     match mode {
         SearchMode::Content => {
-            run_content_search(&project_root, &clean_query, cli.limit, cli.verbose)
+            run_content_search(&project_root, &clean_query, cli.verbose, cli.heading)
         }
         SearchMode::Symbol => {
-            run_symbol_search(&project_root, &clean_query, cli.limit, cli.verbose)
+            run_symbol_search(&project_root, &clean_query, cli.verbose, cli.heading)
         }
         SearchMode::File => {
-            run_file_search(&project_root, &clean_query, cli.limit, cli.verbose)
+            run_file_search(&project_root, &clean_query, cli.verbose)
         }
         SearchMode::Regex => {
-            run_regex_search(&project_root, &clean_query, cli.limit, cli.verbose)
+            run_regex_search(&project_root, &clean_query, cli.verbose)
         }
         SearchMode::Index => {
             // この場合は上で処理済み
@@ -111,7 +114,7 @@ pub fn run_cli() -> Result<()> {
 }
 
 /// コンテンツ検索の実行
-fn run_content_search(project_root: &PathBuf, query: &str, limit: usize, verbose: bool) -> Result<()> {
+fn run_content_search(project_root: &PathBuf, query: &str, verbose: bool, heading: bool) -> Result<()> {
     if verbose {
         println!("Running content search for: '{}'", query);
     }
@@ -120,39 +123,70 @@ fn run_content_search(project_root: &PathBuf, query: &str, limit: usize, verbose
         .context("Failed to create content searcher")?;
     
     let start_time = std::time::Instant::now();
-    let results = searcher.search(query, limit)
+    let stream = searcher.search_stream(query)
         .context("Content search failed")?;
+    
+    // 特化フォーマッターの準備
+    let use_tty_format = std::io::IsTerminal::is_terminal(&std::io::stdout()) || heading;
+    
+    let mut results_count = 0;
+    let mut current_file: Option<PathBuf> = None;
+    
+    // ストリーミング結果の処理
+    for result in stream {
+        
+        // TTY形式の場合、ファイルが変わったらヘッダーを出力
+        if use_tty_format {
+            if current_file.as_ref() != Some(&result.file_path) {
+                if current_file.is_some() {
+                    println!(); // 前のファイルとの間に空行
+                }
+                let relative_path = result.file_path
+                    .strip_prefix(project_root)
+                    .unwrap_or(&result.file_path);
+                println!("{}:", relative_path.display());
+                current_file = Some(result.file_path.clone());
+            }
+            
+            let formatter = ContentHeadingFormatter::new(project_root.clone());
+            let formatted = formatter.format_result(&result);
+            let output = formatter.to_colored_string(&formatted);
+            
+            if verbose {
+                println!("{}    (score: {:.2})", output, result.score);
+            } else {
+                println!("{}", output);
+            }
+        } else {
+            // Pipe形式の場合
+            let formatter = ContentInlineFormatter::new(project_root.clone());
+            let formatted = formatter.format_result(&result);
+            let output = formatter.to_colored_string(&formatted);
+            
+            if verbose {
+                println!("{}    (score: {:.2})", output, result.score);
+            } else {
+                println!("{}", output);
+            }
+        }
+        
+        results_count += 1;
+    }
+    
     let elapsed = start_time.elapsed();
     
-    if verbose {
-        println!("Found {} results in {:.2}ms", results.len(), elapsed.as_secs_f64() * 1000.0);
-        println!();
-    }
-    
-    if results.is_empty() {
+    if results_count == 0 {
         println!("No matches found for '{}'", query);
-        return Ok(());
-    }
-    
-    let formatter = CliFormatter::new(project_root.clone());
-    
-    // TTY形式の場合はファイル名でグループ化
-    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        print_tty_format(&formatter, &results, verbose)?;
-    } else {
-        print_pipe_format(&formatter, &results, verbose)?;
-    }
-    
-    if verbose {
+    } else if verbose {
         println!();
-        println!("Total: {} matches", results.len());
+        println!("Found {} results in {:.2}ms", results_count, elapsed.as_secs_f64() * 1000.0);
     }
     
     Ok(())
 }
 
 /// シンボル検索の実行
-fn run_symbol_search(project_root: &PathBuf, query: &str, limit: usize, verbose: bool) -> Result<()> {
+fn run_symbol_search(project_root: &PathBuf, query: &str, verbose: bool, heading: bool) -> Result<()> {
     if verbose {
         println!("Running symbol search for: '{}'", query);
     }
@@ -177,55 +211,65 @@ fn run_symbol_search(project_root: &PathBuf, query: &str, limit: usize, verbose:
         println!();
     }
     
-    let search_start = std::time::Instant::now();
-    let hits = coordinator.search_symbols(query, limit);
-    let search_elapsed = search_start.elapsed();
+    let _search_start = std::time::Instant::now();
+    let stream = coordinator.search_symbols_stream(query)
+        .context("Symbol search failed")?;
     
-    if verbose {
-        println!("Found {} symbol matches in {:.2}ms", hits.len(), search_elapsed.as_secs_f64() * 1000.0);
-        println!();
-    }
+    // 特化フォーマッターの準備
+    let use_tty_format = std::io::IsTerminal::is_terminal(&std::io::stdout()) || heading;
     
-    if hits.is_empty() {
-        println!("No symbol matches found for '{}'", query);
-        return Ok(());
-    }
+    let mut results_count = 0;
+    let mut current_file: Option<PathBuf> = None;
     
-    // 各シンボルヒットをSearchResultに変換
-    let mut results: Vec<crate::types::SearchResult> = Vec::new();
-    
-    for hit in hits.iter() {
-        // シンボル詳細を取得
-        let details = coordinator.get_symbol_details(&hit.symbol_name);
+    // ストリーミング結果の処理
+    for result in stream {
         
-        for detail in &details {
-            // SearchResult形式に変換
-            let search_result = crate::types::SearchResult {
-                file_path: detail.file_path.clone(),
-                line: detail.line,
-                column: detail.column,
-                display_info: crate::types::DisplayInfo::Symbol {
-                    name: hit.symbol_name.clone(),
-                    symbol_type: detail.symbol_type.clone(),
-                },
-                score: hit.score as f64,
-            };
-            results.push(search_result);
+        // TTY形式の場合、ファイルが変わったらヘッダーを出力
+        if use_tty_format {
+            if current_file.as_ref() != Some(&result.file_path) {
+                if current_file.is_some() {
+                    println!(); // 前のファイルとの間に空行
+                }
+                let relative_path = result.file_path
+                    .strip_prefix(project_root)
+                    .unwrap_or(&result.file_path);
+                println!("{}:", relative_path.display());
+                current_file = Some(result.file_path.clone());
+            }
+            
+            let formatter = SymbolHeadingFormatter::new(project_root.clone());
+            let formatted = formatter.format_result(&result);
+            let output = formatter.to_colored_string(&formatted);
+            
+            if verbose {
+                println!("{}    (score: {:.2})", output, result.score);
+            } else {
+                println!("{}", output);
+            }
+        } else {
+            // Pipe形式の場合
+            let formatter = SymbolInlineFormatter::new(project_root.clone());
+            let formatted = formatter.format_result(&result);
+            let output = formatter.to_colored_string(&formatted);
+            
+            if verbose {
+                println!("{}    (score: {:.2})", output, result.score);
+            } else {
+                println!("{}", output);
+            }
         }
+        
+        results_count += 1;
     }
     
-    let formatter = CliFormatter::new(project_root.clone());
+    let total_elapsed = start_time.elapsed();
     
-    // TTY形式の場合はファイル名でグループ化
-    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        print_symbol_tty_format(&formatter, &results, verbose)?;
-    } else {
-        print_symbol_pipe_format(&formatter, &results, verbose)?;
-    }
-    
-    if verbose {
+    if results_count == 0 {
+        println!("No symbol matches found for '{}'", query);
+    } else if verbose {
         println!();
-        println!("Total: {} symbol matches", results.len());
+        println!("Found {} symbol matches in {:.2}ms total", 
+                 results_count, total_elapsed.as_secs_f64() * 1000.0);
     }
     
     Ok(())
@@ -262,7 +306,7 @@ fn run_index_build(project_root: &PathBuf, verbose: bool) -> Result<()> {
 }
 
 /// ファイル検索の実行
-fn run_file_search(_project_root: &PathBuf, query: &str, _limit: usize, verbose: bool) -> Result<()> {
+fn run_file_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Result<()> {
     if verbose {
         println!("Running file search for: '{}'", query);
     }
@@ -274,7 +318,7 @@ fn run_file_search(_project_root: &PathBuf, query: &str, _limit: usize, verbose:
 }
 
 /// 正規表現検索の実行
-fn run_regex_search(_project_root: &PathBuf, query: &str, _limit: usize, verbose: bool) -> Result<()> {
+fn run_regex_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Result<()> {
     if verbose {
         println!("Running regex search for: '{}'", query);
     }
@@ -285,113 +329,7 @@ fn run_regex_search(_project_root: &PathBuf, query: &str, _limit: usize, verbose
     Ok(())
 }
 
-/// TTY形式でContent Search結果を表示（--group style）
-fn print_tty_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
-    // ファイル名でグループ化
-    let mut groups: HashMap<String, Vec<&SearchResult>> = HashMap::new();
-    
-    for result in results {
-        let formatted = formatter.format_result(result);
-        let file_name = &formatted.right_part; // TTY形式ではファイル名がright_partに格納
-        groups.entry(file_name.clone()).or_insert_with(Vec::new).push(result);
-    }
-    
-    // ファイル名でソートして表示
-    let mut sorted_files: Vec<_> = groups.keys().collect();
-    sorted_files.sort();
-    
-    for (i, file_name) in sorted_files.iter().enumerate() {
-        if i > 0 {
-            println!(); // ファイル間に空行
-        }
-        
-        // ファイル名ヘッダー
-        println!("{}", file_name);
-        
-        // そのファイルの検索結果
-        let file_results = &groups[*file_name];
-        for result in file_results {
-            let formatted = formatter.format_result(result);
-            
-            if verbose {
-                println!("{} (score: {:.2})", formatted.left_part, result.score);
-            } else {
-                println!("{}", formatted.left_part);
-            }
-        }
-    }
-    
-    Ok(())
-}
 
-/// Pipe形式でContent Search結果を表示（--no-group style）
-fn print_pipe_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
-    for result in results {
-        let formatted = formatter.format_result(result);
-        
-        if verbose {
-            println!("{} (score: {:.2})", formatted.left_part, result.score);
-        } else {
-            println!("{}", formatted.left_part);
-        }
-    }
-    
-    Ok(())
-}
-
-/// TTY形式でSymbol Search結果を表示（--group style）
-fn print_symbol_tty_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
-    // ファイル名でグループ化
-    let mut groups: HashMap<String, Vec<&SearchResult>> = HashMap::new();
-    
-    for result in results {
-        let formatted = formatter.format_result(result);
-        let file_name = &formatted.right_part; // TTY形式ではファイル名がright_partに格納
-        groups.entry(file_name.clone()).or_insert_with(Vec::new).push(result);
-    }
-    
-    // ファイル名でソートして表示
-    let mut sorted_files: Vec<_> = groups.keys().collect();
-    sorted_files.sort();
-    
-    for (i, file_name) in sorted_files.iter().enumerate() {
-        if i > 0 {
-            println!(); // ファイル間に空行
-        }
-        
-        // ファイル名ヘッダー
-        println!("{}", file_name);
-        
-        // そのファイルのシンボル検索結果
-        let file_results = &groups[*file_name];
-        for result in file_results {
-            let formatted = formatter.format_result(result);
-            
-            if verbose {
-                println!("{} (score: {:.2})", formatted.left_part, result.score);
-            } else {
-                println!("{}", formatted.left_part);
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// Pipe形式でSymbol Search結果を表示（--no-group style）
-fn print_symbol_pipe_format(formatter: &CliFormatter, results: &[SearchResult], verbose: bool) -> Result<()> {
-    for result in results {
-        let formatted = formatter.format_result(result);
-        
-        if verbose {
-            println!("{} (score: {:.2})", formatted.left_part, result.score);
-        } else {
-            println!("{}", formatted.left_part);
-        }
-    }
-    
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -418,7 +356,7 @@ mod tests {
         let temp_dir = create_test_project()?;
         
         // Content search should find the function
-        let result = run_content_search(&temp_dir.path().to_path_buf(), "testFunction", 10, false);
+        let result = run_content_search(&temp_dir.path().to_path_buf(), "testFunction", false, false);
         assert!(result.is_ok());
         
         Ok(())
@@ -429,7 +367,7 @@ mod tests {
         let temp_dir = create_test_project()?;
         
         // Symbol search should work
-        let result = run_symbol_search(&temp_dir.path().to_path_buf(), "test", 10, false);
+        let result = run_symbol_search(&temp_dir.path().to_path_buf(), "test", false, false);
         assert!(result.is_ok());
         
         Ok(())
