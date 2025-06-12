@@ -250,16 +250,47 @@ impl SearchCoordinator {
         let project_root = self.project_root.clone();
         let (sender, receiver) = mpsc::channel();
 
+        // メタデータストレージを取得
+        let mut metadata_storage = if let Some(ref _metadata_storage) = self.metadata_storage {
+            // 新しいインスタンスを作成（スレッド間で移動するため）
+            MetadataStorage::new(&self.project_root).ok()
+        } else {
+            None
+        };
+
         let handle = thread::spawn(move || {
             for hit in hits {
-                // シンボルの詳細情報を取得（暫定的にSearchResultを作成）
+                // シンボルの詳細情報を取得
+                let (file_path, line, column, symbol_type) = if let Some(ref mut storage) = metadata_storage {
+                    // メタデータストレージから詳細情報を取得
+                    if let Ok(metadata_entries) = storage.find_metadata(&hit.symbol_name) {
+                        if let Some(first_entry) = metadata_entries.first() {
+                            (
+                                project_root.join(&first_entry.file_path),
+                                first_entry.line,
+                                first_entry.column,
+                                first_entry.symbol_type.clone(),
+                            )
+                        } else {
+                            // メタデータが見つからない場合のフォールバック
+                            (project_root.join("unknown.rs"), 1, 1, crate::types::SymbolType::Function)
+                        }
+                    } else {
+                        // 検索エラーの場合のフォールバック
+                        (project_root.join("error.rs"), 1, 1, crate::types::SymbolType::Function)
+                    }
+                } else {
+                    // メタデータストレージがない場合のフォールバック
+                    (project_root.join("no_metadata.rs"), 1, 1, crate::types::SymbolType::Function)
+                };
+
                 let result = crate::types::SearchResult {
-                    file_path: project_root.join("dummy.rs"), // TODO: 実際のファイルパスを取得
-                    line: 1, // TODO: 実際の行番号を取得
-                    column: 1,
+                    file_path,
+                    line,
+                    column,
                     display_info: crate::types::DisplayInfo::Symbol {
                         name: hit.symbol_name.clone(),
-                        symbol_type: crate::types::SymbolType::Function, // TODO: 実際のシンボルタイプを取得
+                        symbol_type,
                     },
                     score: hit.score as f64 / 100.0, // SkimMatcherのスコアをf64に正規化
                 };

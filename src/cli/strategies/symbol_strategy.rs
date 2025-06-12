@@ -3,22 +3,40 @@ use crate::search_coordinator::SearchCoordinator;
 use crate::display::{SymbolHeadingFormatter, SymbolInlineFormatter, ResultFormatter};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use log::info;
 
 /// シンボル検索戦略
 /// 
 /// Tree-sitterを使用してソースコードからシンボル（関数、クラス等）を抽出し、
 /// ファジー検索を行う。検索前にインデックス構築が必要。
-pub struct SymbolStrategy;
+pub struct SymbolStrategy {
+    coordinator: Arc<Mutex<Option<SearchCoordinator>>>,
+}
+
+impl SymbolStrategy {
+    pub fn new() -> Self {
+        Self {
+            coordinator: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl Default for SymbolStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SearchStrategy for SymbolStrategy {
     fn name(&self) -> &'static str {
         "symbol"
     }
     
-    fn create_stream(&self, project_root: &PathBuf, query: &str) -> Result<SearchResultStream> {
-        let coordinator = SearchCoordinator::new(project_root.clone())
-            .context("Failed to create search coordinator")?;
+    fn create_stream(&self, _project_root: &PathBuf, query: &str) -> Result<SearchResultStream> {
+        let coordinator_guard = self.coordinator.lock().unwrap();
+        let coordinator = coordinator_guard.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Symbol index not prepared. Call prepare() first."))?;
         
         let stream = coordinator.search_symbols_stream(query)
             .context("Symbol search failed")?;
@@ -54,6 +72,12 @@ impl SearchStrategy for SymbolStrategy {
              index_result.total_symbols,
              elapsed.as_secs_f64() * 1000.0);
         
+        // インデックス構築済みのcoordinatorを保存
+        {
+            let mut coordinator_guard = self.coordinator.lock().unwrap();
+            *coordinator_guard = Some(coordinator);
+        }
+        
         Ok(())
     }
 }
@@ -81,7 +105,7 @@ mod tests {
 
     #[test]
     fn test_symbol_strategy_basic() {
-        let strategy = SymbolStrategy;
+        let strategy = SymbolStrategy::new();
         assert_eq!(strategy.name(), "symbol");
         assert!(strategy.supports_file_grouping());
     }
@@ -89,7 +113,7 @@ mod tests {
     #[test]
     fn test_symbol_strategy_formatters() -> Result<()> {
         let temp_dir = create_test_project()?;
-        let strategy = SymbolStrategy;
+        let strategy = SymbolStrategy::new();
         
         let (heading, inline) = strategy.create_formatters(&temp_dir.path().to_path_buf());
         
@@ -103,7 +127,7 @@ mod tests {
     #[test]
     fn test_symbol_strategy_prepare() -> Result<()> {
         let temp_dir = create_test_project()?;
-        let strategy = SymbolStrategy;
+        let strategy = SymbolStrategy::new();
         
         // インデックス構築の準備処理が正常に実行されることを確認
         let result = strategy.prepare(&temp_dir.path().to_path_buf());
