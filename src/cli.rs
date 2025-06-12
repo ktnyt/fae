@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use std::path::PathBuf;
 use std::env;
+use log::{debug, info};
 
 /// fae - Fast And Elegant code search
 #[derive(Parser)]
@@ -30,9 +31,6 @@ pub struct Cli {
     #[arg(long)]
     pub index: bool,
     
-    /// Verbose output
-    #[arg(short, long)]
-    pub verbose: bool,
     
     /// Force grouped output with file headers (same as rg --heading)
     #[arg(long)]
@@ -73,18 +71,16 @@ pub fn run_cli() -> Result<()> {
     let project_root = cli.directory
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     
-    if cli.verbose {
-        println!("Project root: {}", project_root.display());
-    }
+    debug!("Project root: {}", project_root.display());
     
     // バックエンド情報表示モードの確認
     if cli.backends {
-        return show_backend_info(&project_root, cli.verbose);
+        return show_backend_info(&project_root);
     }
     
     // インデックス構築モードの確認
     if cli.index {
-        return run_index_build(&project_root, cli.verbose);
+        return run_index_build(&project_root);
     }
     
     // クエリがない場合はヘルプを表示
@@ -97,23 +93,21 @@ pub fn run_cli() -> Result<()> {
     // クエリからモードを検出
     let (mode, clean_query) = detect_mode(raw_query);
     
-    if cli.verbose {
-        println!("Detected mode: {:?}, Query: '{}'", mode, clean_query);
-    }
+    debug!("Detected mode: {:?}, Query: '{}'", mode, clean_query);
     
     // モードに応じて処理を分岐
     match mode {
         SearchMode::Content => {
-            run_content_search(&project_root, &clean_query, cli.verbose, cli.heading)
+            run_content_search(&project_root, &clean_query, cli.heading)
         }
         SearchMode::Symbol => {
-            run_symbol_search(&project_root, &clean_query, cli.verbose, cli.heading)
+            run_symbol_search(&project_root, &clean_query, cli.heading)
         }
         SearchMode::File => {
-            run_file_search(&project_root, &clean_query, cli.verbose)
+            run_file_search(&project_root, &clean_query)
         }
         SearchMode::Regex => {
-            run_regex_search(&project_root, &clean_query, cli.verbose)
+            run_regex_search(&project_root, &clean_query)
         }
         SearchMode::Index => {
             // この場合は上で処理済み
@@ -123,18 +117,14 @@ pub fn run_cli() -> Result<()> {
 }
 
 /// コンテンツ検索の実行
-fn run_content_search(project_root: &PathBuf, query: &str, verbose: bool, heading: bool) -> Result<()> {
-    if verbose {
-        println!("Running content search for: '{}'", query);
-    }
+fn run_content_search(project_root: &PathBuf, query: &str, heading: bool) -> Result<()> {
+    info!("Running content search for: '{}'", query);
     
     let searcher = EnhancedContentSearcher::new(project_root.clone())
         .context("Failed to create enhanced content searcher")?;
     
-    if verbose {
-        let (primary, available) = searcher.backend_info();
-        println!("Using backend: {} (available: {})", primary, available.join(", "));
-    }
+    let (primary, available) = searcher.backend_info();
+    debug!("Using backend: {} (available: {})", primary, available.join(", "));
     
     let start_time = std::time::Instant::now();
     let stream = searcher.search_stream(query)
@@ -166,22 +156,14 @@ fn run_content_search(project_root: &PathBuf, query: &str, verbose: bool, headin
             let formatted = formatter.format_result(&result);
             let output = formatter.to_colored_string(&formatted);
             
-            if verbose {
-                println!("{}    (score: {:.2})", output, result.score);
-            } else {
-                println!("{}", output);
-            }
+            println!("{}", output);
         } else {
             // Pipe形式の場合
             let formatter = ContentInlineFormatter::new(project_root.clone());
             let formatted = formatter.format_result(&result);
             let output = formatter.to_colored_string(&formatted);
             
-            if verbose {
-                println!("{}    (score: {:.2})", output, result.score);
-            } else {
-                println!("{}", output);
-            }
+            println!("{}", output);
         }
         
         results_count += 1;
@@ -191,39 +173,31 @@ fn run_content_search(project_root: &PathBuf, query: &str, verbose: bool, headin
     
     if results_count == 0 {
         println!("No matches found for '{}'", query);
-    } else if verbose {
-        println!();
-        println!("Found {} results in {:.2}ms", results_count, elapsed.as_secs_f64() * 1000.0);
+    } else {
+        info!("Found {} results in {:.2}ms", results_count, elapsed.as_secs_f64() * 1000.0);
     }
     
     Ok(())
 }
 
 /// シンボル検索の実行
-fn run_symbol_search(project_root: &PathBuf, query: &str, verbose: bool, heading: bool) -> Result<()> {
-    if verbose {
-        println!("Running symbol search for: '{}'", query);
-    }
+fn run_symbol_search(project_root: &PathBuf, query: &str, heading: bool) -> Result<()> {
+    info!("Running symbol search for: '{}'", query);
     
     let mut coordinator = SearchCoordinator::new(project_root.clone())
         .context("Failed to create search coordinator")?;
     
-    if verbose {
-        println!("Building index...");
-    }
+    info!("Building index...");
     
     let start_time = std::time::Instant::now();
     let index_result = coordinator.build_index()
         .context("Failed to build index")?;
     let index_elapsed = start_time.elapsed();
     
-    if verbose {
-        println!("Index built: {} files, {} symbols in {:.2}ms", 
-                 index_result.processed_files, 
-                 index_result.total_symbols,
-                 index_elapsed.as_secs_f64() * 1000.0);
-        println!();
-    }
+    info!("Index built: {} files, {} symbols in {:.2}ms", 
+         index_result.processed_files, 
+         index_result.total_symbols,
+         index_elapsed.as_secs_f64() * 1000.0);
     
     let _search_start = std::time::Instant::now();
     let stream = coordinator.search_symbols_stream(query)
@@ -255,22 +229,14 @@ fn run_symbol_search(project_root: &PathBuf, query: &str, verbose: bool, heading
             let formatted = formatter.format_result(&result);
             let output = formatter.to_colored_string(&formatted);
             
-            if verbose {
-                println!("{}    (score: {:.2})", output, result.score);
-            } else {
-                println!("{}", output);
-            }
+            println!("{}", output);
         } else {
             // Pipe形式の場合
             let formatter = SymbolInlineFormatter::new(project_root.clone());
             let formatted = formatter.format_result(&result);
             let output = formatter.to_colored_string(&formatted);
             
-            if verbose {
-                println!("{}    (score: {:.2})", output, result.score);
-            } else {
-                println!("{}", output);
-            }
+            println!("{}", output);
         }
         
         results_count += 1;
@@ -280,17 +246,16 @@ fn run_symbol_search(project_root: &PathBuf, query: &str, verbose: bool, heading
     
     if results_count == 0 {
         println!("No symbol matches found for '{}'", query);
-    } else if verbose {
-        println!();
-        println!("Found {} symbol matches in {:.2}ms total", 
-                 results_count, total_elapsed.as_secs_f64() * 1000.0);
+    } else {
+        info!("Found {} symbol matches in {:.2}ms total", 
+             results_count, total_elapsed.as_secs_f64() * 1000.0);
     }
     
     Ok(())
 }
 
 /// インデックス構築と表示
-fn run_index_build(project_root: &PathBuf, verbose: bool) -> Result<()> {
+fn run_index_build(project_root: &PathBuf) -> Result<()> {
     println!("Building project index...");
     
     let mut coordinator = SearchCoordinator::new(project_root.clone())
@@ -310,20 +275,16 @@ fn run_index_build(project_root: &PathBuf, verbose: bool) -> Result<()> {
         println!("  Files with errors: {}", result.error_files);
     }
     
-    if verbose {
-        println!();
-        println!("Index is ready for symbol searches.");
-        println!("Use 'fae \"#<query>\"' to search symbols.");
-    }
+    println!();
+    println!("Index is ready for symbol searches.");
+    println!("Use 'fae \"#<query>\"' to search symbols.");
     
     Ok(())
 }
 
 /// ファイル検索の実行
-fn run_file_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Result<()> {
-    if verbose {
-        println!("Running file search for: '{}'", query);
-    }
+fn run_file_search(_project_root: &PathBuf, query: &str) -> Result<()> {
+    info!("Running file search for: '{}'", query);
     
     // TODO: ファイル名検索の実装
     println!("File search not yet implemented. Query: '{}'", query);
@@ -332,10 +293,8 @@ fn run_file_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Resul
 }
 
 /// 正規表現検索の実行
-fn run_regex_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Result<()> {
-    if verbose {
-        println!("Running regex search for: '{}'", query);
-    }
+fn run_regex_search(_project_root: &PathBuf, query: &str) -> Result<()> {
+    info!("Running regex search for: '{}'", query);
     
     // TODO: 正規表現検索の実装
     println!("Regex search not yet implemented. Query: '{}'", query);
@@ -344,7 +303,7 @@ fn run_regex_search(_project_root: &PathBuf, query: &str, verbose: bool) -> Resu
 }
 
 /// バックエンド情報の表示
-fn show_backend_info(project_root: &PathBuf, verbose: bool) -> Result<()> {
+fn show_backend_info(project_root: &PathBuf) -> Result<()> {
     println!("Search Backend Information");
     println!("==========================");
     
@@ -361,17 +320,15 @@ fn show_backend_info(project_root: &PathBuf, verbose: bool) -> Result<()> {
         println!("  {} {} {}", marker, backend, if i == 0 { "(active)" } else { "" });
     }
     
-    if verbose {
-        println!();
-        println!("Backend priorities:");
-        println!("  1. ripgrep (rg) - fastest, Rust-based");
-        println!("  2. ag (the_silver_searcher) - fast, C-based");
-        println!("  3. built-in - fallback, always available");
-        println!();
-        println!("To install external backends:");
-        println!("  ripgrep: cargo install ripgrep");
-        println!("  ag: brew install the_silver_searcher (macOS)");
-    }
+    println!();
+    println!("Backend priorities:");
+    println!("  1. ripgrep (rg) - fastest, Rust-based");
+    println!("  2. ag (the_silver_searcher) - fast, C-based");
+    println!("  3. built-in - fallback, always available");
+    println!();
+    println!("To install external backends:");
+    println!("  ripgrep: cargo install ripgrep");
+    println!("  ag: brew install the_silver_searcher (macOS)");
     
     Ok(())
 }
@@ -402,7 +359,7 @@ mod tests {
         let temp_dir = create_test_project()?;
         
         // Content search should find the function
-        let result = run_content_search(&temp_dir.path().to_path_buf(), "testFunction", false, false);
+        let result = run_content_search(&temp_dir.path().to_path_buf(), "testFunction", false);
         assert!(result.is_ok());
         
         Ok(())
@@ -413,7 +370,7 @@ mod tests {
         let temp_dir = create_test_project()?;
         
         // Backend info should work
-        let result = show_backend_info(&temp_dir.path().to_path_buf(), false);
+        let result = show_backend_info(&temp_dir.path().to_path_buf());
         assert!(result.is_ok());
         
         Ok(())
@@ -424,7 +381,7 @@ mod tests {
         let temp_dir = create_test_project()?;
         
         // Symbol search should work
-        let result = run_symbol_search(&temp_dir.path().to_path_buf(), "test", false, false);
+        let result = run_symbol_search(&temp_dir.path().to_path_buf(), "test", false);
         assert!(result.is_ok());
         
         Ok(())
@@ -435,7 +392,7 @@ mod tests {
         let temp_dir = create_test_project()?;
         
         // Index build should work
-        let result = run_index_build(&temp_dir.path().to_path_buf(), false);
+        let result = run_index_build(&temp_dir.path().to_path_buf());
         assert!(result.is_ok());
         
         Ok(())
