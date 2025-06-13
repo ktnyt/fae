@@ -1,17 +1,17 @@
 use crate::workers::{Worker, Message, WorkerMessage, SearchQueryMessage};
-use crate::searchers::ContentSearcher as CoreContentSearcher;
+use crate::searchers::EnhancedContentSearcher;
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::path::Path;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-/// ContentSearchWorker - リテラル検索を行うワーカー
+/// ContentSearchWorker - Enhanced検索を行うワーカー（ripgrep/ag統合）
 pub struct ContentSearchWorker {
     worker_id: String,
     search_handler_id: String,
     message_bus: Option<Arc<RwLock<crate::workers::MessageBus>>>,
-    core_searcher: CoreContentSearcher,
+    core_searcher: EnhancedContentSearcher,
     cancellation_token: Option<CancellationToken>,
 }
 
@@ -21,7 +21,7 @@ impl ContentSearchWorker {
             worker_id,
             search_handler_id,
             message_bus: None,
-            core_searcher: CoreContentSearcher::new(search_path.as_ref().to_path_buf())?,
+            core_searcher: EnhancedContentSearcher::new(search_path.as_ref().to_path_buf())?,
             cancellation_token: None,
         })
     }
