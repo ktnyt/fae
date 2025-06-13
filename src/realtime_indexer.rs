@@ -49,6 +49,7 @@ pub struct RealtimeIndexer {
     /// キャッシュマネージャー（共有）
     cache_manager: Arc<Mutex<CacheManager>>,
     /// プロジェクトルート
+    #[allow(dead_code)]
     project_root: PathBuf,
     /// 監視対象の拡張子
     watched_extensions: HashSet<String>,

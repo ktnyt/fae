@@ -307,6 +307,7 @@ impl CacheManager {
     }
 
     /// キャッシュされた全シンボルを取得
+    #[allow(dead_code)]
     fn get_all_cached_symbols(&self) -> Vec<SymbolMetadata> {
         let mut all_symbols = Vec::new();
         

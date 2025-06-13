@@ -188,11 +188,13 @@ mod tests {
     use tempfile::TempDir;
 
     // テスト用のモック戦略
+    #[allow(dead_code)]
     struct TestStrategy {
         results: Vec<SearchResult>,
     }
     
     impl TestStrategy {
+        #[allow(dead_code)]
         fn new(results: Vec<SearchResult>) -> Self {
             Self { results }
         }

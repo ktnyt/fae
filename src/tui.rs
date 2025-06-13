@@ -463,7 +463,7 @@ impl TuiEngine {
     pub async fn start_realtime_indexing(&mut self) -> Result<()> {
         if let Some(realtime_indexer) = self.realtime_indexer.take() {
             // RealtimeIndexerのイベントループを別タスクで開始
-            let cache_manager = self.cache_manager.clone();
+            let _cache_manager = self.cache_manager.clone();
             tokio::spawn(async move {
                 let mut indexer = realtime_indexer;
                 if let Err(e) = indexer.start_event_loop().await {
