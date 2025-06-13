@@ -34,6 +34,8 @@ pub enum NavigationAction {
     Down,
     PageUp,
     PageDown,
+    HalfPageUp,
+    HalfPageDown,
     Home,
     End,
 }
@@ -107,8 +109,7 @@ impl InputHandler {
                 state.delete_char_backward();
                 InputResult::QueryUpdated
             }
-            (KeyCode::Delete, _) | 
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+            (KeyCode::Delete, _) => {
                 state.delete_char_forward();
                 InputResult::QueryUpdated
             }
@@ -159,9 +160,17 @@ impl InputHandler {
                 state.kill_line();
                 InputResult::QueryUpdated
             }
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+            (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                 state.clear_line();
                 InputResult::QueryUpdated
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                // 半ページ上スクロール専用
+                if result_count > 0 {
+                    InputResult::Navigate(NavigationAction::HalfPageUp)
+                } else {
+                    InputResult::Continue
+                }
             }
             
             // 結果リストナビゲーション
@@ -191,6 +200,15 @@ impl InputHandler {
             (KeyCode::PageDown, _) => {
                 if result_count > 0 {
                     InputResult::Navigate(NavigationAction::PageDown)
+                } else {
+                    InputResult::Continue
+                }
+            }
+            
+            // 半ページスクロール（Ctrl-d）
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                if result_count > 0 {
+                    InputResult::Navigate(NavigationAction::HalfPageDown)
                 } else {
                     InputResult::Continue
                 }

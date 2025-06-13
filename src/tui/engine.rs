@@ -96,6 +96,7 @@ pub struct TuiState {
     pub cursor_position: usize, // 文字カーソル位置（UTF-8 文字境界）
     pub results: Vec<SearchResult>,
     pub selected_index: usize,
+    pub scroll_offset: usize, // 結果リストのスクロールオフセット
     pub search_mode: SearchMode,
     pub loading: bool,
     pub error_message: Option<String>,
@@ -110,6 +111,7 @@ impl TuiState {
             cursor_position: 0,
             results: Vec::new(),
             selected_index: 0,
+            scroll_offset: 0,
             search_mode: SearchMode::Content,
             loading: false,
             error_message: None,
@@ -141,6 +143,7 @@ impl TuiState {
     pub fn select_next(&mut self) {
         if !self.results.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.results.len();
+            self.update_scroll_offset();
         }
     }
     
@@ -151,6 +154,43 @@ impl TuiState {
                 self.selected_index = self.results.len() - 1;
             } else {
                 self.selected_index -= 1;
+            }
+            self.update_scroll_offset();
+        }
+    }
+    
+    /// スクロールオフセットを更新（5行の余白を維持）
+    pub fn update_scroll_offset(&mut self) {
+        self.update_scroll_offset_with_height(20) // デフォルト値
+    }
+    
+    /// 指定された画面高さでスクロールオフセットを更新
+    pub fn update_scroll_offset_with_height(&mut self, visible_lines: usize) {
+        let scroll_margin = 5; // 上下の余白
+        
+        if self.results.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+        
+        // 選択されたアイテムが画面の上部余白より上にある場合
+        if self.selected_index < self.scroll_offset + scroll_margin {
+            if self.selected_index >= scroll_margin {
+                self.scroll_offset = self.selected_index - scroll_margin;
+            } else {
+                self.scroll_offset = 0;
+            }
+        }
+        
+        // 選択されたアイテムが画面の下部余白より下にある場合
+        let bottom_margin_start = self.scroll_offset + visible_lines - scroll_margin - 1;
+        if self.selected_index > bottom_margin_start {
+            let new_offset = self.selected_index + scroll_margin + 1 - visible_lines;
+            if new_offset + visible_lines <= self.results.len() {
+                self.scroll_offset = new_offset;
+            } else {
+                // 結果リストの最後まで表示
+                self.scroll_offset = self.results.len().saturating_sub(visible_lines);
             }
         }
     }
@@ -525,6 +565,18 @@ impl TuiEngine {
                                     self.state.select_next();
                                 }
                             }
+                            NavigationAction::HalfPageUp => {
+                                // 5項目上に移動（半ページ）
+                                for _ in 0..5 {
+                                    self.state.select_previous();
+                                }
+                            }
+                            NavigationAction::HalfPageDown => {
+                                // 5項目下に移動（半ページ）
+                                for _ in 0..5 {
+                                    self.state.select_next();
+                                }
+                            }
                             NavigationAction::Home => {
                                 self.state.selected_index = 0;
                             }
@@ -561,6 +613,7 @@ impl TuiEngine {
             SearchEvent::Results(results) => {
                 self.state.results = results;
                 self.state.selected_index = 0;
+                self.state.scroll_offset = 0; // 新しい結果でスクロールをリセット
             }
             SearchEvent::Completed => {
                 self.state.loading = false;
@@ -692,10 +745,13 @@ impl TuiEngine {
                 .block(title_block);
             f.render_widget(input_block, chunks[0]);
             
-            // 検索結果リスト（色分け対応）
+            // 検索結果リスト（色分け対応、スクロールオフセット適用）
+            let visible_height = chunks[1].height.saturating_sub(2) as usize; // ボーダー分を引く
             let items: Vec<ListItem> = self.state.results
                 .iter()
                 .enumerate()
+                .skip(self.state.scroll_offset) // スクロールオフセットから開始
+                .take(visible_height) // 表示可能な行数まで
                 .map(|(i, result)| {
                     let is_selected = i == self.state.selected_index;
                     
@@ -974,6 +1030,10 @@ impl TuiEngine {
                 Span::styled("Navigate search results (Emacs style)", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
+                Span::styled("  Ctrl+D/U ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("Half page down/up (5 items)", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
                 Span::styled("  Enter    ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
                 Span::styled("Open selected file", Style::default().fg(Color::Gray))
             ]),
@@ -1022,15 +1082,19 @@ impl TuiEngine {
                 Span::styled("Delete character before cursor", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
-                Span::styled("  Ctrl+D   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-                Span::styled("Delete character at cursor", Style::default().fg(Color::Gray))
+                Span::styled("  Ctrl+D   ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("Half page down (5 items)", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+U   ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("Half page up (5 items)", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+K   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
                 Span::styled("Delete from cursor to end of line", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
-                Span::styled("  Ctrl+U   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("  Ctrl+L   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
                 Span::styled("Clear entire line", Style::default().fg(Color::Gray))
             ]),
             Line::from(""),
