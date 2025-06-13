@@ -8,16 +8,12 @@ name = "fae"
 path = "src/main.rs"
 
 [[bin]]
-name = "bidirectional_echo_server"
-path = "src/bin/bidirectional_echo_server.rs"
-
-[[bin]]
-name = "bidirectional_echo_client"
-path = "src/bin/bidirectional_echo_client.rs"
-
-[[bin]]
 name = "simple_echo_test"
-path = "src/bin/simple_echo_test.rs"
+path = "samples/simple_echo_test.rs"
+
+[[bin]]
+name = "test_simple_echo"
+path = "samples/test_simple_echo.rs"
 
 [dependencies]
 # TUI
@@ -62,6 +58,10 @@ serde_json = "1.0"      # メッセージシリアライゼーション
 chrono = { version = "0.4", features = ["serde"] }  # 時刻処理
 async-trait = "0.1"     # 非同期トレイト
 tokio-util = "0.7"      # CancellationToken
+
+# プロセス管理（Unix系のみ）
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.8"      # テスト用

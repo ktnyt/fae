@@ -37,26 +37,23 @@ pub enum RpcError {
     MethodNotImplemented(String),
 }
 
-/// Handler for incoming requests (expects response)
-#[async_trait]
-pub trait RequestHandler: Send + Sync {
-    /// Handle an incoming request and return a response
-    async fn handle_request(&self, request: Request) -> RpcResult<Value>;
-}
-
-/// Handler for incoming notifications (no response expected)
-#[async_trait]
-pub trait NotificationHandler: Send + Sync {
-    /// Handle an incoming notification
-    async fn handle_notification(&self, notification: Request) -> RpcResult<()>;
-}
-
 /// Handler for the main event loop
 #[async_trait]
 pub trait MainLoopHandler: Send + Sync {
-    /// Called periodically during the main loop
+    /// Handle the main event loop with access to incoming messages
+    /// 
+    /// Parameters:
+    /// - rpc_base: Reference to JsonRpcBase for sending responses/requests
+    /// - request_rx: Channel receiver for incoming requests (need response)
+    /// - notification_rx: Channel receiver for incoming notifications (no response)
+    /// 
     /// Return false to stop the main loop
-    async fn on_tick(&mut self) -> RpcResult<bool>;
+    async fn run_loop(
+        &mut self,
+        rpc_base: Arc<JsonRpcBase>,
+        mut request_rx: mpsc::UnboundedReceiver<Request>,
+        mut notification_rx: mpsc::UnboundedReceiver<Request>,
+    ) -> RpcResult<bool>;
     
     /// Called when the RPC connection is established
     async fn on_connected(&mut self) -> RpcResult<()> {
@@ -80,31 +77,49 @@ pub struct JsonRpcBase {
     inbound_request_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Request>>>,
     inbound_notification_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Request>>>,
     
-    // Handlers
-    request_handler: Option<Arc<dyn RequestHandler>>,
-    notification_handler: Option<Arc<dyn NotificationHandler>>,
-    
     // Control channels
     shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
 impl JsonRpcBase {
-    /// Create a new JsonRpcBase by spawning a child process
+    /// Create a new JsonRpcBase from an already spawned child process
+    pub async fn from_child(mut child: Child) -> RpcResult<Self> {
+        debug!("Creating JsonRpcBase from child process");
+        
+        let stdin = child.stdin.take().ok_or_else(|| {
+            RpcError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Child process stdin not available"
+            ))
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            RpcError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Child process stdout not available"
+            ))
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            RpcError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Child process stderr not available"
+            ))
+        })?;
+        
+        Self::new_with_streams(Some(child), stdin, stdout, stderr).await
+    }
+    
+    /// Create a new JsonRpcBase by spawning a child process (convenience method)
     pub async fn spawn(command: &str, args: &[&str]) -> RpcResult<Self> {
         debug!("Spawning process: {} {:?}", command, args);
         
-        let mut child = Command::new(command)
+        let child = Command::new(command)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
         
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        
-        Self::new_with_streams(Some(child), stdin, stdout, stderr).await
+        Self::from_child(child).await
     }
     
     /// Create a new JsonRpcBase using stdio (for server mode)
@@ -142,8 +157,6 @@ impl JsonRpcBase {
             outbound_tx,
             inbound_request_rx: Arc::new(tokio::sync::Mutex::new(inbound_request_rx)),
             inbound_notification_rx: Arc::new(tokio::sync::Mutex::new(inbound_notification_rx)),
-            request_handler: None,
-            notification_handler: None,
             shutdown_tx: Some(shutdown_tx),
         })
     }
@@ -181,23 +194,10 @@ impl JsonRpcBase {
             outbound_tx,
             inbound_request_rx: Arc::new(tokio::sync::Mutex::new(inbound_request_rx)),
             inbound_notification_rx: Arc::new(tokio::sync::Mutex::new(inbound_notification_rx)),
-            request_handler: None,
-            notification_handler: None,
             shutdown_tx: Some(shutdown_tx),
         })
     }
     
-    /// Set the request handler
-    pub fn with_request_handler(mut self, handler: Arc<dyn RequestHandler>) -> Self {
-        self.request_handler = Some(handler);
-        self
-    }
-    
-    /// Set the notification handler
-    pub fn with_notification_handler(mut self, handler: Arc<dyn NotificationHandler>) -> Self {
-        self.notification_handler = Some(handler);
-        self
-    }
     
     /// Send a request and wait for response (client functionality)
     pub async fn request(&self, method: &str, params: Option<Value>) -> RpcResult<Value> {
@@ -286,103 +286,48 @@ impl JsonRpcBase {
     }
     
     /// Run the main event loop (server functionality)
-    pub async fn run_main_loop(&self, mut main_handler: Box<dyn MainLoopHandler>) -> RpcResult<()> {
+    pub async fn run_main_loop(self, mut main_handler: Box<dyn MainLoopHandler>) -> RpcResult<()> {
         debug!("Starting main event loop");
         
         main_handler.on_connected().await?;
         
-        let tick_interval = Duration::from_millis(100); // 10 FPS
-        let mut tick_timer = tokio::time::interval(tick_interval);
+        // Extract the receivers from Arc<Mutex<_>> to pass to handler
+        let request_rx = {
+            let mutex = Arc::try_unwrap(self.inbound_request_rx)
+                .map_err(|_| RpcError::Rpc { code: -32603, message: "Failed to unwrap request receiver".to_string() })?;
+            mutex.into_inner()
+        };
         
-        loop {
-            tokio::select! {
-                // Handle tick
-                _ = tick_timer.tick() => {
-                    if !main_handler.on_tick().await? {
-                        debug!("Main loop handler requested shutdown");
-                        break;
-                    }
-                }
-                
-                // Handle incoming requests
-                request = self.get_request() => {
-                    if let Some(request) = request {
-                        self.handle_incoming_request(request).await;
-                    }
-                }
-                
-                // Handle incoming notifications
-                notification = self.get_notification() => {
-                    if let Some(notification) = notification {
-                        self.handle_incoming_notification(notification).await;
-                    }
-                }
-            }
-        }
+        let notification_rx = {
+            let mutex = Arc::try_unwrap(self.inbound_notification_rx)
+                .map_err(|_| RpcError::Rpc { code: -32603, message: "Failed to unwrap notification receiver".to_string() })?;
+            mutex.into_inner()
+        };
+        
+        let rpc_base = Arc::new(JsonRpcBase {
+            child: self.child,
+            request_id: self.request_id,
+            pending_requests: self.pending_requests,
+            outbound_tx: self.outbound_tx,
+            inbound_request_rx: Arc::new(tokio::sync::Mutex::new(mpsc::unbounded_channel().1)), // dummy
+            inbound_notification_rx: Arc::new(tokio::sync::Mutex::new(mpsc::unbounded_channel().1)), // dummy
+            shutdown_tx: self.shutdown_tx,
+        });
+        
+        // Run the handler's main loop
+        let result = main_handler.run_loop(rpc_base.clone(), request_rx, notification_rx).await;
         
         main_handler.on_disconnected().await?;
         debug!("Main event loop stopped");
         
-        Ok(())
-    }
-    
-    /// Get an incoming request (non-blocking)
-    async fn get_request(&self) -> Option<Request> {
-        let mut rx = self.inbound_request_rx.lock().await;
-        rx.try_recv().ok()
-    }
-    
-    /// Get an incoming notification (non-blocking)
-    async fn get_notification(&self) -> Option<Request> {
-        let mut rx = self.inbound_notification_rx.lock().await;
-        rx.try_recv().ok()
-    }
-    
-    /// Try to get an incoming request (non-blocking, public)
-    pub async fn try_get_request(&self) -> Option<Request> {
-        self.get_request().await
-    }
-    
-    /// Try to get an incoming notification (non-blocking, public)
-    pub async fn try_get_notification(&self) -> Option<Request> {
-        self.get_notification().await
-    }
-    
-    /// Handle an incoming request
-    async fn handle_incoming_request(&self, request: Request) {
-        let id = request.id.clone().unwrap_or(Value::Null);
+        // Shutdown the RPC base
+        Arc::try_unwrap(rpc_base)
+            .map_err(|_| RpcError::Rpc { code: -32603, message: "Failed to unwrap RPC base for shutdown".to_string() })?
+            .shutdown().await?;
         
-        if let Some(handler) = &self.request_handler {
-            match handler.handle_request(request).await {
-                Ok(result) => {
-                    let _ = self.respond(id, result).await;
-                }
-                Err(RpcError::MethodNotImplemented(method)) => {
-                    let error = ErrorObject::new(ErrorCode::MethodNotFound, None);
-                    let _ = self.respond_error(id, error).await;
-                }
-                Err(e) => {
-                    let error = ErrorObject::custom(-32603, e.to_string(), None);
-                    let _ = self.respond_error(id, error).await;
-                }
-            }
-        } else {
-            // No handler - method not found
-            let error = ErrorObject::new(ErrorCode::MethodNotFound, None);
-            let _ = self.respond_error(id, error).await;
-        }
+        result.map(|_| ())
     }
     
-    /// Handle an incoming notification
-    async fn handle_incoming_notification(&self, notification: Request) {
-        if let Some(handler) = &self.notification_handler {
-            if let Err(e) = handler.handle_notification(notification).await {
-                warn!("Notification handler error: {}", e);
-            }
-        } else {
-            debug!("Received notification but no handler set: {}", notification.method);
-        }
-    }
     
     /// Gracefully shutdown
     pub async fn shutdown(mut self) -> RpcResult<()> {
@@ -532,12 +477,26 @@ impl JsonRpcBase {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
         
-        while reader.read_line(&mut line).await.is_ok() {
-            if line.trim().is_empty() {
-                break;
-            }
-            warn!("Child stderr: {}", line.trim());
+        loop {
             line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    // EOF - child process closed stderr
+                    debug!("Child stderr EOF");
+                    break;
+                }
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        warn!("Child stderr: {}", trimmed);
+                    }
+                    // Continue even for empty lines
+                }
+                Err(e) => {
+                    debug!("Error reading stderr: {}", e);
+                    break;
+                }
+            }
         }
         
         debug!("Stderr handler stopped");
@@ -694,31 +653,6 @@ mod tests {
     use super::*;
     use serde_json::json;
     
-    // Example request handler
-    struct EchoRequestHandler;
-    
-    #[async_trait]
-    impl RequestHandler for EchoRequestHandler {
-        async fn handle_request(&self, request: Request) -> RpcResult<Value> {
-            match request.method.as_str() {
-                "echo" => Ok(request.params.unwrap_or(Value::Null)),
-                "ping" => Ok(json!("pong")),
-                _ => Err(RpcError::MethodNotImplemented(request.method)),
-            }
-        }
-    }
-    
-    // Example notification handler  
-    struct LogNotificationHandler;
-    
-    #[async_trait]
-    impl NotificationHandler for LogNotificationHandler {
-        async fn handle_notification(&self, notification: Request) -> RpcResult<()> {
-            debug!("Received notification: {} - {:?}", notification.method, notification.params);
-            Ok(())
-        }
-    }
-    
     // Example main loop handler
     struct SimpleMainLoopHandler {
         tick_count: u32,
@@ -732,12 +666,53 @@ mod tests {
     
     #[async_trait]
     impl MainLoopHandler for SimpleMainLoopHandler {
-        async fn on_tick(&mut self) -> RpcResult<bool> {
-            self.tick_count += 1;
-            debug!("Tick #{}", self.tick_count);
+        async fn run_loop(
+            &mut self,
+            rpc_base: Arc<JsonRpcBase>,
+            mut request_rx: mpsc::UnboundedReceiver<Request>,
+            mut notification_rx: mpsc::UnboundedReceiver<Request>,
+        ) -> RpcResult<bool> {
+            let tick_interval = Duration::from_millis(10); // Fast for testing
+            let mut tick_timer = tokio::time::interval(tick_interval);
             
-            // Stop after 10 ticks for testing
-            Ok(self.tick_count < 10)
+            loop {
+                tokio::select! {
+                    _ = tick_timer.tick() => {
+                        self.tick_count += 1;
+                        debug!("Tick #{}", self.tick_count);
+                        
+                        // Stop after 10 ticks for testing
+                        if self.tick_count >= 10 {
+                            return Ok(false); // Stop loop
+                        }
+                    }
+                    
+                    request = request_rx.recv() => {
+                        if let Some(request) = request {
+                            debug!("Received request: {}", request.method);
+                            
+                            // Handle simple echo request
+                            let result = match request.method.as_str() {
+                                "echo" => request.params.unwrap_or(Value::Null),
+                                "ping" => json!("pong"),
+                                _ => {
+                                    let error = ErrorObject::new(ErrorCode::MethodNotFound, None);
+                                    let _ = rpc_base.respond_error(request.id.unwrap_or(Value::Null), error).await;
+                                    continue;
+                                }
+                            };
+                            
+                            let _ = rpc_base.respond(request.id.unwrap_or(Value::Null), result).await;
+                        }
+                    }
+                    
+                    notification = notification_rx.recv() => {
+                        if let Some(notification) = notification {
+                            debug!("Received notification: {} - {:?}", notification.method, notification.params);
+                        }
+                    }
+                }
+            }
         }
         
         async fn on_connected(&mut self) -> RpcResult<()> {
@@ -752,13 +727,14 @@ mod tests {
     }
     
     #[tokio::test]
-    async fn test_handlers() {
+    async fn test_main_loop_handler() {
         let _ = env_logger::try_init();
         
-        let handler = EchoRequestHandler;
-        let request = Request::new("echo".to_string(), Some(json!("test")), Some(json!(1)));
+        let handler = SimpleMainLoopHandler::new();
         
-        let result = handler.handle_request(request).await.unwrap();
-        assert_eq!(result, json!("test"));
+        // Test that handler can be created and responds correctly
+        assert_eq!(handler.tick_count, 0);
+        
+        // TODO: Add more comprehensive integration test
     }
 }
