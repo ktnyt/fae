@@ -80,29 +80,34 @@ pub struct SearchQuery {
 #[derive(Debug)]
 pub struct TuiState {
     pub query: String,
+    pub cursor_position: usize, // 文字カーソル位置（UTF-8 文字境界）
     pub results: Vec<SearchResult>,
     pub selected_index: usize,
     pub search_mode: SearchMode,
     pub loading: bool,
     pub error_message: Option<String>,
     pub project_root: PathBuf,
+    pub show_help: bool, // ヘルプオーバーレイ表示フラグ
 }
 
 impl TuiState {
     pub fn new(project_root: PathBuf) -> Self {
         Self {
             query: String::new(),
+            cursor_position: 0,
             results: Vec::new(),
             selected_index: 0,
             search_mode: SearchMode::Content,
             loading: false,
             error_message: None,
             project_root,
+            show_help: false,
         }
     }
     
     /// クエリを更新してモードを自動検出
     pub fn update_query(&mut self, new_query: String) {
+        self.cursor_position = self.cursor_position.min(new_query.chars().count());
         self.query = new_query;
         self.detect_and_update_mode();
     }
@@ -140,6 +145,127 @@ impl TuiState {
     /// 選択されたアイテムを取得
     pub fn selected_result(&self) -> Option<&SearchResult> {
         self.results.get(self.selected_index)
+    }
+    
+    // Emacsライクな文字編集メソッド
+    
+    /// 一文字を指定位置に挿入
+    pub fn insert_char(&mut self, ch: char) {
+        let chars: Vec<char> = self.query.chars().collect();
+        let mut new_chars = chars;
+        new_chars.insert(self.cursor_position, ch);
+        self.query = new_chars.into_iter().collect();
+        self.cursor_position += 1;
+        self.detect_and_update_mode();
+    }
+    
+    /// Ctrl+A: 行頭に移動
+    pub fn move_cursor_to_beginning(&mut self) {
+        self.cursor_position = 0;
+    }
+    
+    /// Ctrl+E: 行末に移動
+    pub fn move_cursor_to_end(&mut self) {
+        self.cursor_position = self.query.chars().count();
+    }
+    
+    /// Ctrl+F: 一文字前進
+    pub fn move_cursor_forward(&mut self) {
+        let char_count = self.query.chars().count();
+        if self.cursor_position < char_count {
+            self.cursor_position += 1;
+        }
+    }
+    
+    /// Ctrl+B: 一文字後退
+    pub fn move_cursor_backward(&mut self) {
+        if self.cursor_position > 0 {
+            self.cursor_position -= 1;
+        }
+    }
+    
+    /// Ctrl+D: カーソル位置の文字を削除
+    pub fn delete_char_forward(&mut self) {
+        let chars: Vec<char> = self.query.chars().collect();
+        if self.cursor_position < chars.len() {
+            let mut new_chars = chars;
+            new_chars.remove(self.cursor_position);
+            self.query = new_chars.into_iter().collect();
+            self.detect_and_update_mode();
+        }
+    }
+    
+    /// Ctrl+H/Backspace: カーソル前の文字を削除
+    pub fn delete_char_backward(&mut self) {
+        if self.cursor_position > 0 {
+            let chars: Vec<char> = self.query.chars().collect();
+            let mut new_chars = chars;
+            new_chars.remove(self.cursor_position - 1);
+            self.query = new_chars.into_iter().collect();
+            self.cursor_position -= 1;
+            self.detect_and_update_mode();
+        }
+    }
+    
+    /// Ctrl+K: カーソル位置から行末まで削除
+    pub fn kill_line(&mut self) {
+        let chars: Vec<char> = self.query.chars().collect();
+        if self.cursor_position < chars.len() {
+            let new_chars: Vec<char> = chars.into_iter().take(self.cursor_position).collect();
+            self.query = new_chars.into_iter().collect();
+            self.detect_and_update_mode();
+        }
+    }
+    
+    /// Ctrl+U: 行全体をクリア
+    pub fn clear_line(&mut self) {
+        self.query.clear();
+        self.cursor_position = 0;
+        self.results.clear();
+        self.loading = false;
+        self.detect_and_update_mode();
+    }
+    
+    /// ヘルプオーバーレイの表示をトグル
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+    
+    /// 次の検索モードに切り替え（Tab）
+    pub fn cycle_search_mode_forward(&mut self) {
+        use crate::types::SearchMode;
+        self.search_mode = match self.search_mode {
+            SearchMode::Content => SearchMode::Symbol,
+            SearchMode::Symbol => SearchMode::File,
+            SearchMode::File => SearchMode::Regex,
+            SearchMode::Regex => SearchMode::Content,
+        };
+        self.update_query_with_mode_prefix();
+    }
+    
+    /// 前の検索モードに切り替え（Shift+Tab）
+    pub fn cycle_search_mode_backward(&mut self) {
+        use crate::types::SearchMode;
+        self.search_mode = match self.search_mode {
+            SearchMode::Content => SearchMode::Regex,
+            SearchMode::Symbol => SearchMode::Content,
+            SearchMode::File => SearchMode::Symbol,
+            SearchMode::Regex => SearchMode::File,
+        };
+        self.update_query_with_mode_prefix();
+    }
+    
+    /// 現在のクリーンクエリにモードプレフィックスを付けてqueryを更新
+    fn update_query_with_mode_prefix(&mut self) {
+        let clean_query = self.clean_query();
+        let prefix = match self.search_mode {
+            crate::types::SearchMode::Content => "",
+            crate::types::SearchMode::Symbol => "#",
+            crate::types::SearchMode::File => ">",
+            crate::types::SearchMode::Regex => "/",
+        };
+        self.query = format!("{}{}", prefix, clean_query);
+        self.cursor_position = self.query.chars().count();
     }
 }
 
@@ -357,54 +483,190 @@ impl TuiEngine {
             InputEvent::Key(key) => {
                 use crossterm::event::{KeyCode, KeyModifiers};
                 
+                // デバッグ用：TabとBackTabの検出を確認
+                if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+                    log::debug!("Key detected: {:?}", key);
+                }
+                
                 match key {
-                    // Ctrl+C または ESC で終了
-                    KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. }
-                    | KeyEvent { code: KeyCode::Esc, .. } => {
+                    // Ctrl+C で終了、ESC でヘルプ閉じるかアプリ終了
+                    KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } => {
                         return Ok(true); // Quit
                     }
-                    
-                    // 選択移動（Ctrl+N/P）
-                    KeyEvent { code: KeyCode::Char('n'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        self.state.select_next();
-                    }
-                    KeyEvent { code: KeyCode::Char('p'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        self.state.select_previous();
-                    }
-                    
-                    // 文字入力
-                    KeyEvent { code: KeyCode::Char(c), .. } => {
-                        let mut new_query = self.state.query.clone();
-                        new_query.push(c);
-                        self.state.update_query(new_query);
-                        self.trigger_search().await?;
-                    }
-                    
-                    // Backspace
-                    KeyEvent { code: KeyCode::Backspace, .. } => {
-                        let mut new_query = self.state.query.clone();
-                        new_query.pop();
-                        self.state.update_query(new_query);
-                        if self.state.query.is_empty() {
-                            self.state.results.clear();
-                            self.state.loading = false;
+                    KeyEvent { code: KeyCode::Esc, .. } => {
+                        if self.state.show_help {
+                            self.state.show_help = false; // ヘルプを閉じる
                         } else {
-                            self.trigger_search().await?;
+                            return Ok(true); // アプリ終了
                         }
                     }
                     
-                    // 選択移動（矢印キー）
-                    KeyEvent { code: KeyCode::Down, .. } => {
-                        self.state.select_next();
+                    // Emacsライクなカーソル移動（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_to_beginning();
+                        }
                     }
-                    KeyEvent { code: KeyCode::Up, .. } => {
-                        self.state.select_previous();
+                    KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_to_end();
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Char('f'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_forward();
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Char('b'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_backward();
+                        }
                     }
                     
-                    // Enter: ファイルを開く
+                    // Emacsライクな編集（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Char('d'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.delete_char_forward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Char('h'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.delete_char_backward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Char('k'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.kill_line();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Char('u'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.clear_line();
+                        }
+                    }
+                    
+                    // 選択移動（Ctrl+N/P）（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Char('n'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.select_next();
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Char('p'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.select_previous();
+                        }
+                    }
+                    
+                    // 矢印キーによるカーソル移動（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Left, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_backward();
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Right, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_forward();
+                        }
+                    }
+                    
+                    // 選択移動（矢印キー）（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Down, .. } => {
+                        if !self.state.show_help {
+                            self.state.select_next();
+                        }
+                    }
+                    KeyEvent { code: KeyCode::Up, .. } => {
+                        if !self.state.show_help {
+                            self.state.select_previous();
+                        }
+                    }
+                    
+                    // Tab: 次の検索モードに切り替え（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Tab, .. } => {
+                        if !self.state.show_help {
+                            self.state.cycle_search_mode_forward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    
+                    // BackTab (Shift+Tab): 前の検索モードに切り替え（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::BackTab, .. } => {
+                        if !self.state.show_help {
+                            self.state.cycle_search_mode_backward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    
+                    // 代替キーバインド: Ctrl+[ でBackward（一部ターミナルでのフォールバック）
+                    KeyEvent { code: KeyCode::Char('['), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.cycle_search_mode_backward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    
+                    // 代替キーバインド: Ctrl+] でForward（一部ターミナルでのフォールバック）
+                    KeyEvent { code: KeyCode::Char(']'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        if !self.state.show_help {
+                            self.state.cycle_search_mode_forward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    
+                    // Enter: ファイルを開く（ヘルプ表示中は無効）
                     KeyEvent { code: KeyCode::Enter, .. } => {
-                        if let Some(result) = self.state.selected_result() {
-                            self.open_file(&result.file_path).await?;
+                        if !self.state.show_help {
+                            if let Some(result) = self.state.selected_result() {
+                                self.open_file(&result.file_path).await?;
+                            }
+                        }
+                    }
+                    
+                    // Backspace（従来の削除）（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Backspace, .. } => {
+                        if !self.state.show_help {
+                            self.state.delete_char_backward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    
+                    // Delete（前方削除）（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Delete, .. } => {
+                        if !self.state.show_help {
+                            self.state.delete_char_forward();
+                            self.trigger_search_if_needed().await?;
+                        }
+                    }
+                    
+                    // Home/End キー（ヘルプ表示中は無効）
+                    KeyEvent { code: KeyCode::Home, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_to_beginning();
+                        }
+                    }
+                    KeyEvent { code: KeyCode::End, .. } => {
+                        if !self.state.show_help {
+                            self.state.move_cursor_to_end();
+                        }
+                    }
+                    
+                    // ヘルプオーバーレイ表示
+                    KeyEvent { code: KeyCode::Char('?'), modifiers, .. } 
+                        if !modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.state.toggle_help();
+                    }
+                    
+                    // 通常の文字入力（Ctrlが押されていない場合、'?'以外）
+                    KeyEvent { code: KeyCode::Char(c), modifiers, .. } 
+                        if !modifiers.contains(KeyModifiers::CONTROL) && c != '?' => {
+                        if self.state.show_help {
+                            // ヘルプ表示中は文字入力を無視
+                        } else {
+                            self.state.insert_char(c);
+                            self.trigger_search().await?;
                         }
                     }
                     
@@ -444,6 +706,17 @@ impl TuiEngine {
         }
         
         Ok(())
+    }
+    
+    /// 検索が必要な場合のみトリガー（空の場合は結果をクリア）
+    async fn trigger_search_if_needed(&mut self) -> Result<()> {
+        if self.state.query.trim().is_empty() {
+            self.state.results.clear();
+            self.state.loading = false;
+            Ok(())
+        } else {
+            self.trigger_search().await
+        }
     }
     
     /// 検索をトリガー
@@ -722,14 +995,16 @@ impl TuiEngine {
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                     ),
                     Span::styled(" results | ", Style::default().fg(Color::Gray)),
+                    
+                    // Basic keys
                     Span::styled("↑↓", Style::default().fg(Color::Green)),
-                    Span::styled("/", Style::default().fg(Color::Gray)),
-                    Span::styled("C-p", Style::default().fg(Color::Green)),
-                    Span::styled("/", Style::default().fg(Color::Gray)),
-                    Span::styled("C-n", Style::default().fg(Color::Green)),
-                    Span::styled(" navigate | ", Style::default().fg(Color::Gray)),
+                    Span::styled(" nav | ", Style::default().fg(Color::Gray)),
+                    Span::styled("Tab", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(" mode | ", Style::default().fg(Color::Gray)),
                     Span::styled("Enter", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
                     Span::styled(" open | ", Style::default().fg(Color::Gray)),
+                    Span::styled("?", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled(" help | ", Style::default().fg(Color::Gray)),
                     Span::styled("Esc", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
                     Span::styled(" quit", Style::default().fg(Color::Gray)),
                 ]
@@ -748,9 +1023,177 @@ impl TuiEngine {
                     .borders(Borders::ALL)
                     .title(Span::styled(" Status ", status_title_style)));
             f.render_widget(status_block, chunks[2]);
+            
+            // ヘルプオーバーレイの表示
+            if self.state.show_help {
+                Self::render_help_overlay(f);
+            }
         })?;
         
         Ok(())
+    }
+    
+    /// ヘルプオーバーレイを描画
+    fn render_help_overlay(f: &mut ratatui::Frame) {
+        use ratatui::{
+            widgets::{Block, Borders, Paragraph, Clear},
+            layout::Alignment,
+            style::{Color, Style, Modifier},
+            text::{Line, Span},
+        };
+        
+        // 画面サイズの70%のサイズでセンタリング
+        let size = f.size();
+        let popup_area = ratatui::layout::Rect {
+            x: size.width / 6,
+            y: size.height / 8,
+            width: size.width * 2 / 3,
+            height: size.height * 3 / 4,
+        };
+        
+        // 背景をクリア
+        f.render_widget(Clear, popup_area);
+        
+        // ヘルプコンテンツを作成
+        let help_lines = vec![
+            Line::from(vec![
+                Span::styled("fae - Fast And Elegant Search", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Search Modes:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(vec![
+                Span::styled("  Content  ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled("Normal text search (default)", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  #symbol  ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("Search functions, classes, variables", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  >file    ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                Span::styled("Search file names and paths", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  /regex   ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("Regular expression search", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Mode Switching:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(vec![
+                Span::styled("  Tab      ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("Cycle to next search mode", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Shift+Tab", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("Cycle to previous search mode", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+]/[ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("Alternative mode cycling (forward/backward)", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Navigation:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(vec![
+                Span::styled("  ↑↓       ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("Navigate search results", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+P/N ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled("Navigate search results (Emacs style)", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter    ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                Span::styled("Open selected file", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Cursor Movement:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(vec![
+                Span::styled("  ←→       ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Move cursor left/right", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+A   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Move to beginning of line", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+E   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Move to end of line", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+F   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Move forward one character", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+B   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Move backward one character", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Home/End ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Move to beginning/end of line", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Editing:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(vec![
+                Span::styled("  Backspace", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Delete character before cursor", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Delete   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Delete character at cursor", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+H   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Delete character before cursor", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+D   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Delete character at cursor", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+K   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Delete from cursor to end of line", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+U   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled("Clear entire line", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Other:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            ]),
+            Line::from(vec![
+                Span::styled("  ?        ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("Show this help", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Esc      ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("Close help or quit application", Style::default().fg(Color::Gray))
+            ]),
+            Line::from(vec![
+                Span::styled("  Ctrl+C   ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled("Quit application", Style::default().fg(Color::Gray))
+            ]),
+        ];
+        
+        let help_paragraph = Paragraph::new(help_lines)
+            .block(Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(" Help (Press ? or Esc to close) ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+                .style(Style::default().bg(Color::Black)))
+            .alignment(Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        
+        f.render_widget(help_paragraph, popup_area);
     }
 }
 
