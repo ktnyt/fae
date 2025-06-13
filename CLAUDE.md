@@ -169,7 +169,7 @@ cargo build --release # Release build must succeed
 - **`src/index_manager.rs`**: File exclusion logic and discovery
 - **`tests/`**: Comprehensive test suite (92+ tests) with security and real-world scenarios
 
-## Current Status (2025-06-13)
+## Current Status (2025-06-14)
 
 ### Completed Features ✅
 - **Phase 1-7**: Complete TUI implementation with async iterator + message engine
@@ -184,6 +184,11 @@ cargo build --release # Release build must succeed
   - Created reusable EditableText trait pattern
   - Unified style management with TuiStyles structure
   - Improved maintainability and testability
+- **JSON-RPC Worker Architecture**: Complete implementation (2025-06-14)
+  - JsonRpcBase: Bidirectional stdio communication with LSP-style framing
+  - ContentSearchWorker: ripgrep integration with JSON-RPC protocol
+  - SearchRouter: Message routing with auto-worker startup
+  - Integration Tests: Full end-to-end validation of worker communication
 
 ### Symbol Index Implementation Status (2025-06-13)
 - **SearchCoordinator**: プログレッシブインデックス構築、並列シンボル抽出
@@ -191,6 +196,13 @@ cargo build --release # Release build must succeed
 - **CacheManager**: LRUキャッシュ、変更検知、100MBメモリ制限
 - **Tree-sitter Integration**: 4言語対応（Rust, TypeScript, JavaScript, Python）
 - **IndexManager**: ファイル発見、.gitignore統合、バイナリ除外
+
+### JSON-RPC Worker Implementation Status (2025-06-14)
+- **JsonRpcBase**: LSPスタイルstdio通信、双方向メッセージング完成
+- **ContentSearchWorker**: ripgrep統合、`search.clear`/`search.match`通知実装
+- **SearchRouter**: 自動ワーカー起動、メッセージルーティング、TUI接続管理
+- **Test Coverage**: 単体テスト（SearchRouter、ContentSearchWorker）、統合テスト全て成功
+- **Architecture Validation**: 物理プロセス分離アーキテクチャの実用性を実証
 
 ### Next Phase Candidates (Phase 8-9)
 - **File Watching**: Real-time index updates with notify integration
