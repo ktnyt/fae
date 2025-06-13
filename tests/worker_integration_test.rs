@@ -1,6 +1,6 @@
 use fae::workers::{
-    WorkerManager, SearchHandlerWorker, ContentSearchWorker,
-    Message, WorkerMessage, SearchHandlerMessage, TuiMessage
+    WorkerManager, SearchRouterWorker, ContentSearchWorker,
+    Message, WorkerMessage, SearchRouterMessage, TuiMessage
 };
 use tokio::time::Duration;
 use tempfile::TempDir;
@@ -18,15 +18,15 @@ async fn test_basic_worker_messaging() -> Result<()> {
     let mut manager = WorkerManager::new();
     let message_bus = manager.get_message_bus();
     
-    // SearchHandlerWorkerを追加
-    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
-    search_handler.set_message_bus(message_bus.clone());
-    manager.add_worker(search_handler).await?;
+    // SearchRouterWorkerを追加
+    let mut search_router = SearchRouterWorker::new("search_router".to_string());
+    search_router.set_message_bus(message_bus.clone());
+    manager.add_worker(search_router).await?;
     
     // ContentSearchWorkerを追加
     let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
-        "search_handler".to_string(),
+        "search_router".to_string(),
         &project_root,
     ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
@@ -41,7 +41,7 @@ async fn test_basic_worker_messaging() -> Result<()> {
     
     {
         let bus_guard = message_bus.read().await;
-        bus_guard.send_to("search_handler", msg)?;
+        bus_guard.send_to("search_router", msg)?;
     }
     
     // 短時間待機して処理を完了させる
@@ -93,18 +93,18 @@ async fn test_worker_lifecycle() -> Result<()> {
     
     let mut manager = WorkerManager::new();
     
-    // SearchHandlerWorkerの追加とテスト
-    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
-    search_handler.set_message_bus(manager.get_message_bus());
+    // SearchRouterWorkerの追加とテスト
+    let mut search_router = SearchRouterWorker::new("search_router".to_string());
+    search_router.set_message_bus(manager.get_message_bus());
     
     // ワーカーを追加（initialization含む）
-    manager.add_worker(search_handler).await?;
-    println!("✅ SearchHandlerWorker worker added and initialized");
+    manager.add_worker(search_router).await?;
+    println!("✅ SearchRouterWorker worker added and initialized");
     
     // ContentSearchWorkerの追加とテスト
     let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
-        "search_handler".to_string(),
+        "search_router".to_string(),
         &project_root,
     ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(manager.get_message_bus());
@@ -141,24 +141,24 @@ async fn test_protocol_type_safety() -> Result<()> {
         _ => panic!("Wrong message type recovered"),
     }
     
-    // SearchHandlerMessage
-    let search_msg = SearchHandlerMessage::SearchMatch {
+    // SearchRouterMessage
+    let search_msg = SearchRouterMessage::SearchMatch {
         filename: "test.rs".to_string(),
         line: 42,
         column: 10,
         content: "fn test()".to_string(),
     };
-    let worker_msg = WorkerMessage::SearchHandler(search_msg);
+    let worker_msg = WorkerMessage::SearchRouter(search_msg);
     let message: Message = worker_msg.into();
     let recovered = WorkerMessage::try_from(message)?;
     
     match recovered {
-        WorkerMessage::SearchHandler(SearchHandlerMessage::SearchMatch { filename, line, column, content }) => {
+        WorkerMessage::SearchRouter(SearchRouterMessage::SearchMatch { filename, line, column, content }) => {
             assert_eq!(filename, "test.rs");
             assert_eq!(line, 42);
             assert_eq!(column, 10);
             assert_eq!(content, "fn test()");
-            println!("✅ SearchHandlerMessage type safety verified");
+            println!("✅ SearchRouterMessage type safety verified");
         }
         _ => panic!("Wrong message type recovered"),
     }
@@ -176,13 +176,13 @@ async fn test_multiple_queries() -> Result<()> {
     let message_bus = manager.get_message_bus();
     
     // ワーカーを追加
-    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
-    search_handler.set_message_bus(message_bus.clone());
-    manager.add_worker(search_handler).await?;
+    let mut search_router = SearchRouterWorker::new("search_router".to_string());
+    search_router.set_message_bus(message_bus.clone());
+    manager.add_worker(search_router).await?;
     
     let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
-        "search_handler".to_string(),
+        "search_router".to_string(),
         &project_root,
     ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
@@ -199,7 +199,7 @@ async fn test_multiple_queries() -> Result<()> {
         
         {
             let bus_guard = message_bus.read().await;
-            bus_guard.send_to("search_handler", msg)?;
+            bus_guard.send_to("search_router", msg)?;
         }
         
         // 各クエリ間で短時間待機

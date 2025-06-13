@@ -1,6 +1,6 @@
 use fae::workers::{
-    WorkerManager, SearchHandlerWorker, ContentSearchWorker, SimpleTuiWorker,
-    Message, MessageBus, WorkerMessage, SearchHandlerMessage, TuiMessage
+    WorkerManager, SearchRouterWorker, ContentSearchWorker, SimpleTuiWorker,
+    Message, MessageBus, WorkerMessage, SearchRouterMessage, TuiMessage
 };
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
@@ -22,8 +22,8 @@ async fn test_tui_worker_simulation() -> Result<()> {
     let mut manager = WorkerManager::new();
     let message_bus = manager.get_message_bus();
     
-    // SearchHandlerWorkerワーカーを追加（TUIの代わりに直接メッセージを受信）
-    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
+    // SearchRouterWorkerワーカーを追加（TUIの代わりに直接メッセージを受信）
+    let mut search_handler = SearchRouterWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
@@ -86,8 +86,8 @@ async fn test_with_real_tui_worker() -> Result<()> {
     let mut tui_worker = SimpleTuiWorker::new("tui".to_string());
     tui_worker.set_message_bus(message_bus.clone());
     
-    // SearchHandlerWorkerワーカーを追加
-    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
+    // SearchRouterWorkerワーカーを追加
+    let mut search_handler = SearchRouterWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
@@ -158,7 +158,7 @@ async fn test_search_cancellation() -> Result<()> {
     let mut manager = WorkerManager::new();
     let message_bus = manager.get_message_bus();
     
-    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
+    let mut search_handler = SearchRouterWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
@@ -284,16 +284,16 @@ impl fae::workers::Worker for TuiSimulator {
     async fn handle_message(&mut self, message: Message) -> Result<(), fae::workers::worker::WorkerError> {
         if let Ok(worker_msg) = WorkerMessage::try_from(message) {
             match worker_msg {
-                WorkerMessage::SearchHandler(SearchHandlerMessage::SearchMatch { filename, line, column, content }) => {
+                WorkerMessage::SearchRouter(SearchRouterMessage::SearchMatch { filename, line, column, content }) => {
                     let result = format!("{}:{}:{} {}", filename, line, column, content);
                     if let Some(sender) = &self.result_sender {
                         let _ = sender.send(result);
                     }
                 }
-                WorkerMessage::SearchHandler(SearchHandlerMessage::SearchClear) => {
+                WorkerMessage::SearchRouter(SearchRouterMessage::SearchClear) => {
                     println!("🧹 Search cleared");
                 }
-                WorkerMessage::SearchHandler(SearchHandlerMessage::IndexProgress { indexed_files, total_files, symbols, elapsed }) => {
+                WorkerMessage::SearchRouter(SearchRouterMessage::IndexProgress { indexed_files, total_files, symbols, elapsed }) => {
                     println!("📊 Index progress: {}/{} files, {} symbols, {}ms", indexed_files, total_files, symbols, elapsed);
                 }
                 _ => {

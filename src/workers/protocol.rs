@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// TUI-SearchHandler-BaseSearcher間の通信プロトコル定義
+/// TUI-SearchRouter-BaseSearcher間の通信プロトコル定義
 /// 設計書(.claude/tuidesign.md)に基づく実装
 
-/// TUI → SearchHandler メッセージ
+/// TUI → SearchRouter メッセージ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", content = "payload")]
 pub enum TuiMessage {
@@ -12,10 +12,10 @@ pub enum TuiMessage {
     UserQuery { query: String },
 }
 
-/// SearchHandler → TUI メッセージ
+/// SearchRouter → TUI メッセージ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", content = "payload")]
-pub enum SearchHandlerMessage {
+pub enum SearchRouterMessage {
     /// method: search/clear
     #[serde(rename = "search/clear")]
     SearchClear,
@@ -29,7 +29,7 @@ pub enum SearchHandlerMessage {
         content: String,
     },
 
-    /// method: index/progress (SymbolSearcher → TUI via SearchHandler)
+    /// method: index/progress (SymbolSearcher → TUI via SearchRouter)
     #[serde(rename = "index/progress")]
     IndexProgress {
         indexed_files: u32,
@@ -38,7 +38,7 @@ pub enum SearchHandlerMessage {
         elapsed: u64, // milliseconds
     },
 
-    /// method: index/update (SymbolSearcher → TUI via SearchHandler)
+    /// method: index/update (SymbolSearcher → TUI via SearchRouter)
     #[serde(rename = "index/update")]
     IndexUpdate {
         filename: String,
@@ -47,7 +47,7 @@ pub enum SearchHandlerMessage {
     },
 }
 
-/// SearchHandler → BaseSearcher メッセージ
+/// SearchRouter → BaseSearcher メッセージ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", content = "payload")]
 pub enum SearchQueryMessage {
@@ -56,7 +56,7 @@ pub enum SearchQueryMessage {
     UserQuery { query: String },
 }
 
-/// BaseSearcher → SearchHandler メッセージ
+/// BaseSearcher → SearchRouter メッセージ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", content = "payload")]
 pub enum SearchResultMessage {
@@ -98,8 +98,8 @@ pub enum WorkerMessage {
     #[serde(rename = "tui")]
     Tui(TuiMessage),
 
-    #[serde(rename = "search_handler")]
-    SearchHandler(SearchHandlerMessage),
+    #[serde(rename = "search_router")]
+    SearchRouter(SearchRouterMessage),
 
     #[serde(rename = "search_query")]
     SearchQuery(SearchQueryMessage),
@@ -117,13 +117,13 @@ impl WorkerMessage {
         Self::Tui(TuiMessage::UserQuery { query })
     }
 
-    /// SearchHandlerメッセージを作成
+    /// SearchRouterメッセージを作成
     pub fn search_clear() -> Self {
-        Self::SearchHandler(SearchHandlerMessage::SearchClear)
+        Self::SearchRouter(SearchRouterMessage::SearchClear)
     }
 
     pub fn search_match(filename: String, line: u32, column: u32, content: String) -> Self {
-        Self::SearchHandler(SearchHandlerMessage::SearchMatch {
+        Self::SearchRouter(SearchRouterMessage::SearchMatch {
             filename,
             line,
             column,
@@ -137,7 +137,7 @@ impl WorkerMessage {
         symbols: u32,
         elapsed: u64,
     ) -> Self {
-        Self::SearchHandler(SearchHandlerMessage::IndexProgress {
+        Self::SearchRouter(SearchRouterMessage::IndexProgress {
             indexed_files,
             total_files,
             symbols,
@@ -146,7 +146,7 @@ impl WorkerMessage {
     }
 
     pub fn index_update(filename: String, symbols: u32, elapsed: u64) -> Self {
-        Self::SearchHandler(SearchHandlerMessage::IndexUpdate {
+        Self::SearchRouter(SearchRouterMessage::IndexUpdate {
             filename,
             symbols,
             elapsed,
@@ -189,7 +189,7 @@ impl WorkerMessage {
     pub fn get_type(&self) -> &'static str {
         match self {
             Self::Tui(_) => "tui",
-            Self::SearchHandler(_) => "search_handler",
+            Self::SearchRouter(_) => "search_handler",
             Self::SearchQuery(_) => "search_query",
             Self::SearchResult(_) => "search_result",
             Self::Watcher(_) => "watcher",
@@ -200,10 +200,10 @@ impl WorkerMessage {
     pub fn get_method(&self) -> &'static str {
         match self {
             Self::Tui(TuiMessage::UserQuery { .. }) => "user/query",
-            Self::SearchHandler(SearchHandlerMessage::SearchClear) => "search/clear",
-            Self::SearchHandler(SearchHandlerMessage::SearchMatch { .. }) => "search/match",
-            Self::SearchHandler(SearchHandlerMessage::IndexProgress { .. }) => "index/progress",
-            Self::SearchHandler(SearchHandlerMessage::IndexUpdate { .. }) => "index/update",
+            Self::SearchRouter(SearchRouterMessage::SearchClear) => "search/clear",
+            Self::SearchRouter(SearchRouterMessage::SearchMatch { .. }) => "search/match",
+            Self::SearchRouter(SearchRouterMessage::IndexProgress { .. }) => "index/progress",
+            Self::SearchRouter(SearchRouterMessage::IndexUpdate { .. }) => "index/update",
             Self::SearchQuery(SearchQueryMessage::UserQuery { .. }) => "user/query",
             Self::SearchResult(SearchResultMessage::SearchClear) => "search/clear",
             Self::SearchResult(SearchResultMessage::SearchMatch { .. }) => "search/match",
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn test_search_handler_message_serialization() {
+    fn test_search_router_message_serialization() {
         let msg = WorkerMessage::search_match(
             "src/main.rs".to_string(),
             42,
@@ -256,7 +256,7 @@ mod tests {
         );
         let json = serde_json::to_value(&msg).unwrap();
         
-        assert_eq!(json["type"], "search_handler");
+        assert_eq!(json["type"], "search_router");
         assert_eq!(json["message"]["method"], "search/match");
         assert_eq!(json["message"]["payload"]["filename"], "src/main.rs");
         assert_eq!(json["message"]["payload"]["line"], 42);
@@ -283,7 +283,7 @@ mod tests {
         
         let converted_back = WorkerMessage::try_from(msg).unwrap();
         match converted_back {
-            WorkerMessage::SearchHandler(SearchHandlerMessage::IndexProgress {
+            WorkerMessage::SearchRouter(SearchRouterMessage::IndexProgress {
                 indexed_files,
                 total_files,
                 symbols,

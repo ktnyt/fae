@@ -64,7 +64,7 @@ pub use searchers::{ContentSearcher, ContentSearchStream, RegexSearcher, RegexSe
 pub use symbol_index::{SymbolIndex, SymbolMetadata, SearchHit};
 pub use workers::{
     Worker, WorkerHandle, WorkerManager, Message, MessageBus, WorkerMessage,
-    SearchHandlerWorker, ContentSearchWorker, SimpleTuiWorker
+    SearchRouterWorker, ContentSearchWorker, SimpleTuiWorker
 };
 
 // Tree-sitter integration (to be implemented)

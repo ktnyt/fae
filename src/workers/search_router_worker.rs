@@ -3,15 +3,15 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// SearchHandlerWorker - TUIとBaseSearcher間の仲介役
-pub struct SearchHandlerWorker {
+/// SearchRouterWorker - TUIとBaseSearcher間のメッセージルーティング
+pub struct SearchRouterWorker {
     worker_id: String,
     message_bus: Option<Arc<RwLock<crate::workers::MessageBus>>>,
     current_query: Option<String>,
     content_searcher_id: String,
 }
 
-impl SearchHandlerWorker {
+impl SearchRouterWorker {
     pub fn new(worker_id: String) -> Self {
         Self {
             worker_id,
@@ -50,7 +50,7 @@ impl SearchHandlerWorker {
             TuiMessage::UserQuery { query } => {
                 self.current_query = Some(query.clone());
                 
-                // ContentSearcherに検索クエリを送信
+                // ContentSearcherに検索クエリを送信（ContentSearchWorker側で割り込み処理）
                 let search_msg = WorkerMessage::search_query(query);
                 self.send_to_searcher(&self.content_searcher_id, search_msg).await?;
             }
@@ -75,7 +75,7 @@ impl SearchHandlerWorker {
 }
 
 #[async_trait]
-impl Worker for SearchHandlerWorker {
+impl Worker for SearchRouterWorker {
     fn worker_id(&self) -> &str {
         &self.worker_id
     }

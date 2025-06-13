@@ -1,4 +1,4 @@
-use crate::workers::{Worker, Message, WorkerMessage, SearchHandlerMessage};
+use crate::workers::{Worker, Message, WorkerMessage, SearchRouterMessage};
 use async_trait::async_trait;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -73,17 +73,17 @@ impl SimpleTuiWorker {
 
 
 
-    fn handle_search_message(&self, message: SearchHandlerMessage) {
+    fn handle_search_message(&self, message: SearchRouterMessage) {
         if let Some(sender) = &self.ui_update_sender {
             let update = match message {
-                SearchHandlerMessage::SearchClear => UiUpdate::SearchClear,
-                SearchHandlerMessage::SearchMatch { filename, line, column, content } => {
+                SearchRouterMessage::SearchClear => UiUpdate::SearchClear,
+                SearchRouterMessage::SearchMatch { filename, line, column, content } => {
                     UiUpdate::SearchMatch { filename, line, column, content }
                 }
-                SearchHandlerMessage::IndexProgress { indexed_files, total_files, symbols, elapsed } => {
+                SearchRouterMessage::IndexProgress { indexed_files, total_files, symbols, elapsed } => {
                     UiUpdate::IndexProgress { indexed_files, total_files, symbols, elapsed }
                 }
-                SearchHandlerMessage::IndexUpdate { .. } => return, // 無視
+                SearchRouterMessage::IndexUpdate { .. } => return, // 無視
             };
 
             let _ = sender.send(update);
@@ -116,7 +116,7 @@ impl Worker for SimpleTuiWorker {
     async fn handle_message(&mut self, message: Message) -> Result<(), crate::workers::worker::WorkerError> {
         if let Ok(worker_msg) = WorkerMessage::try_from(message) {
             match worker_msg {
-                WorkerMessage::SearchHandler(search_msg) => {
+                WorkerMessage::SearchRouter(search_msg) => {
                     self.handle_search_message(search_msg);
                 }
                 _ => {
@@ -341,7 +341,7 @@ async fn send_query_static(
         let msg: Message = message.into();
         
         let bus_guard = bus.read().await;
-        bus_guard.send_to("search_handler", msg).map_err(|e| format!("Failed to send query: {}", e))?;
+        bus_guard.send_to("search_router", msg).map_err(|e| format!("Failed to send query: {}", e))?;
     }
     Ok(())
 }
