@@ -1,5 +1,4 @@
-use fae::jsonrpc_base::{JsonRpcBase, MainLoopHandler, RpcResult, RpcError};
-use fae::jsonrpc::{Request, ErrorObject, ErrorCode};
+use fae::jsonrpc::{JsonRpcBase, MainLoopHandler, RpcResult, RpcError, Request, ErrorObject, ErrorCode};
 use serde_json::{json, Value};
 use async_trait::async_trait;
 use log::{info, debug, error};

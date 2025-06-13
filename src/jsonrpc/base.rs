@@ -1,4 +1,4 @@
-use crate::jsonrpc::{Request, Response, Message, ErrorObject, ErrorCode};
+use super::types::{Request, Response, Message, ErrorObject, ErrorCode};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
