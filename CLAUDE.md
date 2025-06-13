@@ -178,6 +178,12 @@ cargo build --release # Release build must succeed
 - **Test Coverage**: 171 total tests (119 existing + 52 new TUI-related)
 - **Production Ready**: Full CLI compatibility maintained
 - **Symbol Index Architecture**: 完全な階層化アーキテクチャが実装済み
+- **TUI Refactoring Phase 1**: Modular architecture implemented (2025-06-13)
+  - Separated input handling, text editing, styles, and constants
+  - Eliminated 200+ lines of duplicated code from src/tui.rs
+  - Created reusable EditableText trait pattern
+  - Unified style management with TuiStyles structure
+  - Improved maintainability and testability
 
 ### Symbol Index Implementation Status (2025-06-13)
 - **SearchCoordinator**: プログレッシブインデックス構築、並列シンボル抽出

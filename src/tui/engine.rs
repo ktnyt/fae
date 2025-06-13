@@ -8,12 +8,16 @@ use crate::types::{SearchResult, SearchMode};
 use crate::cli::SearchRunner;
 use crate::realtime_indexer::{RealtimeIndexer, FileChangeEvent, IndexUpdateResult};
 use crate::cache_manager::CacheManager;
+
+// 新しいTUIモジュールをインポート
+use super::{TuiStyles, EditableText, InputHandler, InputResult, NavigationAction};
+use super::constants::timing;
+
 use anyhow::Result;
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use futures_util::{Stream, StreamExt};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -156,85 +160,26 @@ impl TuiState {
         self.results.get(self.selected_index)
     }
     
-    // Emacsライクな文字編集メソッド
+}
+
+/// TuiStateにEditableTextトレイトを実装
+impl EditableText for TuiState {
+    fn text(&self) -> &str {
+        &self.query
+    }
     
-    /// 一文字を指定位置に挿入
-    pub fn insert_char(&mut self, ch: char) {
-        let chars: Vec<char> = self.query.chars().collect();
-        let mut new_chars = chars;
-        new_chars.insert(self.cursor_position, ch);
-        self.query = new_chars.into_iter().collect();
-        self.cursor_position += 1;
+    fn cursor_position(&self) -> usize {
+        self.cursor_position
+    }
+    
+    fn set_text_and_cursor(&mut self, text: String, cursor: usize) {
+        self.query = text;
+        self.cursor_position = cursor;
         self.detect_and_update_mode();
     }
-    
-    /// Ctrl+A: 行頭に移動
-    pub fn move_cursor_to_beginning(&mut self) {
-        self.cursor_position = 0;
-    }
-    
-    /// Ctrl+E: 行末に移動
-    pub fn move_cursor_to_end(&mut self) {
-        self.cursor_position = self.query.chars().count();
-    }
-    
-    /// Ctrl+F: 一文字前進
-    pub fn move_cursor_forward(&mut self) {
-        let char_count = self.query.chars().count();
-        if self.cursor_position < char_count {
-            self.cursor_position += 1;
-        }
-    }
-    
-    /// Ctrl+B: 一文字後退
-    pub fn move_cursor_backward(&mut self) {
-        if self.cursor_position > 0 {
-            self.cursor_position -= 1;
-        }
-    }
-    
-    /// Ctrl+D: カーソル位置の文字を削除
-    pub fn delete_char_forward(&mut self) {
-        let chars: Vec<char> = self.query.chars().collect();
-        if self.cursor_position < chars.len() {
-            let mut new_chars = chars;
-            new_chars.remove(self.cursor_position);
-            self.query = new_chars.into_iter().collect();
-            self.detect_and_update_mode();
-        }
-    }
-    
-    /// Ctrl+H/Backspace: カーソル前の文字を削除
-    pub fn delete_char_backward(&mut self) {
-        if self.cursor_position > 0 {
-            let chars: Vec<char> = self.query.chars().collect();
-            let mut new_chars = chars;
-            new_chars.remove(self.cursor_position - 1);
-            self.query = new_chars.into_iter().collect();
-            self.cursor_position -= 1;
-            self.detect_and_update_mode();
-        }
-    }
-    
-    /// Ctrl+K: カーソル位置から行末まで削除
-    pub fn kill_line(&mut self) {
-        let chars: Vec<char> = self.query.chars().collect();
-        if self.cursor_position < chars.len() {
-            let new_chars: Vec<char> = chars.into_iter().take(self.cursor_position).collect();
-            self.query = new_chars.into_iter().collect();
-            self.detect_and_update_mode();
-        }
-    }
-    
-    /// Ctrl+U: 行全体をクリア
-    pub fn clear_line(&mut self) {
-        self.query.clear();
-        self.cursor_position = 0;
-        self.results.clear();
-        self.loading = false;
-        self.detect_and_update_mode();
-    }
-    
+}
+
+impl TuiState {
     /// ヘルプオーバーレイの表示をトグル
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
@@ -286,7 +231,7 @@ pub fn create_input_stream() -> impl Stream<Item = InputEvent> {
     tokio::spawn(async move {
         loop {
             // 非ブロッキングでイベントをポーリング
-            if crossterm::event::poll(Duration::from_millis(50)).unwrap_or(false) {
+            if crossterm::event::poll(timing::INPUT_POLL).unwrap_or(false) {
                 if let Ok(event) = crossterm::event::read() {
                     let input_event = match event {
                         CrosstermEvent::Key(key) => InputEvent::Key(key),
@@ -304,7 +249,7 @@ pub fn create_input_stream() -> impl Stream<Item = InputEvent> {
             }
             
             // 少し待機してCPU使用率を抑える
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(timing::IDLE_POLL).await;
         }
     });
     
@@ -398,6 +343,8 @@ pub struct TuiEngine {
     search_tx: mpsc::UnboundedSender<SearchQuery>,
     tick_interval: tokio::time::Interval,
     terminal: ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    // UI関連
+    styles: TuiStyles,
     // リアルタイム機能
     cache_manager: Arc<Mutex<CacheManager>>,
     realtime_indexer: Option<RealtimeIndexer>,
@@ -421,8 +368,8 @@ impl TuiEngine {
         let (search_tx, search_rx) = mpsc::unbounded_channel();
         let search_stream = Box::pin(create_search_stream(search_runner, search_rx));
         
-        // UIティックタイマー（60fps）
-        let tick_interval = tokio::time::interval(Duration::from_millis(16));
+        // UIティックタイマー（60fps）  
+        let tick_interval = tokio::time::interval(timing::UI_REFRESH);
         
         // Terminal初期化（一度だけ）
         let mut stdout = std::io::stdout();
@@ -454,6 +401,7 @@ impl TuiEngine {
             search_tx,
             tick_interval,
             terminal,
+            styles: TuiStyles::default(),
             cache_manager,
             realtime_indexer,
         })
@@ -529,200 +477,70 @@ impl TuiEngine {
     async fn handle_input(&mut self, input: InputEvent) -> Result<bool> {
         match input {
             InputEvent::Key(key) => {
-                use crossterm::event::{KeyCode, KeyModifiers};
+                // 借用問題を避けるため、値をコピー
+                let current_mode = self.state.search_mode.clone();
+                let help_visible = self.state.show_help;
+                let result_count = self.state.results.len();
                 
-                // デバッグ用：TabとBackTabの検出を確認
-                if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-                    log::debug!("Key detected: {:?}", key);
-                }
+                // 新しいInputHandlerを使用
+                let result = InputHandler::handle_key(
+                    &mut self.state,
+                    key,
+                    current_mode,
+                    help_visible,
+                    result_count
+                );
                 
-                match key {
-                    // Ctrl+C で終了、ESC でヘルプ閉じるかアプリ終了
-                    KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        return Ok(true); // Quit
+                match result {
+                    InputResult::Quit => return Ok(true),
+                    InputResult::ToggleHelp => {
+                        self.state.toggle_help();
                     }
-                    KeyEvent { code: KeyCode::Esc, .. } => {
-                        if self.state.show_help {
-                            self.state.show_help = false; // ヘルプを閉じる
-                        } else {
-                            return Ok(true); // アプリ終了
+                    InputResult::SelectResult => {
+                        if let Some(result) = self.state.selected_result() {
+                            self.open_file(&result.file_path).await?;
                         }
                     }
-                    
-                    // Emacsライクなカーソル移動（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_to_beginning();
-                        }
+                    InputResult::ModeChanged(new_mode) => {
+                        self.state.search_mode = new_mode;
+                        self.state.update_query_with_mode_prefix();
+                        self.trigger_search_if_needed().await?;
                     }
-                    KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_to_end();
-                        }
+                    InputResult::QueryUpdated => {
+                        self.trigger_search_if_needed().await?;
                     }
-                    KeyEvent { code: KeyCode::Char('f'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_forward();
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Char('b'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_backward();
-                        }
-                    }
-                    
-                    // Emacsライクな編集（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Char('d'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.delete_char_forward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Char('h'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.delete_char_backward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Char('k'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.kill_line();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Char('u'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.clear_line();
-                        }
-                    }
-                    
-                    // 選択移動（Ctrl+N/P）（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Char('n'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.select_next();
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Char('p'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.select_previous();
-                        }
-                    }
-                    
-                    // 矢印キーによるカーソル移動（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Left, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_backward();
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Right, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_forward();
-                        }
-                    }
-                    
-                    // 選択移動（矢印キー）（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Down, .. } => {
-                        if !self.state.show_help {
-                            self.state.select_next();
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Up, .. } => {
-                        if !self.state.show_help {
-                            self.state.select_previous();
-                        }
-                    }
-                    
-                    // Tab: 次の検索モードに切り替え（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Tab, .. } => {
-                        if !self.state.show_help {
-                            self.state.cycle_search_mode_forward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    
-                    // BackTab (Shift+Tab): 前の検索モードに切り替え（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::BackTab, .. } => {
-                        if !self.state.show_help {
-                            self.state.cycle_search_mode_backward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    
-                    // 代替キーバインド: Ctrl+[ でBackward（一部ターミナルでのフォールバック）
-                    KeyEvent { code: KeyCode::Char('['), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.cycle_search_mode_backward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    
-                    // 代替キーバインド: Ctrl+] でForward（一部ターミナルでのフォールバック）
-                    KeyEvent { code: KeyCode::Char(']'), modifiers: KeyModifiers::CONTROL, .. } => {
-                        if !self.state.show_help {
-                            self.state.cycle_search_mode_forward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    
-                    // Enter: ファイルを開く（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Enter, .. } => {
-                        if !self.state.show_help {
-                            if let Some(result) = self.state.selected_result() {
-                                self.open_file(&result.file_path).await?;
+                    InputResult::Navigate(action) => {
+                        match action {
+                            NavigationAction::Up => self.state.select_previous(),
+                            NavigationAction::Down => self.state.select_next(),
+                            NavigationAction::PageUp => {
+                                // 10項目上に移動
+                                for _ in 0..10 {
+                                    self.state.select_previous();
+                                }
+                            }
+                            NavigationAction::PageDown => {
+                                // 10項目下に移動
+                                for _ in 0..10 {
+                                    self.state.select_next();
+                                }
+                            }
+                            NavigationAction::Home => {
+                                self.state.selected_index = 0;
+                            }
+                            NavigationAction::End => {
+                                if !self.state.results.is_empty() {
+                                    self.state.selected_index = self.state.results.len() - 1;
+                                }
                             }
                         }
                     }
-                    
-                    // Backspace（従来の削除）（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Backspace, .. } => {
-                        if !self.state.show_help {
-                            self.state.delete_char_backward();
-                            self.trigger_search_if_needed().await?;
-                        }
+                    InputResult::Continue | InputResult::Unhandled => {
+                        // 何もしない
                     }
-                    
-                    // Delete（前方削除）（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Delete, .. } => {
-                        if !self.state.show_help {
-                            self.state.delete_char_forward();
-                            self.trigger_search_if_needed().await?;
-                        }
-                    }
-                    
-                    // Home/End キー（ヘルプ表示中は無効）
-                    KeyEvent { code: KeyCode::Home, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_to_beginning();
-                        }
-                    }
-                    KeyEvent { code: KeyCode::End, .. } => {
-                        if !self.state.show_help {
-                            self.state.move_cursor_to_end();
-                        }
-                    }
-                    
-                    // ヘルプオーバーレイ表示
-                    KeyEvent { code: KeyCode::Char('?'), modifiers, .. } 
-                        if !modifiers.contains(KeyModifiers::CONTROL) => {
-                        self.state.toggle_help();
-                    }
-                    
-                    // 通常の文字入力（Ctrlが押されていない場合、'?'以外）
-                    KeyEvent { code: KeyCode::Char(c), modifiers, .. } 
-                        if !modifiers.contains(KeyModifiers::CONTROL) && c != '?' => {
-                        if self.state.show_help {
-                            // ヘルプ表示中は文字入力を無視
-                        } else {
-                            self.state.insert_char(c);
-                            self.trigger_search().await?;
-                        }
-                    }
-                    
-                    _ => {}
                 }
             }
             InputEvent::Resize(width, height) => {
-                // ターミナルサイズ変更処理
                 log::debug!("Terminal resized: {}x{}", width, height);
             }
             InputEvent::Mouse(_) => {
@@ -822,18 +640,18 @@ impl TuiEngine {
                 ].as_ref())
                 .split(f.size());
             
-            // 検索入力フィールド（モード別色分け）
-            let (mode_name, mode_color, title_style) = match self.state.search_mode {
-                SearchMode::Content => ("Content", Color::White, Style::default().fg(Color::White)),
-                SearchMode::Symbol => ("Symbol", Color::Green, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                SearchMode::File => ("File", Color::Blue, Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
-                SearchMode::Regex => ("Regex", Color::Red, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            // 検索入力フィールド（スタイル統一）
+            let (mode_name, mode_style) = match self.state.search_mode {
+                SearchMode::Content => ("Content", self.styles.mode_content),
+                SearchMode::Symbol => ("Symbol", self.styles.mode_symbol),
+                SearchMode::File => ("File", self.styles.mode_file),
+                SearchMode::Regex => ("Regex", self.styles.mode_regex),
             };
             
             let input_style = if self.state.loading {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)
+                self.styles.loading
             } else {
-                Style::default().fg(mode_color)
+                mode_style
             };
             
             // クエリの色分け表示
@@ -844,19 +662,19 @@ impl TuiEngine {
                     }
                     SearchMode::Symbol => {
                         vec![
-                            Span::styled("#", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                            Span::styled("#", self.styles.prefix_symbol),
                             Span::styled(self.state.clean_query(), input_style),
                         ]
                     }
                     SearchMode::File => {
                         vec![
-                            Span::styled(">", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                            Span::styled(">", self.styles.prefix_file),
                             Span::styled(self.state.clean_query(), input_style),
                         ]
                     }
                     SearchMode::Regex => {
                         vec![
-                            Span::styled("/", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                            Span::styled("/", self.styles.prefix_regex),
                             Span::styled(self.state.clean_query(), input_style),
                         ]
                     }
@@ -868,7 +686,7 @@ impl TuiEngine {
             let title = format!(" Search ({}) ", mode_name);
             let title_block = Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(title, title_style));
+                .title(Span::styled(title, mode_style));
             
             let input_block = Paragraph::new(Line::from(input_spans))
                 .block(title_block);
@@ -1007,12 +825,12 @@ impl TuiEngine {
             let results_title = if results_count > 0 {
                 Span::styled(
                     format!(" Results ({}) ", results_count),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    self.styles.results_title
                 )
             } else {
                 Span::styled(
                     " Results (0) ",
-                    Style::default().fg(Color::Gray)
+                    self.styles.results_empty
                 )
             };
             
@@ -1036,7 +854,7 @@ impl TuiEngine {
             } else {
                 vec![
                     Span::styled("Mode: ", Style::default().fg(Color::Gray)),
-                    Span::styled(format!("{:?}", self.state.search_mode), title_style),
+                    Span::styled(format!("{:?}", self.state.search_mode), mode_style),
                     Span::styled(" | ", Style::default().fg(Color::Gray)),
                     Span::styled(
                         format!("{}", self.state.results.len()),
