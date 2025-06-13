@@ -44,6 +44,11 @@ anyhow = "1.0"
 regex = "1.10"
 log = "0.4"
 env_logger = "0.10"
+thiserror = "1.0"       # エラー型定義
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"      # メッセージシリアライゼーション
+async-trait = "0.1"     # 非同期トレイト
+tokio-util = "0.7"      # CancellationToken
 
 [dev-dependencies]
 tempfile = "3.8"      # テスト用

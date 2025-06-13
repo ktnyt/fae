@@ -46,6 +46,7 @@ pub mod searchers;
 pub mod symbol_index;
 pub mod tree_sitter;
 pub mod tui;
+pub mod workers;
 
 // Re-export commonly used types
 pub use types::{
@@ -61,6 +62,10 @@ pub use realtime_indexer::{RealtimeIndexer, FileChangeEvent, IndexUpdateResult};
 pub use search_coordinator::{SearchCoordinator, IndexProgress, IndexResult, SymbolSearchStream};
 pub use searchers::{ContentSearcher, ContentSearchStream, RegexSearcher, RegexSearchStream};
 pub use symbol_index::{SymbolIndex, SymbolMetadata, SearchHit};
+pub use workers::{
+    Worker, WorkerHandle, WorkerManager, Message, MessageBus, WorkerMessage,
+    TuiWorker, SearchHandler, ContentSearcher as WorkerContentSearcher
+};
 
 // Tree-sitter integration (to be implemented)
 pub use tree_sitter::extract_symbols_from_file;
