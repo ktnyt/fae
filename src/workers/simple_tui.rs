@@ -126,6 +126,11 @@ impl Worker for SimpleTuiWorker {
         }
         Ok(())
     }
+
+    async fn cleanup(&mut self) -> Result<(), crate::workers::worker::WorkerError> {
+        // UIループがターミナル復元を行うため、特別な処理は不要
+        Ok(())
+    }
 }
 
 /// UIメインループを実行する関数
@@ -219,12 +224,24 @@ fn draw_ui_static(
         .block(Block::default().borders(Borders::ALL).title("Search Query"));
     frame.render_widget(query_paragraph, chunks[0]);
 
-    // 検索結果
+    // 検索結果（スクロール処理付き）
+    let visible_height = chunks[1].height.saturating_sub(2) as usize; // ボーダーを除く
+    
+    // スクロールオフセットを計算（選択されたアイテムが見えるように）
+    let scroll_offset = if selected_index >= visible_height {
+        selected_index.saturating_sub(visible_height - 1)
+    } else {
+        0
+    };
+
     let items: Vec<ListItem> = search_results
         .iter()
         .enumerate()
-        .map(|(i, result)| {
-            let style = if i == selected_index {
+        .skip(scroll_offset)  // スクロールオフセットから開始
+        .take(visible_height) // 表示可能な行数まで
+        .map(|(original_index, result)| {
+            let is_selected = original_index == selected_index;
+            let style = if is_selected {
                 Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
