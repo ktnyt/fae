@@ -486,7 +486,8 @@ impl TuiEngine {
         use ratatui::{
             widgets::{Block, Borders, List, ListItem, Paragraph},
             layout::{Layout, Constraint, Direction},
-            style::{Color, Style},
+            style::{Color, Style, Modifier},
+            text::{Line, Span},
         };
         
         self.terminal.draw(|f| {
@@ -500,106 +501,258 @@ impl TuiEngine {
                 ].as_ref())
                 .split(f.size());
             
-            // 検索入力フィールド
+            // 検索入力フィールド（モード別色分け）
+            let (mode_name, mode_color, title_style) = match self.state.search_mode {
+                SearchMode::Content => ("Content", Color::White, Style::default().fg(Color::White)),
+                SearchMode::Symbol => ("Symbol", Color::Green, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                SearchMode::File => ("File", Color::Blue, Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                SearchMode::Regex => ("Regex", Color::Red, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            };
+            
             let input_style = if self.state.loading {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(mode_color)
             };
             
-            // クエリはそのまま表示（プレフィックスが含まれている）
-            let input_text = self.state.query.clone();
-            
-            // モード情報をタイトルに表示
-            let mode_name = match self.state.search_mode {
-                SearchMode::Content => "Content",
-                SearchMode::Symbol => "Symbol",
-                SearchMode::File => "File",
-                SearchMode::Regex => "Regex",
+            // クエリの色分け表示
+            let input_spans = if !self.state.query.is_empty() {
+                match self.state.search_mode {
+                    SearchMode::Content => {
+                        vec![Span::styled(self.state.query.clone(), input_style)]
+                    }
+                    SearchMode::Symbol => {
+                        vec![
+                            Span::styled("#", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                            Span::styled(self.state.clean_query(), input_style),
+                        ]
+                    }
+                    SearchMode::File => {
+                        vec![
+                            Span::styled(">", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                            Span::styled(self.state.clean_query(), input_style),
+                        ]
+                    }
+                    SearchMode::Regex => {
+                        vec![
+                            Span::styled("/", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                            Span::styled(self.state.clean_query(), input_style),
+                        ]
+                    }
+                }
+            } else {
+                vec![Span::styled("", input_style)]
             };
+            
             let title = format!(" Search ({}) ", mode_name);
+            let title_block = Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(title, title_style));
             
-            let input_block = Paragraph::new(input_text)
-                .style(input_style)
-                .block(Block::default()
-                    .borders(Borders::ALL)
-                    .title(title));
+            let input_block = Paragraph::new(Line::from(input_spans))
+                .block(title_block);
             f.render_widget(input_block, chunks[0]);
             
-            // 検索結果リスト
+            // 検索結果リスト（色分け対応）
             let items: Vec<ListItem> = self.state.results
                 .iter()
                 .enumerate()
                 .map(|(i, result)| {
-                    let style = if i == self.state.selected_index {
-                        Style::default().bg(Color::LightBlue).fg(Color::Black)
-                    } else {
-                        Style::default()
-                    };
+                    let is_selected = i == self.state.selected_index;
                     
-                    let content = match &result.display_info {
+                    // 結果の種類に応じて色分けされたSpansを作成
+                    let spans = match &result.display_info {
                         crate::types::DisplayInfo::Content { line_content, .. } => {
-                            format!("{}:{} {}", 
-                                result.file_path.file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy(),
-                                result.line,
-                                line_content.trim())
+                            let filename = result.file_path.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            
+                            vec![
+                                Span::styled(
+                                    format!("{}", filename),
+                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                                ),
+                                Span::styled(
+                                    format!(":{}", result.line),
+                                    Style::default().fg(Color::Yellow)
+                                ),
+                                Span::raw(" "),
+                                Span::styled(
+                                    line_content.trim().to_string(),
+                                    Style::default().fg(Color::White)
+                                ),
+                            ]
                         }
                         crate::types::DisplayInfo::Symbol { name, symbol_type } => {
-                            format!("{}:{} {:?} {}", 
-                                result.file_path.file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy(),
-                                result.line,
-                                symbol_type,
-                                name)
+                            let filename = result.file_path.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            
+                            // シンボルタイプ別の色分け
+                            let symbol_color = match symbol_type {
+                                crate::types::SymbolType::Function => Color::Green,
+                                crate::types::SymbolType::Class => Color::Blue,
+                                crate::types::SymbolType::Variable => Color::Magenta,
+                                crate::types::SymbolType::Constant => Color::Red,
+                                crate::types::SymbolType::Interface => Color::Cyan,
+                                crate::types::SymbolType::Type => Color::Yellow,
+                            };
+                            
+                            vec![
+                                Span::styled(
+                                    format!("{}", filename),
+                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                                ),
+                                Span::styled(
+                                    format!(":{}", result.line),
+                                    Style::default().fg(Color::Yellow)
+                                ),
+                                Span::raw(" "),
+                                Span::styled(
+                                    format!("{:?}", symbol_type),
+                                    Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)
+                                ),
+                                Span::raw(" "),
+                                Span::styled(
+                                    name.clone(),
+                                    Style::default().fg(symbol_color).add_modifier(Modifier::BOLD)
+                                ),
+                            ]
                         }
-                        crate::types::DisplayInfo::File { path, .. } => {
-                            format!("{}", path.display())
+                        crate::types::DisplayInfo::File { path, is_directory } => {
+                            let color = if *is_directory { Color::Blue } else { Color::Cyan };
+                            let modifier = if *is_directory { Modifier::BOLD } else { Modifier::empty() };
+                            
+                            vec![
+                                Span::styled(
+                                    format!("{}", path.display()),
+                                    Style::default().fg(color).add_modifier(modifier)
+                                ),
+                            ]
                         }
-                        crate::types::DisplayInfo::Regex { line_content, .. } => {
-                            format!("{}:{} {}", 
-                                result.file_path.file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy(),
-                                result.line,
-                                line_content.trim())
+                        crate::types::DisplayInfo::Regex { line_content, matched_text, .. } => {
+                            let filename = result.file_path.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            
+                            // マッチ部分をハイライト
+                            let content = line_content.trim();
+                            let highlighted_content = if let Some(pos) = content.find(matched_text) {
+                                let before = &content[..pos];
+                                let matched = &content[pos..pos + matched_text.len()];
+                                let after = &content[pos + matched_text.len()..];
+                                
+                                vec![
+                                    Span::raw(before.to_string()),
+                                    Span::styled(
+                                        matched.to_string(),
+                                        Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+                                    ),
+                                    Span::raw(after.to_string()),
+                                ]
+                            } else {
+                                vec![Span::raw(content.to_string())]
+                            };
+                            
+                            let mut result_spans = vec![
+                                Span::styled(
+                                    format!("{}", filename),
+                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                                ),
+                                Span::styled(
+                                    format!(":{}", result.line),
+                                    Style::default().fg(Color::Yellow)
+                                ),
+                                Span::raw(" "),
+                            ];
+                            result_spans.extend(highlighted_content);
+                            result_spans
                         }
                     };
                     
-                    ListItem::new(content).style(style)
+                    // 選択状態の背景色を適用
+                    let final_spans = if is_selected {
+                        spans.into_iter()
+                            .map(|span| {
+                                Span::styled(
+                                    span.content,
+                                    span.style.bg(Color::LightBlue).fg(Color::Black)
+                                )
+                            })
+                            .collect()
+                    } else {
+                        spans
+                    };
+                    
+                    ListItem::new(Line::from(final_spans))
                 })
                 .collect();
+            
+            let results_count = self.state.results.len();
+            let results_title = if results_count > 0 {
+                Span::styled(
+                    format!(" Results ({}) ", results_count),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                )
+            } else {
+                Span::styled(
+                    " Results (0) ",
+                    Style::default().fg(Color::Gray)
+                )
+            };
             
             let results_list = List::new(items)
                 .block(Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" Results ({}) ", self.state.results.len())));
+                    .title(results_title));
             f.render_widget(results_list, chunks[1]);
             
-            // ステータスバー
-            let status_text = if self.state.loading {
-                "Searching...".to_string()
+            // ステータスバー（色分け対応）
+            let status_spans = if self.state.loading {
+                vec![
+                    Span::styled("Searching", Style::default().fg(Color::Yellow).add_modifier(Modifier::SLOW_BLINK)),
+                    Span::styled("...", Style::default().fg(Color::Yellow)),
+                ]
             } else if let Some(ref error) = self.state.error_message {
-                format!("Error: {}", error)
+                vec![
+                    Span::styled("Error: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::styled(error.clone(), Style::default().fg(Color::Red)),
+                ]
             } else {
-                format!("Mode: {:?} | {} results | ↑↓/C-p/C-n navigate | Enter open | Esc quit", 
-                    self.state.search_mode, 
-                    self.state.results.len())
+                vec![
+                    Span::styled("Mode: ", Style::default().fg(Color::Gray)),
+                    Span::styled(format!("{:?}", self.state.search_mode), title_style),
+                    Span::styled(" | ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        format!("{}", self.state.results.len()),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    ),
+                    Span::styled(" results | ", Style::default().fg(Color::Gray)),
+                    Span::styled("↑↓", Style::default().fg(Color::Green)),
+                    Span::styled("/", Style::default().fg(Color::Gray)),
+                    Span::styled("C-p", Style::default().fg(Color::Green)),
+                    Span::styled("/", Style::default().fg(Color::Gray)),
+                    Span::styled("C-n", Style::default().fg(Color::Green)),
+                    Span::styled(" navigate | ", Style::default().fg(Color::Gray)),
+                    Span::styled("Enter", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                    Span::styled(" open | ", Style::default().fg(Color::Gray)),
+                    Span::styled("Esc", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::styled(" quit", Style::default().fg(Color::Gray)),
+                ]
             };
             
-            let status_style = if self.state.error_message.is_some() {
-                Style::default().fg(Color::Red)
+            let status_title_style = if self.state.error_message.is_some() {
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+            } else if self.state.loading {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
             
-            let status_block = Paragraph::new(status_text)
-                .style(status_style)
+            let status_block = Paragraph::new(Line::from(status_spans))
                 .block(Block::default()
                     .borders(Borders::ALL)
-                    .title(" Status "));
+                    .title(Span::styled(" Status ", status_title_style)));
             f.render_widget(status_block, chunks[2]);
         })?;
         
