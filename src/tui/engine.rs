@@ -89,6 +89,15 @@ pub struct SearchQuery {
     pub response_tx: oneshot::Sender<Result<Vec<SearchResult>>>,
 }
 
+/// スクロールバー情報
+#[derive(Debug)]
+pub struct ScrollbarInfo {
+    pub total_height: usize,
+    pub thumb_position: usize,
+    pub thumb_size: usize,
+    pub selected_position: Option<usize>, // 選択中アイテムの表示位置
+}
+
 /// TUIアプリケーションの状態
 #[derive(Debug)]
 pub struct TuiState {
@@ -198,6 +207,44 @@ impl TuiState {
     /// 選択されたアイテムを取得
     pub fn selected_result(&self) -> Option<&SearchResult> {
         self.results.get(self.selected_index)
+    }
+    
+    /// スクロールバーの情報を計算
+    pub fn calculate_scrollbar(&self, visible_height: usize) -> Option<ScrollbarInfo> {
+        if self.results.is_empty() || visible_height == 0 {
+            return None;
+        }
+        
+        let total_items = self.results.len();
+        if total_items <= visible_height {
+            return None; // スクロールが不要
+        }
+        
+        // スクロールバーの高さは表示可能領域と同じ
+        let scrollbar_height = visible_height;
+        
+        // 現在のスクロール位置の割合
+        let scroll_ratio = self.scroll_offset as f64 / (total_items - visible_height).max(1) as f64;
+        
+        // スクロールバーのつまみ位置
+        let thumb_position = (scroll_ratio * (scrollbar_height - 1) as f64).round() as usize;
+        
+        // スクロールバーのつまみサイズ（最小1行）
+        let thumb_size = ((visible_height as f64 / total_items as f64) * scrollbar_height as f64)
+            .round()
+            .max(1.0) as usize;
+        
+        Some(ScrollbarInfo {
+            total_height: scrollbar_height,
+            thumb_position,
+            thumb_size,
+            selected_position: {
+                // 選択アイテムのスクロールバー内での絶対位置
+                let selected_ratio = self.selected_index as f64 / total_items as f64;
+                let selected_bar_position = (selected_ratio * scrollbar_height as f64).round() as usize;
+                Some(selected_bar_position.min(scrollbar_height - 1))
+            }
+        })
     }
     
 }
@@ -890,11 +937,41 @@ impl TuiEngine {
                 )
             };
             
-            let results_list = List::new(items)
-                .block(Block::default()
-                    .borders(Borders::ALL)
-                    .title(results_title));
-            f.render_widget(results_list, chunks[1]);
+            // 結果領域をリスト部分とスクロールバー部分に分割
+            let results_area = chunks[1];
+            let scrollbar_info = self.state.calculate_scrollbar(visible_height);
+            
+            if let Some(scroll_info) = scrollbar_info {
+                // スクロールバーがある場合：リスト幅を1列縮める
+                let list_area = ratatui::layout::Rect {
+                    x: results_area.x,
+                    y: results_area.y,
+                    width: results_area.width.saturating_sub(1),
+                    height: results_area.height,
+                };
+                let scrollbar_area = ratatui::layout::Rect {
+                    x: results_area.x + results_area.width.saturating_sub(1),
+                    y: results_area.y + 1, // ボーダー分を考慮
+                    width: 1,
+                    height: results_area.height.saturating_sub(2), // 上下ボーダー分
+                };
+                
+                let results_list = List::new(items)
+                    .block(Block::default()
+                        .borders(Borders::ALL)
+                        .title(results_title));
+                f.render_widget(results_list, list_area);
+                
+                // スクロールバーを描画
+                Self::render_scrollbar(f, scrollbar_area, scroll_info);
+            } else {
+                // スクロールバーがない場合：通常通り
+                let results_list = List::new(items)
+                    .block(Block::default()
+                        .borders(Borders::ALL)
+                        .title(results_title));
+                f.render_widget(results_list, results_area);
+            }
             
             // ステータスバー（色分け対応）
             let status_spans = if self.state.loading {
@@ -953,6 +1030,58 @@ impl TuiEngine {
         })?;
         
         Ok(())
+    }
+    
+    /// スクロールバーを描画
+    fn render_scrollbar(f: &mut ratatui::Frame, area: ratatui::layout::Rect, scroll_info: ScrollbarInfo) {
+        use ratatui::{
+            style::{Color, Style},
+            text::Span,
+            widgets::{Paragraph},
+        };
+        
+        let height = area.height as usize;
+        if height == 0 {
+            return;
+        }
+        
+        // スクロールバーの各行を生成
+        let mut scrollbar_lines = Vec::new();
+        for i in 0..height {
+            let ch = if i >= scroll_info.thumb_position && i < scroll_info.thumb_position + scroll_info.thumb_size {
+                // スクロールつまみ部分
+                if let Some(selected_pos) = scroll_info.selected_position {
+                    if i == selected_pos {
+                        "█" // 選択中の位置：実線ブロック
+                    } else {
+                        "▓" // つまみ部分：中密度ブロック
+                    }
+                } else {
+                    "▓" // つまみ部分：中密度ブロック
+                }
+            } else {
+                "░" // 背景部分：低密度ブロック
+            };
+            
+            let style = if i >= scroll_info.thumb_position && i < scroll_info.thumb_position + scroll_info.thumb_size {
+                if let Some(selected_pos) = scroll_info.selected_position {
+                    if i == selected_pos {
+                        Style::default().fg(Color::Yellow) // 選択位置は黄色
+                    } else {
+                        Style::default().fg(Color::Blue) // つまみは青色
+                    }
+                } else {
+                    Style::default().fg(Color::Blue) // つまみは青色
+                }
+            } else {
+                Style::default().fg(Color::DarkGray) // 背景は暗いグレー
+            };
+            
+            scrollbar_lines.push(ratatui::text::Line::from(Span::styled(ch, style)));
+        }
+        
+        let scrollbar_paragraph = Paragraph::new(scrollbar_lines);
+        f.render_widget(scrollbar_paragraph, area);
     }
     
     /// ヘルプオーバーレイを描画
