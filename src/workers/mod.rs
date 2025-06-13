@@ -3,9 +3,9 @@ pub mod message;
 pub mod protocol;
 pub mod tui_worker;
 pub mod simple_tui;
-pub mod search_handler;
+pub mod search_handler_worker;
 pub mod base_searcher;
-pub mod content_searcher;
+pub mod content_search_worker;
 
 pub use worker::{Worker, WorkerHandle, WorkerManager};
 pub use message::{Message, MessageBus};
@@ -15,5 +15,5 @@ pub use protocol::{
 };
 pub use tui_worker::TuiWorker;
 pub use simple_tui::SimpleTuiWorker;
-pub use search_handler::SearchHandler;
-pub use content_searcher::ContentSearcher;
+pub use search_handler_worker::SearchHandlerWorker;
+pub use content_search_worker::ContentSearchWorker;

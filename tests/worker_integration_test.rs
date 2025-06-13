@@ -1,5 +1,5 @@
 use fae::workers::{
-    WorkerManager, SearchHandler, ContentSearcher,
+    WorkerManager, SearchHandlerWorker, ContentSearchWorker,
     Message, WorkerMessage, SearchHandlerMessage, TuiMessage
 };
 use tokio::time::Duration;
@@ -18,17 +18,17 @@ async fn test_basic_worker_messaging() -> Result<()> {
     let mut manager = WorkerManager::new();
     let message_bus = manager.get_message_bus();
     
-    // SearchHandlerを追加
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    // SearchHandlerWorkerを追加
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
-    // ContentSearcherを追加
-    let mut content_searcher = ContentSearcher::new(
+    // ContentSearchWorkerを追加
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         &project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
     manager.add_worker(content_searcher).await?;
     
@@ -93,24 +93,24 @@ async fn test_worker_lifecycle() -> Result<()> {
     
     let mut manager = WorkerManager::new();
     
-    // SearchHandlerの追加とテスト
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    // SearchHandlerWorkerの追加とテスト
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(manager.get_message_bus());
     
     // ワーカーを追加（initialization含む）
     manager.add_worker(search_handler).await?;
-    println!("✅ SearchHandler worker added and initialized");
+    println!("✅ SearchHandlerWorker worker added and initialized");
     
-    // ContentSearcherの追加とテスト
-    let mut content_searcher = ContentSearcher::new(
+    // ContentSearchWorkerの追加とテスト
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         &project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(manager.get_message_bus());
     
     manager.add_worker(content_searcher).await?;
-    println!("✅ ContentSearcher worker added and initialized");
+    println!("✅ ContentSearchWorker worker added and initialized");
     
     // 少し待機
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -176,15 +176,15 @@ async fn test_multiple_queries() -> Result<()> {
     let message_bus = manager.get_message_bus();
     
     // ワーカーを追加
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
-    let mut content_searcher = ContentSearcher::new(
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         &project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
     manager.add_worker(content_searcher).await?;
     

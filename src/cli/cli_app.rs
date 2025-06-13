@@ -182,7 +182,7 @@ fn run_index_build(project_root: &PathBuf) -> Result<()> {
 
 /// TUIモードを実行
 async fn run_tui_mode(project_root: &PathBuf) -> Result<()> {
-    use crate::workers::{WorkerManager, SimpleTuiWorker, SearchHandler, ContentSearcher};
+    use crate::workers::{WorkerManager, SimpleTuiWorker, SearchHandlerWorker, ContentSearchWorker};
     
     println!("Starting TUI with new worker system...");
     
@@ -195,21 +195,21 @@ async fn run_tui_mode(project_root: &PathBuf) -> Result<()> {
     manager.add_worker(tui_worker).await
         .context("Failed to add TUI worker")?;
     
-    // SearchHandlerワーカーを追加
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    // SearchHandlerWorkerワーカーを追加
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(manager.get_message_bus());
     manager.add_worker(search_handler).await
-        .context("Failed to add SearchHandler worker")?;
+        .context("Failed to add SearchHandlerWorker worker")?;
     
-    // ContentSearcherワーカーを追加
-    let mut content_searcher = ContentSearcher::new(
+    // ContentSearchWorkerワーカーを追加
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(manager.get_message_bus());
     manager.add_worker(content_searcher).await
-        .context("Failed to add ContentSearcher worker")?;
+        .context("Failed to add ContentSearchWorker worker")?;
     
     println!("All workers initialized. Starting TUI...");
     

@@ -6,8 +6,8 @@ use std::path::Path;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-/// ContentSearcher - リテラル検索を行うワーカー
-pub struct ContentSearcher {
+/// ContentSearchWorker - リテラル検索を行うワーカー
+pub struct ContentSearchWorker {
     worker_id: String,
     search_handler_id: String,
     message_bus: Option<Arc<RwLock<crate::workers::MessageBus>>>,
@@ -15,7 +15,7 @@ pub struct ContentSearcher {
     cancellation_token: Option<CancellationToken>,
 }
 
-impl ContentSearcher {
+impl ContentSearchWorker {
     pub fn new(worker_id: String, search_handler_id: String, search_path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Self {
             worker_id,
@@ -105,7 +105,7 @@ impl ContentSearcher {
 }
 
 #[async_trait]
-impl Worker for ContentSearcher {
+impl Worker for ContentSearchWorker {
     fn worker_id(&self) -> &str {
         &self.worker_id
     }

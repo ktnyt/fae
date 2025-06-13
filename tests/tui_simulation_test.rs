@@ -1,5 +1,5 @@
 use fae::workers::{
-    WorkerManager, SearchHandler, ContentSearcher, SimpleTuiWorker,
+    WorkerManager, SearchHandlerWorker, ContentSearchWorker, SimpleTuiWorker,
     Message, MessageBus, WorkerMessage, SearchHandlerMessage, TuiMessage
 };
 use std::sync::Arc;
@@ -22,17 +22,17 @@ async fn test_tui_worker_simulation() -> Result<()> {
     let mut manager = WorkerManager::new();
     let message_bus = manager.get_message_bus();
     
-    // SearchHandlerワーカーを追加（TUIの代わりに直接メッセージを受信）
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    // SearchHandlerWorkerワーカーを追加（TUIの代わりに直接メッセージを受信）
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
-    // ContentSearcherワーカーを追加
-    let mut content_searcher = ContentSearcher::new(
+    // ContentSearchWorkerワーカーを追加
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         &project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
     manager.add_worker(content_searcher).await?;
 
@@ -86,17 +86,17 @@ async fn test_with_real_tui_worker() -> Result<()> {
     let mut tui_worker = SimpleTuiWorker::new("tui".to_string());
     tui_worker.set_message_bus(message_bus.clone());
     
-    // SearchHandlerワーカーを追加
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    // SearchHandlerWorkerワーカーを追加
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
-    // ContentSearcherワーカーを追加
-    let mut content_searcher = ContentSearcher::new(
+    // ContentSearchWorkerワーカーを追加
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         &project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
     manager.add_worker(content_searcher).await?;
     
@@ -158,15 +158,15 @@ async fn test_search_cancellation() -> Result<()> {
     let mut manager = WorkerManager::new();
     let message_bus = manager.get_message_bus();
     
-    let mut search_handler = SearchHandler::new("search_handler".to_string());
+    let mut search_handler = SearchHandlerWorker::new("search_handler".to_string());
     search_handler.set_message_bus(message_bus.clone());
     manager.add_worker(search_handler).await?;
     
-    let mut content_searcher = ContentSearcher::new(
+    let mut content_searcher = ContentSearchWorker::new(
         "content_searcher".to_string(),
         "search_handler".to_string(),
         &project_root,
-    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearcher: {}", e))?;
+    ).map_err(|e| anyhow::anyhow!("Failed to create ContentSearchWorker: {}", e))?;
     content_searcher.set_message_bus(message_bus.clone());
     manager.add_worker(content_searcher).await?;
     

@@ -3,15 +3,15 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// SearchHandler - TUIとBaseSearcher間の仲介役
-pub struct SearchHandler {
+/// SearchHandlerWorker - TUIとBaseSearcher間の仲介役
+pub struct SearchHandlerWorker {
     worker_id: String,
     message_bus: Option<Arc<RwLock<crate::workers::MessageBus>>>,
     current_query: Option<String>,
     content_searcher_id: String,
 }
 
-impl SearchHandler {
+impl SearchHandlerWorker {
     pub fn new(worker_id: String) -> Self {
         Self {
             worker_id,
@@ -78,7 +78,7 @@ impl SearchHandler {
 }
 
 #[async_trait]
-impl Worker for SearchHandler {
+impl Worker for SearchHandlerWorker {
     fn worker_id(&self) -> &str {
         &self.worker_id
     }
