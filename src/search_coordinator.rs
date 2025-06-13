@@ -37,6 +37,22 @@ pub struct IndexProgress {
     pub current_file: Option<PathBuf>,
 }
 
+impl IndexProgress {
+    /// 進捗パーセンテージを計算
+    pub fn progress_percentage(&self) -> f64 {
+        if self.total_files == 0 {
+            100.0
+        } else {
+            (self.processed_files as f64 / self.total_files as f64) * 100.0
+        }
+    }
+    
+    /// 進捗が完了しているかチェック
+    pub fn is_completed(&self) -> bool {
+        self.processed_files >= self.total_files
+    }
+}
+
 /// シンボル検索ストリームのイテレーター
 pub struct SymbolSearchStream {
     receiver: mpsc::Receiver<crate::types::SearchResult>,

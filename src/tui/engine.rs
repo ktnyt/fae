@@ -8,6 +8,7 @@ use crate::types::{SearchResult, SearchMode};
 use crate::cli::SearchRunner;
 use crate::realtime_indexer::{RealtimeIndexer, FileChangeEvent, IndexUpdateResult};
 use crate::cache_manager::CacheManager;
+use crate::search_coordinator::{SearchCoordinator, IndexProgress};
 
 // 新しいTUIモジュールをインポート
 use super::{TuiStyles, EditableText, InputHandler, InputResult, NavigationAction};
@@ -34,6 +35,7 @@ fn detect_mode(query: &str) -> (SearchMode, String) {
     }
 }
 
+
 /// TUIで処理するイベントの種類
 #[derive(Debug)]
 pub enum TuiEvent {
@@ -48,6 +50,9 @@ pub enum TuiEvent {
     
     /// インデックス更新完了通知
     IndexUpdate(IndexUpdateResult),
+    
+    /// インデックス進捗更新
+    IndexProgress(IndexProgress),
     
     /// UI再描画タイマー
     Tick,
@@ -112,6 +117,8 @@ pub struct TuiState {
     pub error_message: Option<String>,
     pub project_root: PathBuf,
     pub show_help: bool, // ヘルプオーバーレイ表示フラグ
+    pub index_progress: Option<IndexProgress>, // インデックス進捗状況
+    pub show_completion_stats: Option<(IndexProgress, std::time::Instant)>, // 完了統計表示（進捗、表示開始時刻）
 }
 
 impl TuiState {
@@ -128,6 +135,8 @@ impl TuiState {
             error_message: None,
             project_root,
             show_help: false,
+            index_progress: None,
+            show_completion_stats: None,
         }
     }
     
@@ -465,6 +474,7 @@ pub struct TuiEngine {
     state: TuiState,
     input_stream: std::pin::Pin<Box<dyn Stream<Item = InputEvent> + Send>>,
     search_stream: std::pin::Pin<Box<dyn Stream<Item = SearchEvent> + Send>>,
+    index_progress_stream: std::pin::Pin<Box<dyn Stream<Item = IndexProgress> + Send>>,
     search_tx: mpsc::UnboundedSender<SearchQuery>,
     tick_interval: tokio::time::Interval,
     terminal: ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
@@ -492,6 +502,10 @@ impl TuiEngine {
         // 検索ストリーム
         let (search_tx, search_rx) = mpsc::unbounded_channel();
         let search_stream = Box::pin(create_search_stream(search_runner, search_rx));
+        
+        // インデックス進捗ストリーム（空のストリームで初期化）
+        let (_progress_tx, progress_rx) = mpsc::unbounded_channel();
+        let index_progress_stream = Box::pin(UnboundedReceiverStream::new(progress_rx));
         
         // UIティックタイマー（60fps）  
         let tick_interval = tokio::time::interval(timing::UI_REFRESH);
@@ -523,6 +537,7 @@ impl TuiEngine {
             state,
             input_stream,
             search_stream,
+            index_progress_stream,
             search_tx,
             tick_interval,
             terminal,
@@ -548,8 +563,59 @@ impl TuiEngine {
         Ok(())
     }
 
+    /// バックグラウンドインデックスを開始
+    pub fn start_background_indexing(&mut self) -> Result<()> {
+        let project_root = self.state.project_root.clone();
+        
+        // インデックス進捗を受信するチャンネル
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+        
+        // index_progress_streamを更新
+        self.index_progress_stream = Box::pin(UnboundedReceiverStream::new(progress_rx));
+        
+        // SearchCoordinatorでバックグラウンドインデックスを開始
+        tokio::spawn(async move {
+            let mut coordinator = match SearchCoordinator::new(project_root) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("Failed to create SearchCoordinator: {}", e);
+                    return;
+                }
+            };
+            
+            // プログレッシブインデックス構築を実行
+            let (sender, receiver) = std::sync::mpsc::channel();
+            
+            // 進捗を別スレッドで受信してasyncチャンネルに転送
+            let progress_tx_clone = progress_tx.clone();
+            std::thread::spawn(move || {
+                while let Ok(progress) = receiver.recv() {
+                    if progress_tx_clone.send(progress).is_err() {
+                        break; // レシーバーが閉じられた
+                    }
+                }
+            });
+            
+            // インデックス構築を実行
+            match coordinator.build_index_progressive(sender) {
+                Ok(result) => {
+                    log::info!("Background indexing completed: {} files, {} symbols", 
+                              result.processed_files, result.total_symbols);
+                }
+                Err(e) => {
+                    log::error!("Background indexing failed: {}", e);
+                }
+            }
+        });
+        
+        Ok(())
+    }
+
     /// メインイベントループ
     pub async fn run(&mut self) -> Result<()> {
+        // バックグラウンドインデックスを開始
+        self.start_background_indexing()?;
+        
         // リアルタイムインデックスを開始
         self.start_realtime_indexing().await?;
         
@@ -569,8 +635,20 @@ impl TuiEngine {
                     self.handle_search_event(search_event).await?;
                 }
                 
+                // インデックス進捗処理
+                Some(progress) = self.index_progress_stream.next() => {
+                    self.handle_index_progress(progress).await?;
+                }
+                
                 // UI更新（最低優先度）
                 _ = self.tick_interval.tick() => {
+                    // 完了統計表示タイマーの確認
+                    if let Some((_, start_time)) = &self.state.show_completion_stats {
+                        if start_time.elapsed() > std::time::Duration::from_secs(3) {
+                            self.state.show_completion_stats = None;
+                        }
+                    }
+                    
                     self.render().await?;
                 }
             }
@@ -708,6 +786,22 @@ impl TuiEngine {
         Ok(())
     }
     
+    /// インデックス進捗イベントを処理
+    async fn handle_index_progress(&mut self, progress: IndexProgress) -> Result<()> {
+        if progress.is_completed() {
+            // インデックス完了時の処理
+            self.state.show_completion_stats = Some((progress.clone(), std::time::Instant::now()));
+            self.state.index_progress = None;
+            log::info!("Indexing completed: {} files, {} symbols in {}ms", 
+                      progress.processed_files, progress.total_symbols, progress.elapsed_ms);
+        } else {
+            // 進捗更新
+            self.state.index_progress = Some(progress);
+        }
+        
+        Ok(())
+    }
+    
     /// 検索が必要な場合のみトリガー（空の場合は結果をクリア）
     async fn trigger_search_if_needed(&mut self) -> Result<()> {
         if self.state.query.trim().is_empty() {
@@ -757,8 +851,8 @@ impl TuiEngine {
     /// UI描画
     async fn render(&mut self) -> Result<()> {
         use ratatui::{
-            widgets::{Block, Borders, List, ListItem, Paragraph},
-            layout::{Layout, Constraint, Direction},
+            widgets::{Block, Borders, List, ListItem, Paragraph, Gauge},
+            layout::{Layout, Constraint, Direction, Alignment},
             style::{Color, Style, Modifier},
             text::{Line, Span},
         };
@@ -1063,6 +1157,13 @@ impl TuiEngine {
                     .title(Span::styled(" Status ", status_title_style)));
             f.render_widget(status_block, chunks[2]);
             
+            // インデックス進捗または完了統計の表示
+            if let Some(ref progress) = self.state.index_progress {
+                Self::render_index_progress(f, progress);
+            } else if let Some((ref stats, _)) = self.state.show_completion_stats {
+                Self::render_completion_stats(f, stats);
+            }
+            
             // ヘルプオーバーレイの表示
             if self.state.show_help {
                 Self::render_help_overlay(f);
@@ -1122,6 +1223,134 @@ impl TuiEngine {
         
         let scrollbar_paragraph = Paragraph::new(scrollbar_lines);
         f.render_widget(scrollbar_paragraph, area);
+    }
+    
+    /// インデックス進捗ウィンドウを描画（右上に小さなウィンドウ）
+    fn render_index_progress(f: &mut ratatui::Frame, progress: &IndexProgress) {
+        use ratatui::{
+            widgets::{Block, Borders, Paragraph, Gauge},
+            layout::{Layout, Constraint, Direction, Alignment, Rect},
+            style::{Color, Style, Modifier},
+            text::{Line, Span},
+        };
+        
+        // 右上の小さなエリアを計算（幅30、高さ6）
+        let screen_area = f.size();
+        let popup_width = 30;
+        let popup_height = 6;
+        let x = screen_area.width.saturating_sub(popup_width + 2);
+        let y = 1;
+        
+        let popup_area = Rect {
+            x,
+            y,
+            width: popup_width,
+            height: popup_height,
+        };
+        
+        // プログレスバーのレイアウト
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(1), // ファイル数行
+                Constraint::Length(1), // プログレスバー
+                Constraint::Length(1), // パーセンテージ
+            ])
+            .split(popup_area);
+        
+        // プログレスバーウィジェット
+        let progress_ratio = progress.progress_percentage() / 100.0;
+        let gauge = Gauge::default()
+            .block(Block::default())
+            .gauge_style(Style::default().fg(Color::Cyan))
+            .ratio(progress_ratio);
+        
+        // テキスト情報
+        let file_info = Paragraph::new(Line::from(vec![
+            Span::styled(format!("{}/{} files", progress.processed_files, progress.total_files), 
+                        Style::default().fg(Color::White))
+        ])).alignment(Alignment::Center);
+        
+        let percentage_info = Paragraph::new(Line::from(vec![
+            Span::styled(format!("{:.1}%", progress.progress_percentage()), 
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        ])).alignment(Alignment::Center);
+        
+        // ボーダー付きのブロック
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(" Indexing ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+            .style(Style::default().bg(Color::Black));
+        
+        // ウィジェットのレンダリング
+        f.render_widget(block, popup_area);
+        f.render_widget(file_info, chunks[0]);
+        f.render_widget(gauge, chunks[1]);
+        f.render_widget(percentage_info, chunks[2]);
+    }
+    
+    /// インデックス完了統計ウィンドウを描画（右上に小さなウィンドウ）
+    fn render_completion_stats(f: &mut ratatui::Frame, stats: &IndexProgress) {
+        use ratatui::{
+            widgets::{Block, Borders, Paragraph},
+            layout::{Layout, Constraint, Direction, Alignment, Rect},
+            style::{Color, Style, Modifier},
+            text::{Line, Span},
+        };
+        
+        // 右上の小さなエリアを計算（幅32、高さ6）
+        let screen_area = f.size();
+        let popup_width = 32;
+        let popup_height = 6;
+        let x = screen_area.width.saturating_sub(popup_width + 2);
+        let y = 1;
+        
+        let popup_area = Rect {
+            x,
+            y,
+            width: popup_width,
+            height: popup_height,
+        };
+        
+        // 統計情報のレイアウト
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(1), // ファイル数
+                Constraint::Length(1), // シンボル数
+                Constraint::Length(1), // 時間
+            ])
+            .split(popup_area);
+        
+        // 統計情報
+        let file_info = Paragraph::new(Line::from(vec![
+            Span::styled(format!("Files: {}", stats.processed_files), 
+                        Style::default().fg(Color::White))
+        ])).alignment(Alignment::Center);
+        
+        let symbol_info = Paragraph::new(Line::from(vec![
+            Span::styled(format!("Symbols: {}", stats.total_symbols), 
+                        Style::default().fg(Color::Green))
+        ])).alignment(Alignment::Center);
+        
+        let time_info = Paragraph::new(Line::from(vec![
+            Span::styled(format!("Time: {:.2}s", stats.elapsed_ms as f64 / 1000.0), 
+                        Style::default().fg(Color::Yellow))
+        ])).alignment(Alignment::Center);
+        
+        // ボーダー付きのブロック
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(" Indexing Complete ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)))
+            .style(Style::default().bg(Color::Black));
+        
+        // ウィジェットのレンダリング
+        f.render_widget(block, popup_area);
+        f.render_widget(file_info, chunks[0]);
+        f.render_widget(symbol_info, chunks[1]);
+        f.render_widget(time_info, chunks[2]);
     }
     
     /// ヘルプオーバーレイを描画
