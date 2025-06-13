@@ -204,7 +204,7 @@ impl ResultFormatter for ContentInlineFormatter {
                 };
                 
                 FormattedResult {
-                    left_part: format!("{}:{}:{}", relative_path, result.line, highlighted_content),
+                    left_part: format!("{}:{}:{}:{}", relative_path, result.line, result.column, highlighted_content),
                     right_part: String::new(),
                     color_info: ColorInfo {
                         path_color: Color::Blue,
