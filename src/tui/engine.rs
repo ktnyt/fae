@@ -851,8 +851,8 @@ impl TuiEngine {
     /// UI描画
     async fn render(&mut self) -> Result<()> {
         use ratatui::{
-            widgets::{Block, Borders, List, ListItem, Paragraph, Gauge},
-            layout::{Layout, Constraint, Direction, Alignment},
+            widgets::{Block, Borders, List, ListItem, Paragraph},
+            layout::{Layout, Constraint, Direction},
             style::{Color, Style, Modifier},
             text::{Line, Span},
         };
