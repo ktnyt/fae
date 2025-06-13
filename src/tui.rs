@@ -560,16 +560,18 @@ impl TuiEngine {
                 .map(|(i, result)| {
                     let is_selected = i == self.state.selected_index;
                     
+                    // ファイルパスを相対パスに変換
+                    let relative_path = result.file_path
+                        .strip_prefix(&self.state.project_root)
+                        .unwrap_or(&result.file_path)
+                        .to_string_lossy();
+                    
                     // 結果の種類に応じて色分けされたSpansを作成
                     let spans = match &result.display_info {
                         crate::types::DisplayInfo::Content { line_content, .. } => {
-                            let filename = result.file_path.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy();
-                            
                             vec![
                                 Span::styled(
-                                    format!("{}", filename),
+                                    format!("{}", relative_path),
                                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                                 ),
                                 Span::styled(
@@ -584,10 +586,6 @@ impl TuiEngine {
                             ]
                         }
                         crate::types::DisplayInfo::Symbol { name, symbol_type } => {
-                            let filename = result.file_path.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy();
-                            
                             // シンボルタイプ別の色分け
                             let symbol_color = match symbol_type {
                                 crate::types::SymbolType::Function => Color::Green,
@@ -600,7 +598,7 @@ impl TuiEngine {
                             
                             vec![
                                 Span::styled(
-                                    format!("{}", filename),
+                                    format!("{}", relative_path),
                                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                                 ),
                                 Span::styled(
@@ -631,10 +629,6 @@ impl TuiEngine {
                             ]
                         }
                         crate::types::DisplayInfo::Regex { line_content, matched_text, .. } => {
-                            let filename = result.file_path.file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy();
-                            
                             // マッチ部分をハイライト
                             let content = line_content.trim();
                             let highlighted_content = if let Some(pos) = content.find(matched_text) {
@@ -656,7 +650,7 @@ impl TuiEngine {
                             
                             let mut result_spans = vec![
                                 Span::styled(
-                                    format!("{}", filename),
+                                    format!("{}", relative_path),
                                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                                 ),
                                 Span::styled(
