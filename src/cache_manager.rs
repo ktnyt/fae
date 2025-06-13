@@ -96,6 +96,9 @@ impl CacheManager {
         if let Some(entry) = self.cache.remove(file_path) {
             self.current_memory_bytes = self.current_memory_bytes.saturating_sub(entry.memory_size);
             self.lru_order.retain(|p| p != file_path);
+            
+            // SymbolIndexからも削除（リアルタイム更新対応）
+            self.symbol_index.remove_file_symbols(&file_path.to_path_buf());
         }
     }
 
@@ -104,6 +107,7 @@ impl CacheManager {
         self.cache.clear();
         self.lru_order.clear();
         self.current_memory_bytes = 0;
+        self.symbol_index = SymbolIndex::new(); // インデックスもクリア
     }
 
     /// キャッシュ統計情報を取得
@@ -283,14 +287,23 @@ impl CacheManager {
 
     /// SymbolIndexを新しいシンボルで更新
     fn update_symbol_index(&mut self, new_symbols: &[SymbolMetadata]) {
-        // 既存のシンボルインデックスから全シンボルを取得
-        let mut all_symbols = self.get_all_cached_symbols();
-        
-        // 新しいシンボルを追加
-        all_symbols.extend_from_slice(new_symbols);
-        
-        // SymbolIndexを再構築
-        self.symbol_index = SymbolIndex::from_symbols(all_symbols);
+        // 新しいシンボルがある場合のみファイル単位で部分更新
+        if !new_symbols.is_empty() {
+            // ファイルパス別にグループ化して更新
+            let mut files_to_update: std::collections::HashMap<PathBuf, Vec<SymbolMetadata>> = 
+                std::collections::HashMap::new();
+            
+            for symbol in new_symbols {
+                files_to_update.entry(symbol.file_path.clone())
+                    .or_insert_with(Vec::new)
+                    .push(symbol.clone());
+            }
+            
+            // ファイル別に部分更新
+            for (file_path, symbols) in files_to_update {
+                self.symbol_index.update_file_symbols(&file_path, symbols);
+            }
+        }
     }
 
     /// キャッシュされた全シンボルを取得
@@ -336,6 +349,62 @@ impl CacheManager {
         }
         
         results
+    }
+
+    /// ファイルのシンボル数を取得（リアルタイム更新用）
+    pub fn get_file_symbol_count(&self, file_path: &Path) -> Option<usize> {
+        self.cache.get(file_path)
+            .map(|entry| entry.file_info.symbols.len())
+    }
+
+    /// ファイルのシンボル情報を更新（リアルタイム更新用）
+    pub fn update_file_symbols(&mut self, file_path: &Path, new_symbols: Vec<SymbolMetadata>) -> Result<()> {
+        // 既存のエントリを無効化
+        self.invalidate_file(file_path);
+        
+        // 新しいシンボル情報でエントリを再作成
+        if !new_symbols.is_empty() {
+            // ファイルのメタデータを取得
+            let metadata = fs::metadata(file_path)
+                .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
+            
+            let modified_time = metadata.modified()
+                .with_context(|| "Failed to get file modification time")?;
+
+            // ファイル内容を読み込み（必要な場合）
+            let content = fs::read_to_string(file_path).ok();
+
+            // CachedSymbolに変換
+            let cached_symbols: Vec<CachedSymbol> = new_symbols.iter()
+                .map(|meta| CachedSymbol {
+                    name: meta.name.clone(),
+                    symbol_type: meta.symbol_type.clone(),
+                    line: meta.line,
+                    column: meta.column,
+                })
+                .collect();
+
+            // 新しいキャッシュエントリを作成
+            let file_info = CachedFileInfo {
+                path: file_path.to_path_buf(),
+                hash: content.as_ref().map(|c| self.calculate_file_hash(c)).unwrap_or(0),
+                modified_time,
+                content,
+                symbols: cached_symbols,
+                last_accessed: SystemTime::now(),
+            };
+
+            let memory_size = CacheEntry::estimate_memory_size(&file_info);
+            let entry = CacheEntry { file_info, memory_size };
+
+            // キャッシュに追加
+            self.add_to_cache(file_path.to_path_buf(), entry);
+            
+            // SymbolIndexを部分更新（効率的）
+            self.symbol_index.update_file_symbols(&file_path.to_path_buf(), new_symbols);
+        }
+        
+        Ok(())
     }
 
 }

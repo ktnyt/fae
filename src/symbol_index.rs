@@ -101,6 +101,36 @@ impl SymbolIndex {
     pub fn symbols(&self) -> &[SymbolMetadata] {
         &self.symbols
     }
+
+    /// 特定ファイルのシンボルを更新（リアルタイム更新用）
+    pub fn update_file_symbols(&mut self, file_path: &PathBuf, new_symbols: Vec<SymbolMetadata>) {
+        // 既存の同ファイルのシンボルを削除
+        self.symbols.retain(|symbol| symbol.file_path != *file_path);
+        
+        // 新しいシンボルを追加
+        self.symbols.extend(new_symbols);
+        
+        // アルファベット順で再ソート
+        self.symbols.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    /// 特定ファイルのシンボルを削除（ファイル削除時用）
+    pub fn remove_file_symbols(&mut self, file_path: &PathBuf) {
+        let old_len = self.symbols.len();
+        self.symbols.retain(|symbol| symbol.file_path != *file_path);
+        let new_len = self.symbols.len();
+        
+        if old_len != new_len {
+            log::debug!("Removed {} symbols from file: {}", old_len - new_len, file_path.display());
+        }
+    }
+
+    /// 特定ファイルのシンボル数を取得
+    pub fn get_file_symbol_count(&self, file_path: &PathBuf) -> usize {
+        self.symbols.iter()
+            .filter(|symbol| symbol.file_path == *file_path)
+            .count()
+    }
 }
 
 

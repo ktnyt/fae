@@ -6,10 +6,13 @@
 
 use crate::types::{SearchResult, SearchMode};
 use crate::cli::SearchRunner;
+use crate::realtime_indexer::{RealtimeIndexer, FileChangeEvent, IndexUpdateResult};
+use crate::cache_manager::CacheManager;
 use anyhow::Result;
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use futures_util::{Stream, StreamExt};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -35,6 +38,12 @@ pub enum TuiEvent {
     
     /// 検索関連イベント
     Search(SearchEvent),
+    
+    /// ファイル変更イベント（リアルタイム更新）
+    FileChange(FileChangeEvent),
+    
+    /// インデックス更新完了通知
+    IndexUpdate(IndexUpdateResult),
     
     /// UI再描画タイマー
     Tick,
@@ -389,6 +398,9 @@ pub struct TuiEngine {
     search_tx: mpsc::UnboundedSender<SearchQuery>,
     tick_interval: tokio::time::Interval,
     terminal: ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    // リアルタイム機能
+    cache_manager: Arc<Mutex<CacheManager>>,
+    realtime_indexer: Option<RealtimeIndexer>,
 }
 
 impl TuiEngine {
@@ -400,7 +412,7 @@ impl TuiEngine {
         };
         use ratatui::{backend::CrosstermBackend, Terminal};
         
-        let state = TuiState::new(project_root);
+        let state = TuiState::new(project_root.clone());
         
         // ユーザー入力ストリーム
         let input_stream = Box::pin(create_input_stream());
@@ -420,6 +432,21 @@ impl TuiEngine {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
         
+        // リアルタイム機能の初期化
+        let cache_manager = Arc::new(Mutex::new(CacheManager::new()));
+        
+        // RealtimeIndexerを作成（オプション、エラーが発生しても続行）
+        let realtime_indexer = match RealtimeIndexer::new(project_root, cache_manager.clone()) {
+            Ok(indexer) => {
+                log::info!("RealtimeIndexer initialized successfully");
+                Some(indexer)
+            }
+            Err(e) => {
+                log::warn!("Failed to initialize RealtimeIndexer: {}", e);
+                None
+            }
+        };
+        
         Ok(Self {
             state,
             input_stream,
@@ -427,11 +454,32 @@ impl TuiEngine {
             search_tx,
             tick_interval,
             terminal,
+            cache_manager,
+            realtime_indexer,
         })
     }
     
+    /// リアルタイムインデックスのイベントループを開始
+    pub async fn start_realtime_indexing(&mut self) -> Result<()> {
+        if let Some(realtime_indexer) = self.realtime_indexer.take() {
+            // RealtimeIndexerのイベントループを別タスクで開始
+            let cache_manager = self.cache_manager.clone();
+            tokio::spawn(async move {
+                let mut indexer = realtime_indexer;
+                if let Err(e) = indexer.start_event_loop().await {
+                    log::error!("RealtimeIndexer event loop failed: {}", e);
+                }
+            });
+            log::info!("Started realtime indexing in background");
+        }
+        Ok(())
+    }
+
     /// メインイベントループ
     pub async fn run(&mut self) -> Result<()> {
+        // リアルタイムインデックスを開始
+        self.start_realtime_indexing().await?;
+        
         loop {
             tokio::select! {
                 biased;
