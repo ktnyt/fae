@@ -1,7 +1,7 @@
 use super::search_strategy::SearchStrategy;
 use anyhow::Result;
 use std::path::PathBuf;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use log::{debug, info};
 
 /// 検索実行エンジン
@@ -20,6 +20,30 @@ impl SearchRunner {
         Self {
             project_root,
             heading,
+        }
+    }
+    
+    /// Broken pipeを安全にハンドリングして出力
+    fn safe_println(text: &str) -> Result<()> {
+        match writeln!(std::io::stdout(), "{}", text) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                // Broken pipeは正常な終了として扱う
+                std::process::exit(0);
+            }
+            Err(e) => Err(anyhow::anyhow!("Output error: {}", e)),
+        }
+    }
+    
+    /// 空行を安全に出力
+    fn safe_println_empty() -> Result<()> {
+        match writeln!(std::io::stdout()) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                // Broken pipeは正常な終了として扱う
+                std::process::exit(0);
+            }
+            Err(e) => Err(anyhow::anyhow!("Output error: {}", e)),
         }
     }
     
@@ -83,20 +107,20 @@ impl SearchRunner {
             // ファイルが変わったらヘッダーを出力
             if current_file.as_ref() != Some(&result.file_path) {
                 if current_file.is_some() {
-                    println!(); // 前のファイルとの間に空行
+                    Self::safe_println_empty()?; // 前のファイルとの間に空行
                 }
                 
                 let relative_path = result.file_path
                     .strip_prefix(&self.project_root)
                     .unwrap_or(&result.file_path);
-                println!("{}:", relative_path.display());
+                Self::safe_println(&format!("{}:", relative_path.display()))?;
                 current_file = Some(result.file_path.clone());
             }
             
             // 結果をフォーマットして出力
             let formatted = formatter.format_result(&result);
             let output = formatter.to_colored_string(&formatted);
-            println!("{}", output);
+            Self::safe_println(&output)?;
             
             results_count += 1;
         }
@@ -115,7 +139,7 @@ impl SearchRunner {
         for result in stream {
             let formatted = formatter.format_result(&result);
             let output = formatter.to_colored_string(&formatted);
-            println!("{}", output);
+            Self::safe_println(&output)?;
             
             results_count += 1;
         }
@@ -126,7 +150,7 @@ impl SearchRunner {
     /// 検索結果のサマリーを表示
     fn show_search_summary(&self, search_type: &str, query: &str, count: usize, elapsed: std::time::Duration) {
         if count == 0 {
-            println!("No {} matches found for '{}'", search_type, query);
+            let _ = Self::safe_println(&format!("No {} matches found for '{}'", search_type, query));
         } else {
             info!("Found {} {} matches in {:.2}ms", 
                  count, search_type, elapsed.as_secs_f64() * 1000.0);
