@@ -14,6 +14,19 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+/// クエリからモードを検出（プレフィックスベース）
+fn detect_mode(query: &str) -> (SearchMode, String) {
+    if query.starts_with('#') {
+        (SearchMode::Symbol, query[1..].to_string())
+    } else if query.starts_with('>') {
+        (SearchMode::File, query[1..].to_string())
+    } else if query.starts_with('/') {
+        (SearchMode::Regex, query[1..].to_string())
+    } else {
+        (SearchMode::Content, query.to_string())
+    }
+}
+
 /// TUIで処理するイベントの種類
 #[derive(Debug)]
 pub enum TuiEvent {
@@ -86,6 +99,24 @@ impl TuiState {
             error_message: None,
             project_root,
         }
+    }
+    
+    /// クエリを更新してモードを自動検出
+    pub fn update_query(&mut self, new_query: String) {
+        self.query = new_query;
+        self.detect_and_update_mode();
+    }
+    
+    /// クエリからモードを検出して更新
+    fn detect_and_update_mode(&mut self) {
+        let (mode, _clean_query) = detect_mode(&self.query);
+        self.search_mode = mode;
+    }
+    
+    /// クリーンなクエリ（プレフィックスなし）を取得
+    pub fn clean_query(&self) -> String {
+        let (_mode, clean_query) = detect_mode(&self.query);
+        clean_query
     }
     
     /// 次のアイテムを選択
@@ -320,13 +351,17 @@ impl TuiEngine {
                     
                     // 文字入力
                     KeyEvent { code: KeyCode::Char(c), .. } => {
-                        self.state.query.push(c);
+                        let mut new_query = self.state.query.clone();
+                        new_query.push(c);
+                        self.state.update_query(new_query);
                         self.trigger_search().await?;
                     }
                     
                     // Backspace
                     KeyEvent { code: KeyCode::Backspace, .. } => {
-                        self.state.query.pop();
+                        let mut new_query = self.state.query.clone();
+                        new_query.pop();
+                        self.state.update_query(new_query);
                         if self.state.query.is_empty() {
                             self.state.results.clear();
                             self.state.loading = false;
@@ -396,8 +431,11 @@ impl TuiEngine {
         
         let (response_tx, _response_rx) = oneshot::channel();
         
+        // クリーンなクエリ（プレフィックスなし）を使用
+        let clean_query = self.state.clean_query();
+        
         let search_query = SearchQuery {
-            query: self.state.query.clone(),
+            query: clean_query,
             mode: self.state.search_mode.clone(),
             project_root: self.state.project_root.clone(),
             response_tx,
@@ -446,19 +484,23 @@ impl TuiEngine {
                 Style::default().fg(Color::White)
             };
             
-            let mode_prefix = match self.state.search_mode {
-                SearchMode::Content => "",
-                SearchMode::Symbol => "#",
-                SearchMode::File => ">",
-                SearchMode::Regex => "/",
-            };
+            // クエリはそのまま表示（プレフィックスが含まれている）
+            let input_text = self.state.query.clone();
             
-            let input_text = format!("{}{}", mode_prefix, self.state.query);
+            // モード情報をタイトルに表示
+            let mode_name = match self.state.search_mode {
+                SearchMode::Content => "Content",
+                SearchMode::Symbol => "Symbol",
+                SearchMode::File => "File",
+                SearchMode::Regex => "Regex",
+            };
+            let title = format!(" Search ({}) ", mode_name);
+            
             let input_block = Paragraph::new(input_text)
                 .style(input_style)
                 .block(Block::default()
                     .borders(Borders::ALL)
-                    .title(" Search "));
+                    .title(title));
             f.render_widget(input_block, chunks[0]);
             
             // 検索結果リスト

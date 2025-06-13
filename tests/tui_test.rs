@@ -232,6 +232,78 @@ mod event_tests {
             _ => panic!("Unexpected input type"),
         }
     }
+
+    #[test]
+    fn test_mode_detection_and_switching() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let mut state = TuiState::new(project_root);
+
+        // デフォルトはContentモード
+        assert_eq!(state.search_mode, SearchMode::Content);
+        assert_eq!(state.clean_query(), "");
+
+        // シンボル検索モード
+        state.update_query("#function".to_string());
+        assert_eq!(state.search_mode, SearchMode::Symbol);
+        assert_eq!(state.query, "#function");
+        assert_eq!(state.clean_query(), "function");
+
+        // ファイル検索モード
+        state.update_query(">src/main.rs".to_string());
+        assert_eq!(state.search_mode, SearchMode::File);
+        assert_eq!(state.query, ">src/main.rs");
+        assert_eq!(state.clean_query(), "src/main.rs");
+
+        // 正規表現検索モード
+        state.update_query("/^fn\\s+".to_string());
+        assert_eq!(state.search_mode, SearchMode::Regex);
+        assert_eq!(state.query, "/^fn\\s+");
+        assert_eq!(state.clean_query(), "^fn\\s+");
+
+        // Contentモードに戻る
+        state.update_query("normal text".to_string());
+        assert_eq!(state.search_mode, SearchMode::Content);
+        assert_eq!(state.query, "normal text");
+        assert_eq!(state.clean_query(), "normal text");
+
+        // 空クエリの動的切り替え
+        state.update_query("#".to_string());
+        assert_eq!(state.search_mode, SearchMode::Symbol);
+        assert_eq!(state.clean_query(), "");
+
+        state.update_query(">".to_string());
+        assert_eq!(state.search_mode, SearchMode::File);
+        assert_eq!(state.clean_query(), "");
+
+        state.update_query("/".to_string());
+        assert_eq!(state.search_mode, SearchMode::Regex);
+        assert_eq!(state.clean_query(), "");
+    }
+
+    #[test]
+    fn test_incremental_mode_switching() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let mut state = TuiState::new(project_root);
+
+        // 段階的な入力でモードが正しく切り替わることを確認
+        state.update_query("#".to_string());
+        assert_eq!(state.search_mode, SearchMode::Symbol);
+
+        state.update_query("#f".to_string());
+        assert_eq!(state.search_mode, SearchMode::Symbol);
+        assert_eq!(state.clean_query(), "f");
+
+        state.update_query("#func".to_string());
+        assert_eq!(state.search_mode, SearchMode::Symbol);
+        assert_eq!(state.clean_query(), "func");
+
+        // プレフィックスを削除してContentモードに戻る
+        state.update_query("func".to_string());
+        assert_eq!(state.search_mode, SearchMode::Content);
+        assert_eq!(state.clean_query(), "func");
+    }
 }
 
 #[cfg(test)]
