@@ -50,9 +50,6 @@ impl SearchHandlerWorker {
             TuiMessage::UserQuery { query } => {
                 self.current_query = Some(query.clone());
                 
-                // まず検索結果をクリア
-                self.send_to_tui(WorkerMessage::search_clear()).await?;
-                
                 // ContentSearcherに検索クエリを送信
                 let search_msg = WorkerMessage::search_query(query);
                 self.send_to_searcher(&self.content_searcher_id, search_msg).await?;
