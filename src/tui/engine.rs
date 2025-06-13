@@ -106,6 +106,7 @@ pub struct TuiState {
     pub results: Vec<SearchResult>,
     pub selected_index: usize,
     pub scroll_offset: usize, // 結果リストのスクロールオフセット
+    pub visible_height: usize, // 結果リストの表示可能行数
     pub search_mode: SearchMode,
     pub loading: bool,
     pub error_message: Option<String>,
@@ -121,6 +122,7 @@ impl TuiState {
             results: Vec::new(),
             selected_index: 0,
             scroll_offset: 0,
+            visible_height: 20, // デフォルト値
             search_mode: SearchMode::Content,
             loading: false,
             error_message: None,
@@ -166,6 +168,42 @@ impl TuiState {
             }
             self.update_scroll_offset();
         }
+    }
+    
+    /// 半ページ上に移動（境界で停止）
+    pub fn select_half_page_up(&mut self) {
+        if self.results.is_empty() {
+            return;
+        }
+        
+        let half_page = (self.visible_height / 2).max(1); // 最小1行
+        if self.selected_index >= half_page {
+            // 通常の半ページ移動
+            self.selected_index -= half_page;
+        } else {
+            // 上端に到達：0番目に移動
+            self.selected_index = 0;
+        }
+        self.update_scroll_offset();
+    }
+    
+    /// 半ページ下に移動（境界で停止）
+    pub fn select_half_page_down(&mut self) {
+        if self.results.is_empty() {
+            return;
+        }
+        
+        let half_page = (self.visible_height / 2).max(1); // 最小1行
+        let max_index = self.results.len() - 1;
+        
+        if self.selected_index + half_page <= max_index {
+            // 通常の半ページ移動
+            self.selected_index += half_page;
+        } else {
+            // 下端に到達：最後の項目に移動
+            self.selected_index = max_index;
+        }
+        self.update_scroll_offset();
     }
     
     /// スクロールオフセットを更新（5行の余白を維持）
@@ -613,16 +651,12 @@ impl TuiEngine {
                                 }
                             }
                             NavigationAction::HalfPageUp => {
-                                // 5項目上に移動（半ページ）
-                                for _ in 0..5 {
-                                    self.state.select_previous();
-                                }
+                                // 半ページ上移動（境界で停止）
+                                self.state.select_half_page_up();
                             }
                             NavigationAction::HalfPageDown => {
-                                // 5項目下に移動（半ページ）
-                                for _ in 0..5 {
-                                    self.state.select_next();
-                                }
+                                // 半ページ下移動（境界で停止）
+                                self.state.select_half_page_down();
                             }
                             NavigationAction::Home => {
                                 self.state.selected_index = 0;
@@ -729,6 +763,12 @@ impl TuiEngine {
             text::{Line, Span},
         };
         
+        // 画面サイズを事前に取得してstateを更新
+        let terminal_size = self.terminal.size()?;
+        let results_area_height = terminal_size.height.saturating_sub(6); // マージン、入力、ステータス分を引く
+        let visible_height = results_area_height.saturating_sub(2) as usize; // ボーダー分を引く
+        self.state.visible_height = visible_height;
+        
         self.terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
@@ -793,7 +833,7 @@ impl TuiEngine {
             f.render_widget(input_block, chunks[0]);
             
             // 検索結果リスト（色分け対応、スクロールオフセット適用）
-            let visible_height = chunks[1].height.saturating_sub(2) as usize; // ボーダー分を引く
+            let visible_height = self.state.visible_height;
             let items: Vec<ListItem> = self.state.results
                 .iter()
                 .enumerate()
@@ -1160,7 +1200,7 @@ impl TuiEngine {
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+D/U ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("Half page down/up (5 items)", Style::default().fg(Color::Gray))
+                Span::styled("Half page down/up (dynamic)", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
                 Span::styled("  Enter    ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
@@ -1212,11 +1252,11 @@ impl TuiEngine {
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+D   ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("Half page down (5 items)", Style::default().fg(Color::Gray))
+                Span::styled("Half page down (dynamic)", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+U   ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::styled("Half page up (5 items)", Style::default().fg(Color::Gray))
+                Span::styled("Half page up (dynamic)", Style::default().fg(Color::Gray))
             ]),
             Line::from(vec![
                 Span::styled("  Ctrl+K   ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),

@@ -162,7 +162,10 @@ impl SearchRunner {
         
         // 検索ストリームの作成と結果収集
         let stream = strategy.create_stream(&self.project_root, query)?;
-        let results: Vec<SearchResult> = stream.collect();
+        let raw_results: Vec<SearchResult> = stream.collect();
+        
+        // 重複除去を適用
+        let results = SearchResult::deduplicate(raw_results);
         
         let elapsed = start_time.elapsed();
         let count = results.len();

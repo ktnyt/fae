@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
+use std::collections::HashSet;
 
 /// 検索モード
 #[derive(Debug, Clone, PartialEq)]
@@ -174,4 +175,79 @@ pub enum Color {
     Red,
     Cyan,
     White,
+}
+
+impl SearchResult {
+    /// 重複除去のためのキーを生成
+    /// ファイルパス + 行番号 + 列番号で一意性を判定
+    fn dedup_key(&self) -> (PathBuf, u32, u32) {
+        (self.file_path.clone(), self.line, self.column)
+    }
+    
+    /// 検索結果リストから重複を除去
+    pub fn deduplicate(results: Vec<SearchResult>) -> Vec<SearchResult> {
+        let mut seen = HashSet::new();
+        let mut deduped = Vec::new();
+        
+        for result in results {
+            let key = result.dedup_key();
+            if !seen.contains(&key) {
+                seen.insert(key);
+                deduped.push(result);
+            }
+        }
+        
+        deduped
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deduplication() {
+        let results = vec![
+            SearchResult {
+                file_path: PathBuf::from("test.rs"),
+                line: 1,
+                column: 1,
+                display_info: DisplayInfo::Content { 
+                    line_content: "fn test()".to_string(),
+                    match_start: 3,
+                    match_end: 7,
+                },
+                score: 1.0,
+            },
+            SearchResult {
+                file_path: PathBuf::from("test.rs"),
+                line: 1,
+                column: 1, // 同じファイル、同じ行、同じ列 → 重複
+                display_info: DisplayInfo::Content { 
+                    line_content: "fn test()".to_string(),
+                    match_start: 3,
+                    match_end: 7,
+                },
+                score: 0.9,
+            },
+            SearchResult {
+                file_path: PathBuf::from("test.rs"),
+                line: 2,
+                column: 1, // 同じファイル、異なる行 → 重複ではない
+                display_info: DisplayInfo::Content { 
+                    line_content: "fn other()".to_string(),
+                    match_start: 3,
+                    match_end: 8,
+                },
+                score: 0.8,
+            },
+        ];
+
+        let deduped = SearchResult::deduplicate(results);
+        
+        // 重複が除去されて2個になるはず
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].line, 1);
+        assert_eq!(deduped[1].line, 2);
+    }
 }
