@@ -185,8 +185,6 @@ async fn run_tui_mode(project_root: &PathBuf) -> Result<()> {
     use crate::tui::{TuiEngine};
     use crate::cli::SearchRunner;
     
-    println!("Starting TUI mode...");
-    
     // SearchRunnerを作成
     let search_runner = SearchRunner::new(project_root.clone(), false);
     

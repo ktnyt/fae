@@ -304,6 +304,82 @@ mod event_tests {
         assert_eq!(state.search_mode, SearchMode::Content);
         assert_eq!(state.clean_query(), "func");
     }
+
+    #[test]
+    fn test_navigation_with_results() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_root = temp_dir.path().to_path_buf();
+        let mut state = TuiState::new(project_root);
+
+        // テスト用の結果を作成
+        use fae::types::{SearchResult, DisplayInfo};
+        use std::path::PathBuf;
+        
+        let results = vec![
+            SearchResult {
+                file_path: PathBuf::from("test1.rs"),
+                line: 1,
+                column: 1,
+                display_info: DisplayInfo::Content {
+                    line_content: "fn test1()".to_string(),
+                    match_start: 0,
+                    match_end: 4,
+                },
+                score: 1.0,
+            },
+            SearchResult {
+                file_path: PathBuf::from("test2.rs"),
+                line: 2,
+                column: 1,
+                display_info: DisplayInfo::Content {
+                    line_content: "fn test2()".to_string(),
+                    match_start: 0,
+                    match_end: 4,
+                },
+                score: 0.9,
+            },
+            SearchResult {
+                file_path: PathBuf::from("test3.rs"),
+                line: 3,
+                column: 1,
+                display_info: DisplayInfo::Content {
+                    line_content: "fn test3()".to_string(),
+                    match_start: 0,
+                    match_end: 4,
+                },
+                score: 0.8,
+            },
+        ];
+
+        state.results = results;
+        
+        // 初期選択インデックスは0
+        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.selected_result().unwrap().file_path, PathBuf::from("test1.rs"));
+
+        // 下に移動
+        state.select_next();
+        assert_eq!(state.selected_index, 1);
+        assert_eq!(state.selected_result().unwrap().file_path, PathBuf::from("test2.rs"));
+
+        state.select_next();
+        assert_eq!(state.selected_index, 2);
+        assert_eq!(state.selected_result().unwrap().file_path, PathBuf::from("test3.rs"));
+
+        // 最後の要素から次に行くと最初に戻る
+        state.select_next();
+        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.selected_result().unwrap().file_path, PathBuf::from("test1.rs"));
+
+        // 上に移動
+        state.select_previous();
+        assert_eq!(state.selected_index, 2);
+        assert_eq!(state.selected_result().unwrap().file_path, PathBuf::from("test3.rs"));
+
+        state.select_previous();
+        assert_eq!(state.selected_index, 1);
+        assert_eq!(state.selected_result().unwrap().file_path, PathBuf::from("test2.rs"));
+    }
 }
 
 #[cfg(test)]

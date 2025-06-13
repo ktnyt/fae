@@ -150,18 +150,26 @@ pub fn create_input_stream() -> impl Stream<Item = InputEvent> {
     // バックグラウンドタスクでcrossterm eventsを監視
     tokio::spawn(async move {
         loop {
-            if let Ok(event) = crossterm::event::read() {
-                let input_event = match event {
-                    CrosstermEvent::Key(key) => InputEvent::Key(key),
-                    CrosstermEvent::Mouse(mouse) => InputEvent::Mouse(mouse),
-                    CrosstermEvent::Resize(w, h) => InputEvent::Resize(w, h),
-                    _ => continue,
-                };
-                
-                if tx.send(input_event).is_err() {
-                    break;
+            // 非ブロッキングでイベントをポーリング
+            if crossterm::event::poll(Duration::from_millis(50)).unwrap_or(false) {
+                if let Ok(event) = crossterm::event::read() {
+                    let input_event = match event {
+                        CrosstermEvent::Key(key) => InputEvent::Key(key),
+                        CrosstermEvent::Mouse(mouse) => InputEvent::Mouse(mouse),
+                        CrosstermEvent::Resize(w, h) => InputEvent::Resize(w, h),
+                        _ => continue,
+                    };
+                    
+                    if tx.send(input_event).is_err() {
+                        break;
+                    }
+                } else {
+                    break; // エラーが発生した場合は終了
                 }
             }
+            
+            // 少し待機してCPU使用率を抑える
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     });
     
@@ -300,14 +308,21 @@ impl TuiEngine {
     pub async fn run(&mut self) -> Result<()> {
         loop {
             tokio::select! {
+                biased;
+                
+                // 入力処理を最優先（Ctrl+C/Escの即座検出）
                 Some(input) = self.input_stream.next() => {
                     if self.handle_input(input).await? {
                         break; // Quit signal
                     }
                 }
+                
+                // 検索イベント処理
                 Some(search_event) = self.search_stream.next() => {
                     self.handle_search_event(search_event).await?;
                 }
+                
+                // UI更新（最低優先度）
                 _ = self.tick_interval.tick() => {
                     self.render().await?;
                 }
@@ -349,6 +364,14 @@ impl TuiEngine {
                         return Ok(true); // Quit
                     }
                     
+                    // 選択移動（Ctrl+N/P）
+                    KeyEvent { code: KeyCode::Char('n'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        self.state.select_next();
+                    }
+                    KeyEvent { code: KeyCode::Char('p'), modifiers: KeyModifiers::CONTROL, .. } => {
+                        self.state.select_previous();
+                    }
+                    
                     // 文字入力
                     KeyEvent { code: KeyCode::Char(c), .. } => {
                         let mut new_query = self.state.query.clone();
@@ -370,7 +393,7 @@ impl TuiEngine {
                         }
                     }
                     
-                    // 選択移動
+                    // 選択移動（矢印キー）
                     KeyEvent { code: KeyCode::Down, .. } => {
                         self.state.select_next();
                     }
@@ -509,7 +532,7 @@ impl TuiEngine {
                 .enumerate()
                 .map(|(i, result)| {
                     let style = if i == self.state.selected_index {
-                        Style::default().bg(Color::Blue).fg(Color::White)
+                        Style::default().bg(Color::LightBlue).fg(Color::Black)
                     } else {
                         Style::default()
                     };
@@ -561,7 +584,7 @@ impl TuiEngine {
             } else if let Some(ref error) = self.state.error_message {
                 format!("Error: {}", error)
             } else {
-                format!("Mode: {:?} | {} results | ↑↓ navigate | Enter open | Esc quit", 
+                format!("Mode: {:?} | {} results | ↑↓/C-p/C-n navigate | Enter open | Esc quit", 
                     self.state.search_mode, 
                     self.state.results.len())
             };
@@ -581,5 +604,23 @@ impl TuiEngine {
         })?;
         
         Ok(())
+    }
+}
+
+/// TuiEngineのDropトレイト実装
+impl Drop for TuiEngine {
+    fn drop(&mut self) {
+        // 同期的にクリーンアップを実行
+        use crossterm::{
+            execute,
+            terminal::{disable_raw_mode, LeaveAlternateScreen},
+        };
+        
+        // 可能な限りクリーンアップを試行
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            LeaveAlternateScreen
+        );
     }
 }
