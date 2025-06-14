@@ -20,8 +20,10 @@ impl From<JsonRpcSendError> for JsonRpcRequestError {
 }
 
 pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
-    // レスポンス・リクエストを送信するためのチャンネル
+    // 外部へのレスポンス送信用チャンネル
     sender: mpsc::UnboundedSender<JsonRpcPayload>,
+    // 内部からメインループへのリクエスト送信用チャンネル
+    internal_sender: mpsc::UnboundedSender<JsonRpcPayload>,
     // シャットダウン通知を送信するためのチャンネル
     shutdown_sender: Option<oneshot::Sender<()>>,
     // メインループのスレッドハンドル
@@ -43,12 +45,16 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let pending_requests_clone = pending_requests.clone();
         
+        // 内部通信用チャンネルを作成
+        let (internal_sender, internal_receiver) = mpsc::unbounded_channel();
+        
         // メインループを別スレッドで実行
         let thread_handle = std::thread::spawn(move || {
             // 新しいtokioランタイムを作成してメインループを実行
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(Self::run_main_loop_internal(
                 receiver,
+                internal_receiver,
                 sender_clone,
                 handler,
                 shutdown_receiver,
@@ -58,6 +64,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         
         Self {
             sender,
+            internal_sender,
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
             pending_requests,
@@ -70,30 +77,44 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     }
 
     pub async fn send_request(&self, request: JsonRpcRequest) -> Result<JsonRpcResponse, JsonRpcRequestError> {
+        log::debug!("Sending request: id={}, method={}", request.id, request.method);
+        
         let (tx, rx) = oneshot::channel();
         
         // pending_requestsに登録
         {
             let mut pending = self.pending_requests.lock().unwrap();
             pending.insert(request.id, tx);
+            log::trace!("Registered pending request: id={}, total_pending={}", request.id, pending.len());
         }
         
-        // リクエストを送信
-        self.send(JsonRpcPayload::Request(request)).await?;
+        // 内部チャンネル経由でリクエストを送信
+        self.internal_sender.send(JsonRpcPayload::Request(request)).map_err(|_| JsonRpcSendError::ChannelClosed)?;
         
         // レスポンスを待機（タイムアウト付き）
+        log::trace!("Waiting for response...");
         match tokio::time::timeout(
             std::time::Duration::from_secs(30), // 30秒タイムアウト
             rx
         ).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(JsonRpcRequestError::ResponseTimeout),
-            Err(_) => Err(JsonRpcRequestError::ResponseTimeout),
+            Ok(Ok(response)) => {
+                log::debug!("Received response: id={}", response.id);
+                Ok(response)
+            },
+            Ok(Err(_)) => {
+                log::warn!("Response channel closed unexpectedly");
+                Err(JsonRpcRequestError::ResponseTimeout)
+            },
+            Err(_) => {
+                log::warn!("Request timed out after 30 seconds");
+                Err(JsonRpcRequestError::ResponseTimeout)
+            },
         }
     }
 
     async fn run_main_loop_internal(
-        mut receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
+        mut external_receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
+        mut internal_receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
         sender: mpsc::UnboundedSender<JsonRpcPayload>,
         mut handler: H,
         mut shutdown_receiver: oneshot::Receiver<()>,
@@ -103,16 +124,31 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             tokio::select! {
                 // シャットダウン通知を受信
                 _ = &mut shutdown_receiver => {
+                    log::debug!("Received shutdown signal, stopping main loop");
                     break;
                 }
-                // メッセージ受信処理
-                payload = receiver.recv() => {
+                // 外部からのメッセージ受信処理
+                payload = external_receiver.recv() => {
                     match payload {
                         Some(payload) => {
+                            log::trace!("Received external payload");
                             Self::handle_received_payload(payload, &mut handler, &sender, &pending_requests).await;
                         }
                         None => {
-                            // チャンネルが閉じられた場合はループを終了
+                            log::debug!("External receiver channel closed");
+                            break;
+                        }
+                    }
+                }
+                // 内部からのメッセージ受信処理
+                payload = internal_receiver.recv() => {
+                    match payload {
+                        Some(payload) => {
+                            log::trace!("Received internal payload");
+                            Self::handle_received_payload(payload, &mut handler, &sender, &pending_requests).await;
+                        }
+                        None => {
+                            log::debug!("Internal receiver channel closed");
                             break;
                         }
                     }
@@ -129,21 +165,36 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     ) {
         match payload {
             JsonRpcPayload::Request(request) => {
+                log::debug!("Handling request: id={}, method={}", request.id, request.method);
                 let response = handler.on_request(request).await;
-                let response_payload = JsonRpcPayload::Response(response);
-                // レスポンスを送信（エラーは無視）
-                let _ = sender.send(response_payload);
-            }
-            JsonRpcPayload::Notification(notification) => {
-                handler.on_notification(notification).await;
-            }
-            JsonRpcPayload::Response(response) => {
+                log::trace!("Handler response: id={}, has_result={}, has_error={}", 
+                           response.id, response.result.is_some(), response.error.is_some());
+                
                 // pending_requestsから対応するチャンネルを取得してレスポンスを送信
                 let mut pending = pending_requests.lock().unwrap();
                 if let Some(tx) = pending.remove(&response.id) {
-                    let _ = tx.send(response);
+                    log::trace!("Forwarding handler response to waiting request: id={}", response.id);
+                    let _ = tx.send(response.clone());
                 }
-                // 対応するリクエストが見つからない場合は無視
+                
+                // 外部向けにもレスポンスを送信
+                let response_payload = JsonRpcPayload::Response(response);
+                let _ = sender.send(response_payload);
+            }
+            JsonRpcPayload::Notification(notification) => {
+                log::debug!("Handling notification: method={}", notification.method);
+                handler.on_notification(notification).await;
+            }
+            JsonRpcPayload::Response(response) => {
+                log::debug!("Handling response: id={}", response.id);
+                // pending_requestsから対応するチャンネルを取得してレスポンスを送信
+                let mut pending = pending_requests.lock().unwrap();
+                if let Some(tx) = pending.remove(&response.id) {
+                    log::trace!("Forwarding response to waiting request: id={}", response.id);
+                    let _ = tx.send(response);
+                } else {
+                    log::warn!("Received response for unknown request id: {}", response.id);
+                }
             }
         }
     }
@@ -189,6 +240,43 @@ mod tests {
         }
     }
 
+    // ping/pongテスト用のハンドラー
+    struct PingPongHandler;
+
+    #[async_trait]
+    impl JsonRpcHandler for PingPongHandler {
+        async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+            log::info!("PingPongHandler received request: method={}", request.method);
+            
+            match request.method.as_str() {
+                "ping" => {
+                    log::info!("Responding with pong to request id={}", request.id);
+                    JsonRpcResponse {
+                        id: request.id,
+                        result: Some(json!("pong")),
+                        error: None,
+                    }
+                }
+                _ => {
+                    log::warn!("Unknown method: {}", request.method);
+                    JsonRpcResponse {
+                        id: request.id,
+                        result: None,
+                        error: Some(crate::jsonrpc::message::JsonRpcError {
+                            code: -32601,
+                            message: "Method not found".to_string(),
+                            data: None,
+                        }),
+                    }
+                }
+            }
+        }
+
+        async fn on_notification(&mut self, notification: JsonRpcNotification) {
+            log::info!("PingPongHandler received notification: method={}", notification.method);
+        }
+    }
+
     #[tokio::test]
     async fn test_send_request() {
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -218,9 +306,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_request_with_response() {
+    async fn test_send_request_with_handler_response() {
         let (tx, _rx) = mpsc::unbounded_channel();
-        let (engine_tx, engine_rx) = mpsc::unbounded_channel();
+        let (_engine_tx, engine_rx) = mpsc::unbounded_channel();
         
         let engine: JsonRpcEngine<DummyHandler> = JsonRpcEngine::new(engine_rx, tx, DummyHandler);
         
@@ -230,25 +318,10 @@ mod tests {
             params: Some(json!({"test": "data"})),
         };
         
-        let response = JsonRpcResponse {
-            id: 42,
-            result: Some(json!("test_response")),
-            error: None,
-        };
-        
-        // レスポンス送信タスクを非同期で起動
-        let engine_tx_clone = engine_tx.clone();
-        let response_clone = response.clone();
-        tokio::spawn(async move {
-            // 少し待ってからレスポンスを送信
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            engine_tx_clone.send(JsonRpcPayload::Response(response_clone)).unwrap();
-        });
-        
-        // send_requestを実行（レスポンスを待機）
+        // send_requestを実行（ハンドラーからのレスポンスを待機）
         let received_response = engine.send_request(request.clone()).await.unwrap();
         assert_eq!(received_response.id, 42);
-        assert_eq!(received_response.result, Some(json!("test_response")));
+        assert_eq!(received_response.result, Some(json!("test_result"))); // DummyHandlerの応答
         assert!(received_response.error.is_none());
         
         // engineをdropしてクリーンアップ
@@ -380,6 +453,84 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(notifications[0].method, notification.method);
         assert_eq!(notifications[0].params, notification.params);
+        
+        // engineをdropしてクリーンアップ
+        drop(engine);
+    }
+
+    #[tokio::test]
+    async fn test_ping_pong_integration() {
+        // ログ初期化（テスト用）
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (_engine_tx, engine_rx) = mpsc::unbounded_channel();
+        
+        let engine: JsonRpcEngine<PingPongHandler> = JsonRpcEngine::new(engine_rx, tx, PingPongHandler);
+        
+        let ping_request = JsonRpcRequest {
+            id: 100,
+            method: "ping".to_string(),
+            params: None,
+        };
+        
+        log::info!("Starting ping/pong integration test");
+        
+        // send_requestでpingを送信してpongレスポンスを待機
+        let response = engine.send_request(ping_request).await.unwrap();
+        
+        log::info!("Received response: {:?}", response);
+        
+        // レスポンスの検証
+        assert_eq!(response.id, 100);
+        assert_eq!(response.result, Some(json!("pong")));
+        assert!(response.error.is_none());
+        
+        log::info!("ping/pong test completed successfully!");
+        
+        // engineをdropしてクリーンアップ
+        drop(engine);
+    }
+
+    #[tokio::test] 
+    async fn test_ping_pong_unknown_method() {
+        // ログ初期化（テスト用）
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (_engine_tx, engine_rx) = mpsc::unbounded_channel();
+        
+        let engine: JsonRpcEngine<PingPongHandler> = JsonRpcEngine::new(engine_rx, tx, PingPongHandler);
+        
+        let unknown_request = JsonRpcRequest {
+            id: 101,
+            method: "unknown_method".to_string(),
+            params: None,
+        };
+        
+        log::info!("Testing unknown method handling");
+        
+        // unknown methodを送信してエラーレスポンスを期待
+        let response = engine.send_request(unknown_request).await.unwrap();
+        
+        log::info!("Received error response: {:?}", response);
+        
+        // エラーレスポンスの検証
+        assert_eq!(response.id, 101);
+        assert!(response.result.is_none());
+        assert!(response.error.is_some());
+        
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32601);
+        assert_eq!(error.message, "Method not found");
+        
+        log::info!("Unknown method test completed successfully!");
         
         // engineをdropしてクリーンアップ
         drop(engine);
