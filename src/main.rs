@@ -140,32 +140,11 @@ async fn check_ripgrep_availability(
 }
 
 async fn start_jsonrpc_server_with_literal_search(search_root: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::sync::mpsc;
-    use fae::jsonrpc::message::JsonRpcPayload;
-    
-    // 通知チャンネルを先に作成
-    let (notification_tx, notification_rx) = mpsc::unbounded_channel::<JsonRpcPayload>();
-    
-    // ハンドラーを作成（通知チャンネル付き）
-    let handler = fae::services::literal_search::LiteralSearchHandler::new(search_root)
-        .await
-        .with_notification_sender(notification_tx);
+    // ハンドラーを作成（新しいアーキテクチャではsenderパラメータを直接使用）
+    let handler = fae::services::literal_search::LiteralSearchHandler::new(search_root).await;
     
     // JSON-RPC Stdio Adapter を作成
-    let mut adapter = JsonRpcStdioAdapter::new(handler);
-    
-    // 通知転送タスクを起動
-    let engine_sender = adapter.engine().notification_sender();
-    tokio::spawn(async move {
-        let mut receiver = notification_rx;
-        while let Some(payload) = receiver.recv().await {
-            if let Err(e) = engine_sender.send(payload) {
-                log::error!("Failed to forward notification to engine: {}", e);
-                break;
-            }
-        }
-        log::debug!("Notification forwarding task terminated");
-    });
+    let adapter = JsonRpcStdioAdapter::new(handler);
 
     log::info!("JSON-RPC server ready, listening on stdin/stdout");
 

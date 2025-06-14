@@ -10,6 +10,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 /// 通知を生成するテスト用ハンドラー
@@ -35,7 +36,11 @@ impl NotificationTestHandler {
 
 #[async_trait]
 impl JsonRpcHandler for NotificationTestHandler {
-    async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+    async fn on_request(
+        &mut self, 
+        request: JsonRpcRequest,
+        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+    ) -> JsonRpcResponse {
         match request.method.as_str() {
             "test.triggerNotification" => {
                 // 通知を送信を試みる
@@ -58,7 +63,11 @@ impl JsonRpcHandler for NotificationTestHandler {
         }
     }
 
-    async fn on_notification(&mut self, notification: JsonRpcNotification) {
+    async fn on_notification(
+        &mut self, 
+        notification: JsonRpcNotification,
+        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+    ) {
         match notification.method.as_str() {
             "test.echo" => {
                 let message = notification

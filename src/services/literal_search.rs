@@ -53,14 +53,6 @@ impl LiteralSearchHandler {
         }
     }
 
-    /// 通知送信チャンネルを設定
-    pub fn with_notification_sender(
-        mut self,
-        sender: mpsc::UnboundedSender<JsonRpcPayload>,
-    ) -> Self {
-        self.notification_sender = Some(sender);
-        self
-    }
 
     /// clearSearchResults 通知を送信
     async fn send_clear_notification(&self) {
@@ -330,7 +322,11 @@ impl LiteralSearchHandler {
 
 #[async_trait]
 impl JsonRpcHandler for LiteralSearchHandler {
-    async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+    async fn on_request(
+        &mut self, 
+        request: JsonRpcRequest,
+        sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+    ) -> JsonRpcResponse {
         log::debug!(
             "LiteralSearchHandler received request: method={}",
             request.method
@@ -367,7 +363,11 @@ impl JsonRpcHandler for LiteralSearchHandler {
         }
     }
 
-    async fn on_notification(&mut self, notification: JsonRpcNotification) {
+    async fn on_notification(
+        &mut self, 
+        notification: JsonRpcNotification,
+        sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+    ) {
         log::debug!(
             "LiteralSearchHandler received notification: method={}",
             notification.method
@@ -427,7 +427,9 @@ mod tests {
             params: None,
         };
 
-        let response = handler.on_request(request).await;
+        // ダミーのsenderを作成
+        let (dummy_sender, _dummy_rx) = mpsc::unbounded_channel();
+        let response = handler.on_request(request, &dummy_sender).await;
         assert_eq!(response.id, 1);
         assert!(response.error.is_none());
         assert!(response.result.is_some());
@@ -448,7 +450,9 @@ mod tests {
             params: None,
         };
 
-        let response = handler.on_request(request).await;
+        // ダミーのsenderを作成
+        let (dummy_sender, _dummy_rx) = mpsc::unbounded_channel();
+        let response = handler.on_request(request, &dummy_sender).await;
         assert_eq!(response.id, 2);
         assert!(response.result.is_none());
         assert!(response.error.is_some());
@@ -466,6 +470,9 @@ mod tests {
             .try_init();
 
         let mut handler = LiteralSearchHandler::new(PathBuf::from(".")).await;
+        
+        // テスト用のダミーsenderを作成
+        let (dummy_sender, _dummy_rx) = mpsc::unbounded_channel();
 
         // updateQuery通知（無効なパラメータ）
         let notification = JsonRpcNotification {
@@ -473,7 +480,7 @@ mod tests {
             params: Some(json!({"invalid": "param"})),
         };
 
-        handler.on_notification(notification).await;
+        handler.on_notification(notification, &dummy_sender).await;
 
         // 正常なupdateQuery通知
         let notification = JsonRpcNotification {
@@ -481,7 +488,7 @@ mod tests {
             params: Some(json!({"query": "test"})),
         };
 
-        handler.on_notification(notification).await;
+        handler.on_notification(notification, &dummy_sender).await;
 
         // ハンドラーの状態が更新されることを確認
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await; // 少し待機
@@ -514,7 +521,10 @@ mod tests {
         };
 
         let mut handler_resolved = handler.await;
-        handler_resolved.on_notification(notification).await;
+        
+        // テスト用のダミーsenderを作成
+        let (dummy_sender, _dummy_rx) = mpsc::unbounded_channel();
+        handler_resolved.on_notification(notification, &dummy_sender).await;
 
         // 検索が実行されたことを確認
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await; // 少し待機
@@ -534,6 +544,9 @@ mod tests {
             .try_init();
 
         let mut handler = LiteralSearchHandler::new(PathBuf::from(".")).await;
+        
+        // テスト用のダミーsenderを作成
+        let (dummy_sender, _dummy_rx) = mpsc::unbounded_channel();
 
         // 最初の検索を開始
         let notification1 = JsonRpcNotification {
@@ -541,7 +554,7 @@ mod tests {
             params: Some(json!({"query": "the"})), // よく見つかる文字列
         };
 
-        handler.on_notification(notification1).await;
+        handler.on_notification(notification1, &dummy_sender).await;
 
         // 検索が開始される前に状態を確認（すぐに確認）
         // 注: 検索は非同期で実行されるが、状態の設定は同期的に行われる
@@ -563,7 +576,7 @@ mod tests {
             params: Some(json!({"query": "function"})),
         };
 
-        handler.on_notification(notification2).await;
+        handler.on_notification(notification2, &dummy_sender).await;
 
         // 新しい検索が設定されていることを確認
         {

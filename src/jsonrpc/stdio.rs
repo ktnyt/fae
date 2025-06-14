@@ -312,6 +312,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcStdioAdapter<H> {
         adapter
     }
 
+
     /// stdio通信ループを開始（内部メソッド）
     fn start_communication_loops(
         &mut self,
@@ -716,7 +717,11 @@ mod tests {
 
     #[async_trait]
     impl JsonRpcHandler for TestPingPongHandler {
-        async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+        async fn on_request(
+            &mut self, 
+            request: JsonRpcRequest,
+            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        ) -> JsonRpcResponse {
             let mut count = self.request_count.lock().unwrap();
             *count += 1;
 
@@ -742,7 +747,11 @@ mod tests {
             }
         }
 
-        async fn on_notification(&mut self, _notification: JsonRpcNotification) {
+        async fn on_notification(
+            &mut self, 
+            _notification: JsonRpcNotification,
+            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        ) {
             // 何もしない
         }
     }
