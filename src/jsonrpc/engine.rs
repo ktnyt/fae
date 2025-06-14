@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
@@ -31,6 +32,8 @@ pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
     // リクエストID -> レスポンス待機チャンネルのマップ
     pending_requests:
         Arc<Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>>,
+    // 次のリクエストIDのためのatomicカウンター
+    next_id: AtomicU64,
     // ハンドラータイプを保持するためのマーカー
     _phantom: PhantomData<H>,
 }
@@ -69,6 +72,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
             pending_requests,
+            next_id: AtomicU64::new(1),
             _phantom: PhantomData,
         }
     }
@@ -126,6 +130,86 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             Err(_) => {
                 log::warn!("Request timed out after 30 seconds");
                 Err(JsonRpcRequestError::ResponseTimeout)
+            }
+        }
+    }
+
+    /// Send a request with automatic ID generation and configurable timeout
+    /// 
+    /// # Arguments
+    /// * `method` - The JSON-RPC method name
+    /// * `params` - Optional parameters for the request
+    /// * `timeout_ms` - Timeout in milliseconds (0 for no timeout)
+    pub async fn request(
+        &self,
+        method: impl Into<String>,
+        params: Option<serde_json::Value>,
+        timeout_ms: u64,
+    ) -> Result<JsonRpcResponse, JsonRpcRequestError> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let method = method.into();
+        
+        log::debug!("Sending request: id={}, method={}", id, method);
+
+        let request = JsonRpcRequest {
+            id,
+            method: method.clone(),
+            params,
+        };
+
+        let (tx, rx) = oneshot::channel();
+
+        // pending_requestsに登録
+        {
+            let mut pending = self.pending_requests.lock().unwrap();
+            pending.insert(id, tx);
+            log::trace!(
+                "Registered pending request: id={}, total_pending={}",
+                id,
+                pending.len()
+            );
+        }
+
+        // 内部チャンネル経由でリクエストを送信
+        self.internal_sender
+            .send(JsonRpcPayload::Request(request))
+            .map_err(|_| JsonRpcSendError::ChannelClosed)?;
+
+        // レスポンスを待機（タイムアウトの設定）
+        log::trace!("Waiting for response...");
+        
+        if timeout_ms == 0 {
+            // タイムアウトなし
+            match rx.await {
+                Ok(response) => {
+                    log::debug!("Received response: id={}", response.id);
+                    Ok(response)
+                }
+                Err(_) => {
+                    log::warn!("Response channel closed unexpectedly");
+                    Err(JsonRpcRequestError::ResponseTimeout)
+                }
+            }
+        } else {
+            // タイムアウト付き
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(timeout_ms),
+                rx,
+            )
+            .await
+            {
+                Ok(Ok(response)) => {
+                    log::debug!("Received response: id={}", response.id);
+                    Ok(response)
+                }
+                Ok(Err(_)) => {
+                    log::warn!("Response channel closed unexpectedly");
+                    Err(JsonRpcRequestError::ResponseTimeout)
+                }
+                Err(_) => {
+                    log::warn!("Request timed out after {}ms", timeout_ms);
+                    Err(JsonRpcRequestError::ResponseTimeout)
+                }
             }
         }
     }
@@ -785,5 +869,113 @@ mod tests {
         // クリーンアップ
         drop(engine_a);
         drop(engine_b);
+    }
+
+    #[tokio::test]
+    async fn test_new_request_api() {
+        // ログ初期化（テスト用）
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (_engine_tx, engine_rx) = mpsc::unbounded_channel();
+
+        let engine: JsonRpcEngine<PingPongHandler> =
+            JsonRpcEngine::new(engine_rx, tx, PingPongHandler);
+
+        // 新しいrequestメソッドでpingを送信
+        let response = engine
+            .request("ping", None, 5000) // 5秒タイムアウト
+            .await
+            .unwrap();
+
+        // レスポンスの検証
+        assert_eq!(response.result, Some(json!("pong")));
+        assert!(response.error.is_none());
+        // IDが自動生成されていることを確認
+        assert_eq!(response.id, 1); // 最初のリクエストなのでID=1
+
+        // 2番目のリクエスト
+        let response2 = engine
+            .request("ping", Some(json!({"test": "data"})), 3000)
+            .await
+            .unwrap();
+
+        assert_eq!(response2.result, Some(json!("pong")));
+        assert_eq!(response2.id, 2); // 2番目のリクエストなのでID=2
+
+        // エンジンをdropしてクリーンアップ
+        drop(engine);
+    }
+
+    #[tokio::test]
+    async fn test_request_timeout() {
+        // ログ初期化（テスト用）
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        // タイムアウトをテストするためのハンドラー
+        struct SlowHandler;
+
+        #[async_trait]
+        impl JsonRpcHandler for SlowHandler {
+            async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+                log::info!("SlowHandler received request, sleeping...");
+                // 2秒間スリープしてタイムアウトを発生させる
+                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                JsonRpcResponse {
+                    id: request.id,
+                    result: Some(json!("slow_response")),
+                    error: None,
+                }
+            }
+
+            async fn on_notification(&mut self, _notification: JsonRpcNotification) {
+                // 何もしない
+            }
+        }
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (_engine_tx, engine_rx) = mpsc::unbounded_channel();
+
+        let engine: JsonRpcEngine<SlowHandler> = JsonRpcEngine::new(engine_rx, tx, SlowHandler);
+
+        // 1秒タイムアウトでリクエスト（2秒かかるのでタイムアウトするはず）
+        let result = engine.request("slow_method", None, 1000).await;
+
+        // タイムアウトエラーになることを確認
+        assert!(matches!(result, Err(JsonRpcRequestError::ResponseTimeout)));
+
+        // エンジンをdropしてクリーンアップ
+        drop(engine);
+    }
+
+    #[tokio::test]
+    async fn test_request_no_timeout() {
+        // ログ初期化（テスト用）
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (_engine_tx, engine_rx) = mpsc::unbounded_channel();
+
+        let engine: JsonRpcEngine<PingPongHandler> =
+            JsonRpcEngine::new(engine_rx, tx, PingPongHandler);
+
+        // タイムアウトなし（0を指定）でリクエスト
+        let response = engine.request("ping", None, 0).await.unwrap();
+
+        // レスポンスの検証
+        assert_eq!(response.result, Some(json!("pong")));
+        assert!(response.error.is_none());
+
+        // エンジンをdropしてクリーンアップ
+        drop(engine);
     }
 }
