@@ -70,31 +70,32 @@ impl ServiceType {
 pub struct ServiceFactory;
 
 impl ServiceFactory {
-    /// 指定されたサービスタイプのハンドラーを作成
-    pub fn create_handler(
+    /// 指定されたサービスタイプのハンドラーを作成（async版）
+    /// 注意: 現在の実装では、main.rsで直接ハンドラーを作成します
+    pub async fn create_handler_async(
         service_type: ServiceType,
         search_root: PathBuf,
     ) -> Result<Box<dyn JsonRpcHandler + Send>, String> {
         match service_type {
             ServiceType::LiteralSearch => {
-                let handler = LiteralSearchHandler::new(search_root);
+                let handler = LiteralSearchHandler::new(search_root).await;
                 Ok(Box::new(handler))
             }
             // 将来追加予定
             // ServiceType::SymbolSearch => {
-            //     let handler = SymbolSearchHandler::new(search_root);
+            //     let handler = SymbolSearchHandler::new(search_root).await;
             //     Ok(Box::new(handler))
             // }
             // ServiceType::FileSearch => {
-            //     let handler = FileSearchHandler::new(search_root);
+            //     let handler = FileSearchHandler::new(search_root).await;
             //     Ok(Box::new(handler))
             // }
             // ServiceType::RegexSearch => {
-            //     let handler = RegexSearchHandler::new(search_root);
+            //     let handler = RegexSearchHandler::new(search_root).await;
             //     Ok(Box::new(handler))
             // }
             // ServiceType::GitSearch => {
-            //     let handler = GitSearchHandler::new(search_root);
+            //     let handler = GitSearchHandler::new(search_root).await;
             //     Ok(Box::new(handler))
             // }
         }
@@ -149,10 +150,10 @@ mod tests {
         assert!(services.contains(&"search:literal"));
     }
 
-    #[test]
-    fn test_create_literal_search_handler() {
+    #[tokio::test]
+    async fn test_create_literal_search_handler() {
         let search_root = PathBuf::from("/tmp");
-        let result = ServiceFactory::create_handler(ServiceType::LiteralSearch, search_root);
+        let result = ServiceFactory::create_handler_async(ServiceType::LiteralSearch, search_root).await;
         assert!(result.is_ok());
     }
 

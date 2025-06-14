@@ -24,6 +24,7 @@ tree-sitter-rust = "0.20"
 fuzzy-matcher = "0.3"
 ignore = "0.4"        # .gitignore対応
 lru = "0.12"          # キャッシュ
+walkdir = "2.4"       # ディレクトリ再帰探索
 
 # クリップボード
 arboard = "3.2"

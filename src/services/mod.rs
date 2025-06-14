@@ -4,6 +4,7 @@
 //! 各サービスはJSON-RPCハンドラーとして実装され、マイクロサービスアーキテクチャの
 //! 一部として独立して動作できるよう設計されています。
 
+pub mod backend;
 pub mod literal_search;
 pub mod service_factory;
 

@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use fae::jsonrpc::stdio::JsonRpcStdioAdapter;
-use fae::services::{ServiceFactory, ServiceType};
+use fae::services::service_factory::ServiceType;
 use std::path::PathBuf;
 use std::process;
 
@@ -58,7 +58,7 @@ async fn main() {
                 Ok(st) => st,
                 Err(e) => {
                     eprintln!("Error: {}", e);
-                    eprintln!("{}", ServiceFactory::list_services());
+                    eprintln!("{}", fae::services::service_factory::ServiceFactory::list_services());
                     process::exit(1);
                 }
             };
@@ -69,7 +69,7 @@ async fn main() {
             }
         }
         Some(Commands::List) => {
-            println!("{}", ServiceFactory::list_services());
+            println!("{}", fae::services::service_factory::ServiceFactory::list_services());
             return;
         }
         None => {
@@ -140,8 +140,8 @@ async fn check_ripgrep_availability(
 }
 
 async fn start_jsonrpc_server_with_literal_search(search_root: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    // LiteralSearchHandler を作成
-    let handler = fae::services::literal_search::LiteralSearchHandler::new(search_root);
+    // LiteralSearchHandler を作成（バックエンド自動選択）
+    let handler = fae::services::literal_search::LiteralSearchHandler::new(search_root).await;
     
     // JSON-RPC Stdio Adapter を作成
     let adapter = JsonRpcStdioAdapter::new(handler);
