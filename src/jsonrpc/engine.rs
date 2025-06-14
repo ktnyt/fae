@@ -262,11 +262,10 @@ mod tests {
                     JsonRpcResponse {
                         id: request.id,
                         result: None,
-                        error: Some(crate::jsonrpc::message::JsonRpcError {
-                            code: -32601,
-                            message: "Method not found".to_string(),
-                            data: None,
-                        }),
+                        error: Some(crate::jsonrpc::message::JsonRpcError::method_not_found(
+                            Some(format!("Method '{}' not found", request.method)), 
+                            Some(serde_json::json!({"method": request.method}))
+                        )),
                     }
                 }
             }
@@ -528,7 +527,7 @@ mod tests {
         
         let error = response.error.unwrap();
         assert_eq!(error.code, -32601);
-        assert_eq!(error.message, "Method not found");
+        assert_eq!(error.message, "Method 'unknown_method' not found");
         
         log::info!("Unknown method test completed successfully!");
         

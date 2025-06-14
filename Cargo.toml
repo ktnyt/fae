@@ -3,41 +3,6 @@ name = "fae"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "fae"
-path = "src/main.rs"
-
-[[bin]]
-name = "simple_echo_test"
-path = "samples/simple_echo_test.rs"
-
-[[bin]]
-name = "test_simple_echo"
-path = "samples/test_simple_echo.rs"
-
-[[bin]]
-name = "content_search_worker"
-path = "src/bin/content_search_worker.rs"
-
-[[bin]]
-name = "test_content_search_worker"
-path = "samples/test_content_search_worker.rs"
-
-[[bin]]
-name = "search_router"
-path = "src/bin/search_router.rs"
-
-[[bin]]
-name = "test_search_router"
-path = "samples/test_search_router.rs"
-
-[[bin]]
-name = "test_router_integration"
-path = "samples/test_router_integration.rs"
-
-[[bin]]
-name = "test_search_interruption"
-path = "samples/test_search_interruption.rs"
 
 [dependencies]
 # TUI
