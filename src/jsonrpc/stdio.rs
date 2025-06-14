@@ -421,8 +421,11 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcStdioAdapter<H> {
         mut receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
     ) -> io::Result<()> {
         let mut writer = tokio::io::stdout();
+        log::debug!("📡 STDOUT write loop started, waiting for payloads...");
 
         while let Some(payload) = receiver.recv().await {
+            log::debug!("📡 STDOUT received payload: {:?}", payload);
+            
             let json_value = StdioTransport::payload_to_json(payload)?;
             let json_str = serde_json::to_string(&json_value).map_err(|e| {
                 io::Error::new(
@@ -434,11 +437,15 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcStdioAdapter<H> {
             let content_length = json_str.len();
             let message = format!("Content-Length: {}\r\n\r\n{}", content_length, json_str);
 
-            log::debug!("Sending: {}", message);
+            log::debug!("📡 STDOUT sending: {}", message);
 
             writer.write_all(message.as_bytes()).await?;
             writer.flush().await?;
+            
+            log::debug!("📡 STDOUT message sent successfully");
         }
+        
+        log::debug!("📡 STDOUT write loop terminated (receiver closed)");
         Ok(())
     }
 

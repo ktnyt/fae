@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use crate::jsonrpc::handler::JsonRpcHandler;
-use crate::jsonrpc::message::{JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use crate::jsonrpc::message::{JsonRpcError, JsonRpcNotification, JsonRpcPayload, JsonRpcRequest, JsonRpcResponse};
 use crate::services::backend::{SearchBackend, SearchBackendImpl};
 
 /// 現在の検索状態
@@ -27,6 +27,8 @@ pub struct LiteralSearchHandler {
     current_search: Arc<Mutex<Option<SearchState>>>,
     /// 検索バックエンド
     backend: SearchBackendImpl,
+    /// JSON-RPC通知送信チャンネル
+    notification_sender: Option<mpsc::UnboundedSender<JsonRpcPayload>>,
 }
 
 impl LiteralSearchHandler {
@@ -37,6 +39,7 @@ impl LiteralSearchHandler {
             search_root,
             current_search: Arc::new(Mutex::new(None)),
             backend,
+            notification_sender: None,
         }
     }
     
@@ -46,15 +49,39 @@ impl LiteralSearchHandler {
             search_root,
             current_search: Arc::new(Mutex::new(None)),
             backend,
+            notification_sender: None,
         }
     }
 
-    /// clearSearchResults 通知を送信（将来実装用）
-    async fn send_clear_notification(&self) {
-        log::info!("Search results cleared");
+    /// 通知送信チャンネルを設定
+    pub fn with_notification_sender(
+        mut self,
+        sender: mpsc::UnboundedSender<JsonRpcPayload>,
+    ) -> Self {
+        self.notification_sender = Some(sender);
+        self
     }
 
-    /// pushSearchResult 通知を送信（将来実装用）
+    /// clearSearchResults 通知を送信
+    async fn send_clear_notification(&self) {
+        if let Some(ref sender) = self.notification_sender {
+            let notification = JsonRpcNotification {
+                method: "clearSearchResults".to_string(),
+                params: None,
+            };
+
+            let payload = JsonRpcPayload::Notification(notification);
+            if let Err(e) = sender.send(payload) {
+                log::error!("Failed to send clearSearchResults notification: {}", e);
+            } else {
+                log::debug!("Sent clearSearchResults notification");
+            }
+        } else {
+            log::info!("Search results cleared (no notification sender)");
+        }
+    }
+
+    /// pushSearchResult 通知を送信
     async fn send_result_notification(
         &self,
         filename: &str,
@@ -63,32 +90,101 @@ impl LiteralSearchHandler {
         content: &str,
         result_count: u32,
     ) {
-        log::debug!(
-            "Found result #{}: {}:{}:{} - {}",
-            result_count,
-            filename,
-            line,
-            offset,
-            content.trim()
-        );
+        if let Some(ref sender) = self.notification_sender {
+            let notification = JsonRpcNotification {
+                method: "pushSearchResult".to_string(),
+                params: Some(json!({
+                    "filename": filename,
+                    "line": line,
+                    "offset": offset,
+                    "content": content,
+                    "result_count": result_count
+                })),
+            };
+
+            let payload = JsonRpcPayload::Notification(notification);
+            if let Err(e) = sender.send(payload) {
+                log::error!("Failed to send pushSearchResult notification: {}", e);
+            } else {
+                log::debug!(
+                    "Sent pushSearchResult #{}: {}:{}:{} - {}",
+                    result_count,
+                    filename,
+                    line,
+                    offset,
+                    content.trim()
+                );
+            }
+        } else {
+            log::debug!(
+                "Found result #{}: {}:{}:{} - {} (no notification sender)",
+                result_count,
+                filename,
+                line,
+                offset,
+                content.trim()
+            );
+        }
     }
 
     /// searchCompleted 通知を送信（検索終了を通知）
     async fn send_search_completed_notification(&self, query: &str, total_results: u32) {
-        log::info!(
-            "Search completed for query '{}': {} results found",
-            query,
-            total_results
-        );
+        if let Some(ref sender) = self.notification_sender {
+            let notification = JsonRpcNotification {
+                method: "searchCompleted".to_string(),
+                params: Some(json!({
+                    "query": query,
+                    "total_results": total_results
+                })),
+            };
+
+            let payload = JsonRpcPayload::Notification(notification);
+            if let Err(e) = sender.send(payload) {
+                log::error!("Failed to send searchCompleted notification: {}", e);
+            } else {
+                log::info!(
+                    "Search completed for query '{}': {} results found",
+                    query,
+                    total_results
+                );
+            }
+        } else {
+            log::info!(
+                "Search completed for query '{}': {} results found (no notification sender)",
+                query,
+                total_results
+            );
+        }
     }
 
     /// searchCancelled 通知を送信（検索キャンセル通知）
     async fn send_search_cancelled_notification(&self, query: &str, partial_results: u32) {
-        log::info!(
-            "Search cancelled for query '{}': {} partial results found",
-            query,
-            partial_results
-        );
+        if let Some(ref sender) = self.notification_sender {
+            let notification = JsonRpcNotification {
+                method: "searchCancelled".to_string(),
+                params: Some(json!({
+                    "query": query,
+                    "partial_results": partial_results
+                })),
+            };
+
+            let payload = JsonRpcPayload::Notification(notification);
+            if let Err(e) = sender.send(payload) {
+                log::error!("Failed to send searchCancelled notification: {}", e);
+            } else {
+                log::info!(
+                    "Search cancelled for query '{}': {} partial results found",
+                    query,
+                    partial_results
+                );
+            }
+        } else {
+            log::info!(
+                "Search cancelled for query '{}': {} partial results found (no notification sender)",
+                query,
+                partial_results
+            );
+        }
     }
 
     /// updateQuery 通知を処理
@@ -144,6 +240,7 @@ impl LiteralSearchHandler {
         log::debug!("Starting search with backend: {}", self.backend.backend_type().name());
         
         let current_search_clone = self.current_search.clone();
+        let notification_sender_clone = self.notification_sender.clone();
         
         let result_count = self.backend.search_literal(
             query,
@@ -152,25 +249,54 @@ impl LiteralSearchHandler {
             move |search_match| {
                 // 検索結果を受信した際のコールバック
                 let current_search_inner = current_search_clone.clone();
+                let sender_clone = notification_sender_clone.clone();
                 tokio::spawn(async move {
-                    {
+                    let result_count = {
                         let mut current_search = current_search_inner.lock().await;
                         if let Some(ref mut search_state) = current_search.as_mut() {
                             search_state.result_count += 1;
+                            search_state.result_count
+                        } else {
+                            1 // フォールバック
                         }
+                    };
+                    
+                    // JSON-RPC pushSearchResult 通知を送信
+                    if let Some(ref sender) = sender_clone {
+                        let notification = JsonRpcNotification {
+                            method: "pushSearchResult".to_string(),
+                            params: Some(json!({
+                                "filename": search_match.filename,
+                                "line": search_match.line_number,
+                                "offset": search_match.byte_offset,
+                                "content": search_match.content,
+                                "result_count": result_count
+                            })),
+                        };
+                        
+                        let payload = JsonRpcPayload::Notification(notification);
+                        if let Err(e) = sender.send(payload) {
+                            log::error!("Failed to send pushSearchResult notification: {}", e);
+                        } else {
+                            log::debug!(
+                                "Sent pushSearchResult #{}: {}:{}:{} - {}",
+                                result_count,
+                                search_match.filename,
+                                search_match.line_number,
+                                search_match.byte_offset,
+                                search_match.content.trim()
+                            );
+                        }
+                    } else {
+                        log::debug!(
+                            "Found result #{}: {}:{}:{} - {} (no notification sender)",
+                            result_count,
+                            search_match.filename,
+                            search_match.line_number,
+                            search_match.byte_offset,
+                            search_match.content.trim()
+                        );
                     }
-                    
-                    // 結果通知を送信
-                    log::debug!(
-                        "Found result: {}:{}:{} - {}",
-                        search_match.filename,
-                        search_match.line_number,
-                        search_match.byte_offset,
-                        search_match.content.trim()
-                    );
-                    
-                    // TODO: 実際のJSON-RPC通知を送信する処理を実装
-                    // 現在はログ出力のみ
                 });
             },
         ).await?;

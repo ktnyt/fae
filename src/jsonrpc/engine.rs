@@ -25,6 +25,8 @@ pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
     sender: mpsc::UnboundedSender<JsonRpcPayload>,
     // 内部からメインループへのリクエスト送信用チャンネル
     internal_sender: mpsc::UnboundedSender<JsonRpcPayload>,
+    // ハンドラーから通知を受信するためのチャンネル（送信側）
+    notification_sender: mpsc::UnboundedSender<JsonRpcPayload>,
     // シャットダウン通知を送信するためのチャンネル
     shutdown_sender: Option<oneshot::Sender<()>>,
     // メインループのスレッドハンドル
@@ -51,6 +53,9 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
 
         // 内部通信用チャンネルを作成
         let (internal_sender, internal_receiver) = mpsc::unbounded_channel();
+        
+        // ハンドラーからの通知用チャンネルを作成
+        let (notification_sender, notification_receiver) = mpsc::unbounded_channel();
 
         // メインループを別スレッドで実行
         let thread_handle = std::thread::spawn(move || {
@@ -59,6 +64,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             rt.block_on(Self::run_main_loop_internal(
                 receiver,
                 internal_receiver,
+                notification_receiver,
                 sender_clone,
                 handler,
                 shutdown_receiver,
@@ -69,6 +75,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         Self {
             sender,
             internal_sender,
+            notification_sender,
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
             pending_requests,
@@ -81,6 +88,11 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         self.sender
             .send(payload)
             .map_err(|_| JsonRpcSendError::ChannelClosed)
+    }
+
+    /// ハンドラーからの通知を受信するためのチャンネル送信端を取得
+    pub fn notification_sender(&self) -> mpsc::UnboundedSender<JsonRpcPayload> {
+        self.notification_sender.clone()
     }
 
     pub async fn send_request(
@@ -212,6 +224,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     async fn run_main_loop_internal(
         mut external_receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
         mut internal_receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
+        mut notification_receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
         sender: mpsc::UnboundedSender<JsonRpcPayload>,
         mut handler: H,
         mut shutdown_receiver: oneshot::Receiver<()>,
@@ -249,6 +262,22 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                         None => {
                             log::debug!("Internal receiver channel closed");
                             break;
+                        }
+                    }
+                }
+                // ハンドラーからの通知受信処理（新機能）
+                payload = notification_receiver.recv() => {
+                    match payload {
+                        Some(payload) => {
+                            log::debug!("Received notification from handler, forwarding to external: {:?}", payload);
+                            // 通知を外部に直接転送
+                            if let Err(e) = sender.send(payload) {
+                                log::error!("Failed to forward notification to external: {}", e);
+                            }
+                        }
+                        None => {
+                            log::debug!("Notification receiver channel closed");
+                            // 通知チャンネルが閉じてもメインループは継続
                         }
                     }
                 }
