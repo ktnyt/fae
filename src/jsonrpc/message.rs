@@ -25,23 +25,23 @@ pub struct JsonRpcResponse {
 pub mod error_codes {
     /// Parse error - Invalid JSON was received by the server
     pub const PARSE_ERROR: i32 = -32700;
-    
+
     /// Invalid Request - The JSON sent is not a valid Request object
     pub const INVALID_REQUEST: i32 = -32600;
-    
+
     /// Method not found - The method does not exist / is not available
     pub const METHOD_NOT_FOUND: i32 = -32601;
-    
+
     /// Invalid params - Invalid method parameter(s)
     pub const INVALID_PARAMS: i32 = -32602;
-    
+
     /// Internal error - Internal JSON-RPC error
     pub const INTERNAL_ERROR: i32 = -32603;
-    
+
     // Server error codes (-32000 to -32099) reserved for implementation-defined server-errors
     /// Server error range start
     pub const SERVER_ERROR_START: i32 = -32099;
-    
+
     /// Server error range end
     pub const SERVER_ERROR_END: i32 = -32000;
 }
@@ -87,7 +87,9 @@ impl JsonRpcErrorCode {
             error_codes::METHOD_NOT_FOUND => JsonRpcErrorCode::MethodNotFound,
             error_codes::INVALID_PARAMS => JsonRpcErrorCode::InvalidParams,
             error_codes::INTERNAL_ERROR => JsonRpcErrorCode::InternalError,
-            code if code <= error_codes::SERVER_ERROR_END && code >= error_codes::SERVER_ERROR_START => {
+            code if code <= error_codes::SERVER_ERROR_END
+                && code >= error_codes::SERVER_ERROR_START =>
+            {
                 JsonRpcErrorCode::ServerError(code)
             }
             code => JsonRpcErrorCode::ApplicationError(code),
@@ -126,12 +128,16 @@ impl JsonRpcError {
     }
 
     /// エラーコード列挙型から新しいエラーを作成
-    pub fn from_error_code(error_code: JsonRpcErrorCode, message: Option<impl Into<String>>, data: Option<Value>) -> Self {
+    pub fn from_error_code(
+        error_code: JsonRpcErrorCode,
+        message: Option<impl Into<String>>,
+        data: Option<Value>,
+    ) -> Self {
         let msg = match message {
             Some(m) => m.into(),
             None => error_code.default_message().to_string(),
         };
-        
+
         Self {
             code: error_code.to_code(),
             message: msg,
@@ -165,9 +171,17 @@ impl JsonRpcError {
     }
 
     /// Server errorを作成
-    pub fn server_error(code: i32, message: Option<impl Into<String>>, data: Option<Value>) -> Self {
+    pub fn server_error(
+        code: i32,
+        message: Option<impl Into<String>>,
+        data: Option<Value>,
+    ) -> Self {
         if code > error_codes::SERVER_ERROR_END || code < error_codes::SERVER_ERROR_START {
-            panic!("Server error code must be between {} and {}", error_codes::SERVER_ERROR_START, error_codes::SERVER_ERROR_END);
+            panic!(
+                "Server error code must be between {} and {}",
+                error_codes::SERVER_ERROR_START,
+                error_codes::SERVER_ERROR_END
+            );
         }
         Self::from_error_code(JsonRpcErrorCode::ServerError(code), message, data)
     }
@@ -179,12 +193,13 @@ impl JsonRpcError {
 
     /// 標準のエラーコードかどうかを判定
     pub fn is_standard_error(&self) -> bool {
-        matches!(self.error_code(), 
-            JsonRpcErrorCode::ParseError |
-            JsonRpcErrorCode::InvalidRequest |
-            JsonRpcErrorCode::MethodNotFound |
-            JsonRpcErrorCode::InvalidParams |
-            JsonRpcErrorCode::InternalError
+        matches!(
+            self.error_code(),
+            JsonRpcErrorCode::ParseError
+                | JsonRpcErrorCode::InvalidRequest
+                | JsonRpcErrorCode::MethodNotFound
+                | JsonRpcErrorCode::InvalidParams
+                | JsonRpcErrorCode::InternalError
         )
     }
 
@@ -236,24 +251,66 @@ mod tests {
 
     #[test]
     fn test_error_code_enum_from_code() {
-        assert_eq!(JsonRpcErrorCode::from_code(-32700), JsonRpcErrorCode::ParseError);
-        assert_eq!(JsonRpcErrorCode::from_code(-32600), JsonRpcErrorCode::InvalidRequest);
-        assert_eq!(JsonRpcErrorCode::from_code(-32601), JsonRpcErrorCode::MethodNotFound);
-        assert_eq!(JsonRpcErrorCode::from_code(-32602), JsonRpcErrorCode::InvalidParams);
-        assert_eq!(JsonRpcErrorCode::from_code(-32603), JsonRpcErrorCode::InternalError);
-        assert_eq!(JsonRpcErrorCode::from_code(-32001), JsonRpcErrorCode::ServerError(-32001));
-        assert_eq!(JsonRpcErrorCode::from_code(1000), JsonRpcErrorCode::ApplicationError(1000));
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32700),
+            JsonRpcErrorCode::ParseError
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32600),
+            JsonRpcErrorCode::InvalidRequest
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32601),
+            JsonRpcErrorCode::MethodNotFound
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32602),
+            JsonRpcErrorCode::InvalidParams
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32603),
+            JsonRpcErrorCode::InternalError
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32001),
+            JsonRpcErrorCode::ServerError(-32001)
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(1000),
+            JsonRpcErrorCode::ApplicationError(1000)
+        );
     }
 
     #[test]
     fn test_error_code_default_messages() {
-        assert_eq!(JsonRpcErrorCode::ParseError.default_message(), "Parse error");
-        assert_eq!(JsonRpcErrorCode::InvalidRequest.default_message(), "Invalid Request");
-        assert_eq!(JsonRpcErrorCode::MethodNotFound.default_message(), "Method not found");
-        assert_eq!(JsonRpcErrorCode::InvalidParams.default_message(), "Invalid params");
-        assert_eq!(JsonRpcErrorCode::InternalError.default_message(), "Internal error");
-        assert_eq!(JsonRpcErrorCode::ServerError(-32001).default_message(), "Server error");
-        assert_eq!(JsonRpcErrorCode::ApplicationError(1000).default_message(), "Application error");
+        assert_eq!(
+            JsonRpcErrorCode::ParseError.default_message(),
+            "Parse error"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::InvalidRequest.default_message(),
+            "Invalid Request"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::MethodNotFound.default_message(),
+            "Method not found"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::InvalidParams.default_message(),
+            "Invalid params"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::InternalError.default_message(),
+            "Internal error"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::ServerError(-32001).default_message(),
+            "Server error"
+        );
+        assert_eq!(
+            JsonRpcErrorCode::ApplicationError(1000).default_message(),
+            "Application error"
+        );
     }
 
     #[test]
@@ -267,16 +324,17 @@ mod tests {
     #[test]
     fn test_json_rpc_error_from_error_code() {
         // デフォルトメッセージを使用
-        let error1 = JsonRpcError::from_error_code(JsonRpcErrorCode::ParseError, None::<String>, None);
+        let error1 =
+            JsonRpcError::from_error_code(JsonRpcErrorCode::ParseError, None::<String>, None);
         assert_eq!(error1.code, -32700);
         assert_eq!(error1.message, "Parse error");
         assert_eq!(error1.data, None);
 
         // カスタムメッセージを使用
         let error2 = JsonRpcError::from_error_code(
-            JsonRpcErrorCode::MethodNotFound, 
-            Some("Custom method not found"), 
-            Some(json!({"method": "unknown_method"}))
+            JsonRpcErrorCode::MethodNotFound,
+            Some("Custom method not found"),
+            Some(json!({"method": "unknown_method"})),
         );
         assert_eq!(error2.code, -32601);
         assert_eq!(error2.message, "Custom method not found");
@@ -286,7 +344,8 @@ mod tests {
     #[test]
     fn test_json_rpc_error_convenience_methods() {
         // Parse error
-        let parse_error = JsonRpcError::parse_error(Some("Invalid JSON syntax"), Some(json!({"position": 42})));
+        let parse_error =
+            JsonRpcError::parse_error(Some("Invalid JSON syntax"), Some(json!({"position": 42})));
         assert_eq!(parse_error.code, -32700);
         assert_eq!(parse_error.message, "Invalid JSON syntax");
         assert_eq!(parse_error.data, Some(json!({"position": 42})));
@@ -298,7 +357,8 @@ mod tests {
         assert_eq!(invalid_request.data, None);
 
         // Method not found
-        let method_not_found = JsonRpcError::method_not_found(Some("Method 'ping' not found"), None);
+        let method_not_found =
+            JsonRpcError::method_not_found(Some("Method 'ping' not found"), None);
         assert_eq!(method_not_found.code, -32601);
         assert_eq!(method_not_found.message, "Method 'ping' not found");
 
@@ -333,7 +393,10 @@ mod tests {
         assert_eq!(error.error_code(), JsonRpcErrorCode::ParseError);
 
         let server_error = JsonRpcError::server_error(-32010, None::<String>, None);
-        assert_eq!(server_error.error_code(), JsonRpcErrorCode::ServerError(-32010));
+        assert_eq!(
+            server_error.error_code(),
+            JsonRpcErrorCode::ServerError(-32010)
+        );
     }
 
     #[test]
@@ -364,8 +427,14 @@ mod tests {
         }
 
         // 範囲外のコードはApplicationErrorになる
-        assert_eq!(JsonRpcErrorCode::from_code(-31999), JsonRpcErrorCode::ApplicationError(-31999));
-        assert_eq!(JsonRpcErrorCode::from_code(-32100), JsonRpcErrorCode::ApplicationError(-32100));
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-31999),
+            JsonRpcErrorCode::ApplicationError(-31999)
+        );
+        assert_eq!(
+            JsonRpcErrorCode::from_code(-32100),
+            JsonRpcErrorCode::ApplicationError(-32100)
+        );
     }
 
     #[test]

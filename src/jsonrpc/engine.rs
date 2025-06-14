@@ -135,7 +135,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     }
 
     /// Send a request with automatic ID generation and configurable timeout
-    /// 
+    ///
     /// # Arguments
     /// * `method` - The JSON-RPC method name
     /// * `params` - Optional parameters for the request
@@ -148,7 +148,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     ) -> Result<JsonRpcResponse, JsonRpcRequestError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let method = method.into();
-        
+
         log::debug!("Sending request: id={}, method={}", id, method);
 
         let request = JsonRpcRequest {
@@ -177,7 +177,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
 
         // レスポンスを待機（タイムアウトの設定）
         log::trace!("Waiting for response...");
-        
+
         if timeout_ms == 0 {
             // タイムアウトなし
             match rx.await {
@@ -192,12 +192,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             }
         } else {
             // タイムアウト付き
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(timeout_ms),
-                rx,
-            )
-            .await
-            {
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx).await {
                 Ok(Ok(response)) => {
                     log::debug!("Received response: id={}", response.id);
                     Ok(response)
@@ -685,7 +680,10 @@ mod tests {
                     // pongを受信したらカウンターをインクリメント
                     let mut counter = self.counter.lock().unwrap();
                     *counter += 1;
-                    log::info!("PingHandler received pong #{}, responding with ping", *counter);
+                    log::info!(
+                        "PingHandler received pong #{}, responding with ping",
+                        *counter
+                    );
 
                     JsonRpcResponse {
                         id: request.id,
@@ -714,7 +712,10 @@ mod tests {
         }
 
         async fn on_notification(&mut self, notification: JsonRpcNotification) {
-            log::info!("PingHandler received notification: method={}", notification.method);
+            log::info!(
+                "PingHandler received notification: method={}",
+                notification.method
+            );
         }
     }
 
@@ -740,7 +741,10 @@ mod tests {
                     // pingを受信したらカウンターをインクリメント
                     let mut counter = self.counter.lock().unwrap();
                     *counter += 1;
-                    log::info!("PongHandler received ping #{}, responding with pong", *counter);
+                    log::info!(
+                        "PongHandler received ping #{}, responding with pong",
+                        *counter
+                    );
 
                     JsonRpcResponse {
                         id: request.id,
@@ -760,7 +764,10 @@ mod tests {
         }
 
         async fn on_notification(&mut self, notification: JsonRpcNotification) {
-            log::info!("PongHandler received notification: method={}", notification.method);
+            log::info!(
+                "PongHandler received notification: method={}",
+                notification.method
+            );
         }
     }
 
@@ -777,7 +784,7 @@ mod tests {
         // 双方向チャンネルセットアップ
         // Engine A -> Engine B
         let (tx_a_to_b, rx_a_to_b) = mpsc::unbounded_channel();
-        // Engine B -> Engine A  
+        // Engine B -> Engine A
         let (tx_b_to_a, rx_b_to_a) = mpsc::unbounded_channel();
 
         // ハンドラー作成
@@ -787,11 +794,11 @@ mod tests {
         let pong_counter = pong_handler.counter.clone();
 
         // Engine A (PingHandler) - Engine Bからの応答を受信
-        let engine_a: JsonRpcEngine<PingHandler> = 
+        let engine_a: JsonRpcEngine<PingHandler> =
             JsonRpcEngine::new(rx_b_to_a, tx_a_to_b, ping_handler);
 
         // Engine B (PongHandler) - Engine Aからのリクエストを受信
-        let engine_b: JsonRpcEngine<PongHandler> = 
+        let engine_b: JsonRpcEngine<PongHandler> =
             JsonRpcEngine::new(rx_a_to_b, tx_b_to_a, pong_handler);
 
         // 少し待ってエンジンが起動することを確認
@@ -813,7 +820,7 @@ mod tests {
         // 最初のping -> pong交換
         let ping_request = JsonRpcRequest {
             id: 2,
-            method: "ping".to_string(), 
+            method: "ping".to_string(),
             params: None,
         };
 
@@ -848,7 +855,7 @@ mod tests {
 
             let pong_req = JsonRpcRequest {
                 id: i + 100,
-                method: "pong".to_string(), 
+                method: "pong".to_string(),
                 params: None,
             };
             let ping_resp = engine_a.send_request(pong_req).await.unwrap();
@@ -858,9 +865,13 @@ mod tests {
         // 最終カウンター確認
         let final_ping_count = ping_counter.lock().unwrap().clone();
         let final_pong_count = pong_counter.lock().unwrap().clone();
-        
-        log::info!("Final counts - ping: {}, pong: {}", final_ping_count, final_pong_count);
-        
+
+        log::info!(
+            "Final counts - ping: {}, pong: {}",
+            final_ping_count,
+            final_pong_count
+        );
+
         assert_eq!(final_ping_count, 5); // init時の1回 + 4回の交換
         assert_eq!(final_pong_count, 5); // 最初の1回 + 4回の交換
 
