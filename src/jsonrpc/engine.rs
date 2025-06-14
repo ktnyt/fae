@@ -310,18 +310,34 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             }
         }
     }
-}
 
-impl<H: JsonRpcHandler + Send + 'static> Drop for JsonRpcEngine<H> {
-    fn drop(&mut self) {
+    /// 手動でエンジンをシャットダウンする
+    /// stdio終了などのfail-safe処理で使用
+    pub fn shutdown(&mut self) {
+        log::info!("Manual shutdown requested for JsonRpcEngine");
+
         // シャットダウンシグナルを送信
         if let Some(shutdown_sender) = self.shutdown_sender.take() {
+            log::debug!("Sending shutdown signal");
             let _ = shutdown_sender.send(());
         }
 
         // スレッドのjoinを待つ（graceful shutdown）
         if let Some(thread_handle) = self.thread_handle.take() {
+            log::debug!("Waiting for main loop thread to finish");
             let _ = thread_handle.join();
+        }
+
+        log::info!("JsonRpcEngine shutdown completed");
+    }
+}
+
+impl<H: JsonRpcHandler + Send + 'static> Drop for JsonRpcEngine<H> {
+    fn drop(&mut self) {
+        // 手動shutdownが呼ばれていない場合のみ実行
+        if self.shutdown_sender.is_some() || self.thread_handle.is_some() {
+            log::debug!("JsonRpcEngine dropped without explicit shutdown, performing cleanup");
+            self.shutdown();
         }
     }
 }

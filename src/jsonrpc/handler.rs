@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use super::message::{JsonRpcRequest, JsonRpcNotification, JsonRpcResponse};
+use super::message::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 
 #[async_trait]
 pub trait JsonRpcHandler {
