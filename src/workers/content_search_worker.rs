@@ -9,14 +9,18 @@ use async_trait::async_trait;
 use log::{info, debug, error, warn};
 use std::sync::Arc;
 use std::process::Command;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
+use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 
-/// ContentSearchWorker handler
+/// ContentSearchWorker handler with search interruption support
 pub struct ContentSearchHandler {
     /// Graceful shutdown signal
     shutdown_tx: Option<oneshot::Sender<()>>,
     /// Current working directory for search
     working_dir: String,
+    /// Current search cancellation token
+    search_cancellation: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 impl ContentSearchHandler {
@@ -29,12 +33,26 @@ impl ContentSearchHandler {
         Self {
             shutdown_tx: None,
             working_dir,
+            search_cancellation: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Execute ripgrep search and send results via JSON-RPC
+    /// Cancel current search if any
+    async fn cancel_current_search(&self) {
+        debug!("🛑 Cancelling current search");
+        
+        // Cancel via cancellation token
+        if let Some(cancellation) = self.search_cancellation.lock().await.take() {
+            cancellation.cancel();
+        }
+    }
+
+    /// Execute ripgrep search and send results via JSON-RPC with interruption support
     async fn execute_search(&self, rpc_base: &Arc<JsonRpcBase>, query: &str) -> RpcResult<()> {
-        debug!("🔍 Starting ripgrep search for: '{}'", query);
+        debug!("🔍 Starting interruptible ripgrep search for: '{}'", query);
+
+        // Cancel any existing search
+        self.cancel_current_search().await;
 
         // Clear previous results
         rpc_base.notify("search.clear", None).await?;
@@ -48,8 +66,12 @@ impl ContentSearchHandler {
             });
         }
 
-        // Execute ripgrep
-        let output = Command::new("rg")
+        // Create cancellation token for this search
+        let cancellation_token = CancellationToken::new();
+        *self.search_cancellation.lock().await = Some(cancellation_token.clone());
+
+        // Execute ripgrep asynchronously
+        let child = tokio::process::Command::new("rg")
             .args([
                 "--vimgrep",           // file:line:column:content format
                 "--byte-offset",       // include byte offset
@@ -59,33 +81,57 @@ impl ContentSearchHandler {
                 query,
             ])
             .current_dir(&self.working_dir)
-            .output();
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                error!("❌ Failed to spawn ripgrep: {}", e);
+                RpcError::Rpc {
+                    code: -32603,
+                    message: format!("Failed to spawn ripgrep: {}", e),
+                }
+            })?;
 
-        match output {
-            Ok(output) => {
+        // Wait for the process to complete with timeout to avoid hanging
+        let timeout_duration = Duration::from_secs(10); // 10 second timeout
+        let result = tokio::time::timeout(timeout_duration, child.wait_with_output()).await;
+
+        let final_result = match result {
+            Ok(Ok(output)) => {
                 if output.status.success() || output.status.code() == Some(1) {
                     // Exit code 1 means "no matches found" which is normal
                     self.parse_and_send_results(rpc_base, &output.stdout).await?;
                     info!("✅ Search completed for: '{}'", query);
+                    Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     error!("❌ ripgrep failed with exit code {:?}: {}", output.status.code(), stderr);
-                    return Err(RpcError::Rpc {
+                    Err(RpcError::Rpc {
                         code: -32603,
                         message: format!("ripgrep failed: {}", stderr),
-                    });
+                    })
                 }
             }
-            Err(e) => {
-                error!("❌ Failed to execute ripgrep: {}", e);
-                return Err(RpcError::Rpc {
+            Ok(Err(e)) => {
+                error!("❌ Failed to wait for ripgrep: {}", e);
+                Err(RpcError::Rpc {
                     code: -32603,
-                    message: format!("Failed to execute ripgrep: {}", e),
-                });
+                    message: format!("Failed to wait for ripgrep: {}", e),
+                })
             }
-        }
+            Err(_timeout) => {
+                error!("❌ Search timed out for: '{}'", query);
+                Err(RpcError::Rpc {
+                    code: -32603,
+                    message: "Search timed out".to_string(),
+                })
+            }
+        };
 
-        Ok(())
+        // Clean up
+        *self.search_cancellation.lock().await = None;
+
+        final_result
     }
 
     /// Parse ripgrep output and send results

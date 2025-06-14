@@ -35,6 +35,10 @@ path = "samples/test_search_router.rs"
 name = "test_router_integration"
 path = "samples/test_router_integration.rs"
 
+[[bin]]
+name = "test_search_interruption"
+path = "samples/test_search_interruption.rs"
+
 [dependencies]
 # TUI
 ratatui = "0.24"
