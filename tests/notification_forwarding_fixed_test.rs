@@ -2,7 +2,7 @@
 /// JsonRpcEngineが通知を外部に転送する機能が実装された後に成功するはずのテスト
 
 use async_trait::async_trait;
-use fae::jsonrpc::handler::JsonRpcHandler;
+use fae::jsonrpc::handler::{JsonRpcHandler, JsonRpcSender};
 use fae::jsonrpc::message::{JsonRpcNotification, JsonRpcPayload, JsonRpcRequest, JsonRpcResponse};
 use serde_json::json;
 use std::time::Duration;
@@ -11,40 +11,19 @@ use tokio::time::timeout;
 
 /// 通知生成機能付きテストハンドラー
 #[derive(Clone)]
-struct NotificationGeneratingHandler {
-    /// エンジンに通知を送信するためのチャンネル（修正後に追加される予定）
-    notification_sender: Option<mpsc::UnboundedSender<JsonRpcPayload>>,
-}
+struct NotificationGeneratingHandler;
 
 impl NotificationGeneratingHandler {
     fn new() -> Self {
-        Self {
-            notification_sender: None,
-        }
+        Self
     }
     
-    /// 通知送信チャンネルを設定（修正後に実装される予定）
-    fn with_notification_sender(mut self, sender: mpsc::UnboundedSender<JsonRpcPayload>) -> Self {
-        self.notification_sender = Some(sender);
-        self
-    }
-    
-    /// 通知を外部に送信（修正後に動作する予定）
-    async fn send_notification(&self, method: &str, params: serde_json::Value) {
-        if let Some(ref sender) = self.notification_sender {
-            let notification = JsonRpcNotification {
-                method: method.to_string(),
-                params: Some(params),
-            };
-            let payload = JsonRpcPayload::Notification(notification);
-            
-            if let Err(e) = sender.send(payload) {
-                log::error!("Failed to send notification: {}", e);
-            } else {
-                log::debug!("Successfully sent notification: {}", method);
-            }
+    /// 通知を外部に送信（JsonRpcSenderトレイトを使用）
+    async fn send_notification(&self, sender: &dyn JsonRpcSender, method: &str, params: serde_json::Value) {
+        if let Err(e) = sender.send_notification(method.to_string(), Some(params)).await {
+            log::error!("Failed to send notification: {:?}", e);
         } else {
-            log::warn!("No notification sender available for method: {}", method);
+            log::debug!("Successfully sent notification: {}", method);
         }
     }
 }
@@ -54,7 +33,7 @@ impl JsonRpcHandler for NotificationGeneratingHandler {
     async fn on_request(
         &mut self, 
         request: JsonRpcRequest,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        sender: &dyn JsonRpcSender,
     ) -> JsonRpcResponse {
         match request.method.as_str() {
             "test.generateNotification" => {
@@ -66,7 +45,7 @@ impl JsonRpcHandler for NotificationGeneratingHandler {
                     .unwrap_or("default message");
                 
                 // 通知を生成して送信
-                self.send_notification("test.generatedNotification", json!({
+                self.send_notification(sender, "test.generatedNotification", json!({
                     "originalMessage": message,
                     "timestamp": chrono::Utc::now().to_rfc3339()
                 })).await;
@@ -91,7 +70,7 @@ impl JsonRpcHandler for NotificationGeneratingHandler {
     async fn on_notification(
         &mut self, 
         notification: JsonRpcNotification,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        sender: &dyn JsonRpcSender,
     ) {
         match notification.method.as_str() {
             "test.trigger" => {
@@ -104,7 +83,7 @@ impl JsonRpcHandler for NotificationGeneratingHandler {
                 
                 // 複数の通知を生成
                 for i in 0..count {
-                    self.send_notification("test.triggered", json!({
+                    self.send_notification(sender, "test.triggered", json!({
                         "index": i,
                         "total": count
                     })).await;
@@ -132,8 +111,8 @@ async fn test_engine_notification_forwarding_after_fix() {
     use fae::jsonrpc::engine::JsonRpcEngine;
     
     // チャンネルセットアップ
-    let (stdio_to_engine_tx, stdio_to_engine_rx) = mpsc::unbounded_channel();
-    let (engine_to_stdio_tx, mut engine_to_stdio_rx) = mpsc::unbounded_channel();
+    let (_stdio_to_engine_tx, stdio_to_engine_rx) = mpsc::unbounded_channel();
+    let (engine_to_stdio_tx, _engine_to_stdio_rx) = mpsc::unbounded_channel();
     
     // エンジンを作成
     let engine = JsonRpcEngine::new(stdio_to_engine_rx, engine_to_stdio_tx, NotificationGeneratingHandler::new());
@@ -148,7 +127,7 @@ async fn test_engine_notification_forwarding_after_fix() {
     // テストでは直接通知チャンネルに送信する方法をテストする
     
     // 直接通知チャンネルに通知を送信してテスト
-    let test_notification = JsonRpcNotification {
+    let _test_notification = JsonRpcNotification {
         method: "test.directNotification".to_string(),
         params: Some(json!({"message": "direct test", "timestamp": "2025-06-14T11:20:00Z"})),
     };
@@ -201,11 +180,9 @@ async fn test_multiple_notifications_forwarding_after_fix() {
     // チャンネルセットアップ
     let (stdio_to_engine_tx, stdio_to_engine_rx) = mpsc::unbounded_channel();
     let (engine_to_stdio_tx, mut engine_to_stdio_rx) = mpsc::unbounded_channel();
-    let (notification_tx, _notification_rx) = mpsc::unbounded_channel();
     
     // ハンドラーを作成
-    let handler = NotificationGeneratingHandler::new()
-        .with_notification_sender(notification_tx);
+    let handler = NotificationGeneratingHandler::new();
     
     // エンジンを作成
     let engine = JsonRpcEngine::new(stdio_to_engine_rx, engine_to_stdio_tx, handler);
@@ -247,53 +224,62 @@ async fn test_multiple_notifications_forwarding_after_fix() {
     log::info!("Multiple notifications test completed successfully");
 }
 
-/// 現在のバグ状況を確認するテスト（必ず失敗する）
+/// JsonRpcSenderアーキテクチャで通知転送が動作することを確認
 #[tokio::test]
-async fn test_current_bug_confirmation() {
+async fn test_jsonrpc_sender_notification_forwarding() {
     // ログ初期化
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .is_test(true)
         .try_init();
 
-    log::info!("=== Confirming current bug: notifications not forwarded ===");
+    log::info!("=== Testing JsonRpcSender notification forwarding ===");
     
     use fae::jsonrpc::engine::JsonRpcEngine;
+    use fae::jsonrpc::handler::JsonRpcSender;
     
-    // 現在の実装をテスト
-    let (stdio_to_engine_tx, stdio_to_engine_rx) = mpsc::unbounded_channel();
+    // JsonRpcEngineでの通知転送をテスト
+    let (_stdio_to_engine_tx, stdio_to_engine_rx) = mpsc::unbounded_channel();
     let (engine_to_stdio_tx, mut engine_to_stdio_rx) = mpsc::unbounded_channel();
     
     let handler = NotificationGeneratingHandler::new();
     let engine = JsonRpcEngine::new(stdio_to_engine_rx, engine_to_stdio_tx, handler);
     
-    // 通知を送信
-    let notification = JsonRpcNotification {
-        method: "test.trigger".to_string(),
-        params: Some(json!({"count": 1})),
-    };
+    // JsonRpcSenderトレイトを使って直接通知を送信
+    let sender: &dyn JsonRpcSender = &engine;
+    sender.send_notification(
+        "test.triggered".to_string(),
+        Some(json!({"message": "JsonRpcSender works!", "index": 0})),
+    ).await.expect("send_notification should succeed");
     
-    stdio_to_engine_tx.send(JsonRpcPayload::Notification(notification)).unwrap();
-    
-    // 通知が転送されないことを確認
+    // 通知が正しく転送されることを確認
     let result = timeout(Duration::from_millis(500), engine_to_stdio_rx.recv()).await;
     
     match result {
         Ok(Some(payload)) => {
-            log::error!("Unexpected: received payload {:?} - bug might be fixed!", payload);
-            panic!("Bug seems to be fixed - notifications are being forwarded");
+            log::info!("Successfully received notification: {:?}", payload);
+            match payload {
+                JsonRpcPayload::Notification(notif) => {
+                    assert_eq!(notif.method, "test.triggered");
+                    assert!(notif.params.is_some());
+                    let params = notif.params.unwrap();
+                    assert_eq!(params["message"], "JsonRpcSender works!");
+                    assert_eq!(params["index"], 0);
+                    log::info!("✅ JsonRpcSender notification forwarding works correctly!");
+                }
+                _ => panic!("Expected notification payload, got {:?}", payload),
+            }
         }
         Ok(None) => {
-            log::info!("Engine output channel closed as expected");
+            panic!("Engine output channel closed unexpectedly");
         }
         Err(_) => {
-            log::info!("Timeout as expected - confirms bug: notifications not forwarded");
-            // これが期待される現在の動作
+            panic!("Timeout waiting for notification - JsonRpcSender forwarding not working");
         }
     }
     
     // クリーンアップ
     drop(engine);
     
-    log::info!("Bug confirmation test completed - notifications not forwarded as expected");
+    log::info!("JsonRpcSender notification forwarding test completed successfully");
 }

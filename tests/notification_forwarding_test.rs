@@ -2,8 +2,8 @@
 /// JsonRpcEngineがハンドラーからの通知を外部に転送するかをテストする
 
 use async_trait::async_trait;
-use fae::jsonrpc::handler::JsonRpcHandler;
-use fae::jsonrpc::message::{JsonRpcNotification, JsonRpcPayload, JsonRpcRequest, JsonRpcResponse};
+use fae::jsonrpc::handler::{JsonRpcHandler, JsonRpcSender};
+use fae::jsonrpc::message::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcPayload};
 use fae::jsonrpc::stdio::JsonRpcStdioAdapter;
 use serde_json::json;
 use std::process::Stdio;
@@ -39,7 +39,7 @@ impl JsonRpcHandler for NotificationTestHandler {
     async fn on_request(
         &mut self, 
         request: JsonRpcRequest,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        _sender: &dyn JsonRpcSender,
     ) -> JsonRpcResponse {
         match request.method.as_str() {
             "test.triggerNotification" => {
@@ -66,7 +66,7 @@ impl JsonRpcHandler for NotificationTestHandler {
     async fn on_notification(
         &mut self, 
         notification: JsonRpcNotification,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        _sender: &dyn JsonRpcSender,
     ) {
         match notification.method.as_str() {
             "test.echo" => {

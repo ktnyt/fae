@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 
-use super::handler::JsonRpcHandler;
-use super::message::{JsonRpcPayload, JsonRpcRequest, JsonRpcResponse, JsonRpcSendError};
+use super::handler::{JsonRpcHandler, JsonRpcSender};
+use super::message::{JsonRpcPayload, JsonRpcRequest, JsonRpcResponse, JsonRpcNotification, JsonRpcSendError};
 
 #[derive(Debug)]
 pub enum JsonRpcRequestError {
@@ -33,7 +33,7 @@ pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
     pending_requests:
         Arc<Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>>,
     // 次のリクエストIDのためのatomicカウンター
-    next_id: AtomicU64,
+    next_id: Arc<AtomicU64>,
     // ハンドラータイプを保持するためのマーカー
     _phantom: PhantomData<H>,
 }
@@ -48,9 +48,12 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         let sender_clone = sender.clone();
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let pending_requests_clone = pending_requests.clone();
+        let next_id = Arc::new(AtomicU64::new(1));
+        let next_id_clone = next_id.clone();
 
         // 内部通信用チャンネルを作成
         let (internal_sender, internal_receiver) = mpsc::unbounded_channel();
+        let internal_sender_clone = internal_sender.clone();
 
         // メインループを別スレッドで実行
         let thread_handle = std::thread::spawn(move || {
@@ -63,6 +66,8 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                 handler,
                 shutdown_receiver,
                 pending_requests_clone,
+                internal_sender_clone,
+                next_id_clone,
             ));
         });
 
@@ -72,7 +77,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
             pending_requests,
-            next_id: AtomicU64::new(1),
+            next_id,
             _phantom: PhantomData,
         }
     }
@@ -219,7 +224,17 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         pending_requests: Arc<
             Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>,
         >,
+        internal_sender: mpsc::UnboundedSender<JsonRpcPayload>,
+        next_id: Arc<AtomicU64>,
     ) {
+        // ハンドラー用のJsonRpcSenderを作成
+        let engine_sender = EngineJsonRpcSender::new(
+            sender.clone(),
+            internal_sender,
+            pending_requests.clone(),
+            next_id,
+        );
+
         loop {
             tokio::select! {
                 // シャットダウン通知を受信
@@ -232,7 +247,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                     match payload {
                         Some(payload) => {
                             log::trace!("Received external payload");
-                            Self::handle_received_payload(payload, &mut handler, &sender, &pending_requests).await;
+                            Self::handle_received_payload(payload, &mut handler, &engine_sender, &pending_requests).await;
                         }
                         None => {
                             log::debug!("External receiver channel closed");
@@ -245,7 +260,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                     match payload {
                         Some(payload) => {
                             log::trace!("Received internal payload");
-                            Self::handle_received_payload(payload, &mut handler, &sender, &pending_requests).await;
+                            Self::handle_received_payload(payload, &mut handler, &engine_sender, &pending_requests).await;
                         }
                         None => {
                             log::debug!("Internal receiver channel closed");
@@ -260,7 +275,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     async fn handle_received_payload(
         payload: JsonRpcPayload,
         handler: &mut H,
-        sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        sender: &EngineJsonRpcSender,
         pending_requests: &Arc<
             Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>,
         >,
@@ -272,7 +287,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                     request.id,
                     request.method
                 );
-                let response = handler.on_request(request, sender).await;
+                let response = handler.on_request(request, sender as &dyn JsonRpcSender).await;
                 log::trace!(
                     "Handler response: id={}, has_result={}, has_error={}",
                     response.id,
@@ -292,11 +307,11 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
 
                 // 外部向けにもレスポンスを送信
                 let response_payload = JsonRpcPayload::Response(response);
-                let _ = sender.send(response_payload);
+                let _ = sender.sender.send(response_payload);
             }
             JsonRpcPayload::Notification(notification) => {
                 log::debug!("Handling notification: method={}", notification.method);
-                handler.on_notification(notification, sender).await;
+                handler.on_notification(notification, sender as &dyn JsonRpcSender).await;
             }
             JsonRpcPayload::Response(response) => {
                 log::debug!("Handling response: id={}", response.id);
@@ -333,6 +348,105 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     }
 }
 
+/// JsonRpcEngine用のSender実装
+/// メインループ内でハンドラーに渡すために使用
+pub struct EngineJsonRpcSender {
+    sender: mpsc::UnboundedSender<JsonRpcPayload>,
+    internal_sender: mpsc::UnboundedSender<JsonRpcPayload>,
+    pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>>,
+    next_id: Arc<AtomicU64>,
+}
+
+impl EngineJsonRpcSender {
+    fn new(
+        sender: mpsc::UnboundedSender<JsonRpcPayload>,
+        internal_sender: mpsc::UnboundedSender<JsonRpcPayload>,
+        pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>>,
+        next_id: Arc<AtomicU64>,
+    ) -> Self {
+        Self {
+            sender,
+            internal_sender,
+            pending_requests,
+            next_id,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl JsonRpcSender for EngineJsonRpcSender {
+    async fn send_request(
+        &self,
+        method: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<JsonRpcResponse, JsonRpcRequestError> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let request = JsonRpcRequest {
+            id,
+            method,
+            params,
+        };
+
+        let (tx, rx) = oneshot::channel();
+
+        // pending_requestsに登録
+        {
+            let mut pending = self.pending_requests.lock().unwrap();
+            pending.insert(id, tx);
+        }
+
+        // 内部チャンネル経由でリクエストを送信
+        self.internal_sender
+            .send(JsonRpcPayload::Request(request))
+            .map_err(|_| JsonRpcSendError::ChannelClosed)?;
+
+        // レスポンスを待機（30秒タイムアウト）
+        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(JsonRpcRequestError::ResponseTimeout),
+            Err(_) => Err(JsonRpcRequestError::ResponseTimeout),
+        }
+    }
+
+    async fn send_notification(
+        &self,
+        method: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<(), JsonRpcSendError> {
+        let notification = JsonRpcNotification {
+            method,
+            params,
+        };
+        self.sender
+            .send(JsonRpcPayload::Notification(notification))
+            .map_err(|_| JsonRpcSendError::ChannelClosed)
+    }
+}
+
+#[async_trait::async_trait]
+impl<H: JsonRpcHandler + Send + Sync + 'static> JsonRpcSender for JsonRpcEngine<H> {
+    async fn send_request(
+        &self,
+        method: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<JsonRpcResponse, JsonRpcRequestError> {
+        // 自動ID生成でリクエストを送信
+        self.request(method, params, 30000).await // 30秒タイムアウト
+    }
+
+    async fn send_notification(
+        &self,
+        method: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<(), JsonRpcSendError> {
+        let notification = JsonRpcNotification {
+            method,
+            params,
+        };
+        self.send(JsonRpcPayload::Notification(notification)).await
+    }
+}
+
 impl<H: JsonRpcHandler + Send + 'static> Drop for JsonRpcEngine<H> {
     fn drop(&mut self) {
         // 手動shutdownが呼ばれていない場合のみ実行
@@ -359,7 +473,7 @@ mod tests {
         async fn on_request(
             &mut self, 
             request: JsonRpcRequest,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) -> JsonRpcResponse {
             JsonRpcResponse {
                 id: request.id,
@@ -371,7 +485,7 @@ mod tests {
         async fn on_notification(
             &mut self, 
             _notification: JsonRpcNotification,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) {
             // 何もしない
         }
@@ -385,7 +499,7 @@ mod tests {
         async fn on_request(
             &mut self, 
             request: JsonRpcRequest,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) -> JsonRpcResponse {
             log::info!(
                 "PingPongHandler received request: method={}",
@@ -418,7 +532,7 @@ mod tests {
         async fn on_notification(
             &mut self, 
             notification: JsonRpcNotification,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) {
             log::info!(
                 "PingPongHandler received notification: method={}",
@@ -568,7 +682,7 @@ mod tests {
             async fn on_request(
                 &mut self, 
                 request: JsonRpcRequest,
-                _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+                _sender: &dyn JsonRpcSender,
             ) -> JsonRpcResponse {
                 JsonRpcResponse {
                     id: request.id,
@@ -580,7 +694,7 @@ mod tests {
             async fn on_notification(
                 &mut self, 
                 notification: JsonRpcNotification,
-                _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+                _sender: &dyn JsonRpcSender,
             ) {
                 let mut notifications = self.received_notifications.lock().unwrap();
                 notifications.push(notification);
@@ -716,7 +830,7 @@ mod tests {
         async fn on_request(
             &mut self, 
             request: JsonRpcRequest,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) -> JsonRpcResponse {
             log::info!("PingHandler received request: method={}", request.method);
 
@@ -759,7 +873,7 @@ mod tests {
         async fn on_notification(
             &mut self, 
             notification: JsonRpcNotification,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) {
             log::info!(
                 "PingHandler received notification: method={}",
@@ -785,7 +899,7 @@ mod tests {
         async fn on_request(
             &mut self, 
             request: JsonRpcRequest,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) -> JsonRpcResponse {
             log::info!("PongHandler received request: method={}", request.method);
 
@@ -819,7 +933,7 @@ mod tests {
         async fn on_notification(
             &mut self, 
             notification: JsonRpcNotification,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) {
             log::info!(
                 "PongHandler received notification: method={}",
@@ -994,7 +1108,7 @@ mod tests {
             async fn on_request(
                 &mut self, 
                 request: JsonRpcRequest,
-                _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+                _sender: &dyn JsonRpcSender,
             ) -> JsonRpcResponse {
                 log::info!("SlowHandler received request, sleeping...");
                 // 2秒間スリープしてタイムアウトを発生させる
@@ -1009,7 +1123,7 @@ mod tests {
             async fn on_notification(
                 &mut self, 
                 _notification: JsonRpcNotification,
-                _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+                _sender: &dyn JsonRpcSender,
             ) {
                 // 何もしない
             }

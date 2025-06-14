@@ -3,7 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader as Async
 use tokio::sync::mpsc;
 
 use super::engine::JsonRpcEngine;
-use super::handler::JsonRpcHandler;
+use super::handler::{JsonRpcHandler, JsonRpcSender};
 use super::message::JsonRpcPayload;
 
 /// LSPスタイルのContent-Lengthヘッダーを使ったメッセージフレーミング
@@ -720,7 +720,7 @@ mod tests {
         async fn on_request(
             &mut self, 
             request: JsonRpcRequest,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) -> JsonRpcResponse {
             let mut count = self.request_count.lock().unwrap();
             *count += 1;
@@ -750,7 +750,7 @@ mod tests {
         async fn on_notification(
             &mut self, 
             _notification: JsonRpcNotification,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) {
             // 何もしない
         }

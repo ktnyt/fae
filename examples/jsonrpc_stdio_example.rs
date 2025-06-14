@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use fae::jsonrpc::{
-    handler::JsonRpcHandler,
-    message::{JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcPayload},
+    handler::{JsonRpcHandler, JsonRpcSender},
+    message::{JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse},
     stdio::JsonRpcStdioAdapter,
 };
 use serde_json::json;
-use tokio::sync::mpsc;
 
 /// Echo サーバーのハンドラー
 struct EchoHandler {
@@ -25,7 +24,7 @@ impl JsonRpcHandler for EchoHandler {
     async fn on_request(
         &mut self, 
         request: JsonRpcRequest,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        _sender: &dyn JsonRpcSender,
     ) -> JsonRpcResponse {
         log::info!(
             "Received request: method={}, id={}",
@@ -108,7 +107,7 @@ impl JsonRpcHandler for EchoHandler {
     async fn on_notification(
         &mut self, 
         notification: JsonRpcNotification,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        _sender: &dyn JsonRpcSender,
     ) {
         log::info!("Received notification: method={}", notification.method);
 

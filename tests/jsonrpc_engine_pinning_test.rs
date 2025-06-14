@@ -3,7 +3,7 @@
 
 use fae::jsonrpc::{
     engine::{JsonRpcEngine, JsonRpcRequestError},
-    handler::JsonRpcHandler,
+    handler::{JsonRpcHandler, JsonRpcSender},
     message::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcPayload},
 };
 use async_trait::async_trait;
@@ -11,30 +11,21 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 // 通知送信機能付きテストハンドラー
-struct NotificationTestHandler {
-    notification_sender: Option<mpsc::UnboundedSender<JsonRpcPayload>>,
-}
+struct NotificationTestHandler;
 
 impl NotificationTestHandler {
     fn new() -> Self {
-        Self {
-            notification_sender: None,
-        }
-    }
-
-    // この方法でnotification_senderを設定する（現在の実装）
-    fn with_notification_sender(mut self, sender: mpsc::UnboundedSender<JsonRpcPayload>) -> Self {
-        self.notification_sender = Some(sender);
-        self
+        Self
     }
 }
+
 
 #[async_trait]
 impl JsonRpcHandler for NotificationTestHandler {
     async fn on_request(
         &mut self, 
         request: JsonRpcRequest,
-        sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        sender: &dyn JsonRpcSender,
     ) -> JsonRpcResponse {
         match request.method.as_str() {
             "ping" => {
@@ -46,12 +37,11 @@ impl JsonRpcHandler for NotificationTestHandler {
                 }
             }
             "notify_test" => {
-                // リクエストを受けたら通知を送信する（新しい方法：senderパラメータを使用）
-                let notification = JsonRpcNotification {
-                    method: "test_notification".to_string(),
-                    params: Some(json!({"message": "Hello from handler"})),
-                };
-                let _ = sender.send(JsonRpcPayload::Notification(notification));
+                // リクエストを受けたら通知を送信する（新しい方法：JsonRpcSenderトレイトを使用）
+                let _ = sender.send_notification(
+                    "test_notification".to_string(),
+                    Some(json!({"message": "Hello from handler"})),
+                ).await;
                 JsonRpcResponse {
                     id: request.id,
                     result: Some(json!("notification_sent")),
@@ -72,7 +62,7 @@ impl JsonRpcHandler for NotificationTestHandler {
     async fn on_notification(
         &mut self, 
         _notification: JsonRpcNotification,
-        _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        _sender: &dyn JsonRpcSender,
     ) {
         // 通知受信の処理（現在は何もしない）
     }
@@ -172,7 +162,7 @@ async fn pinning_test_timeout_behavior() {
         async fn on_request(
             &mut self, 
             request: JsonRpcRequest,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) -> JsonRpcResponse {
             let delay = *self.delay_ms.lock().unwrap();
             tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
@@ -186,7 +176,7 @@ async fn pinning_test_timeout_behavior() {
         async fn on_notification(
             &mut self, 
             _notification: JsonRpcNotification,
-            _sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+            _sender: &dyn JsonRpcSender,
         ) {}
     }
 
