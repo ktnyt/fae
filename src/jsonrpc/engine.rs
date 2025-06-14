@@ -40,10 +40,36 @@ impl<H: JsonRpcHandler> JsonRpcEngine<H> {
                 _ = &mut self.shutdown_receiver => {
                     break;
                 }
-                // メッセージ受信処理（後で実装）
-                // payload = self.receiver.recv() => {
-                //     // TODO: ハンドラーでの処理
-                // }
+                // メッセージ受信処理
+                payload = self.receiver.recv() => {
+                    match payload {
+                        Some(payload) => {
+                            self.handle_received_payload(payload).await;
+                        }
+                        None => {
+                            // チャンネルが閉じられた場合はループを終了
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn handle_received_payload(&mut self, payload: JsonRpcPayload) {
+        match payload {
+            JsonRpcPayload::Request(request) => {
+                let response = self.handler.on_request(request).await;
+                let response_payload = JsonRpcPayload::Response(response);
+                // レスポンスを送信（エラーは無視）
+                let _ = self.sender.send(response_payload);
+            }
+            JsonRpcPayload::Notification(notification) => {
+                self.handler.on_notification(notification).await;
+            }
+            JsonRpcPayload::Response(_response) => {
+                // レスポンスの処理は今後実装予定（リクエスト送信とのペア処理）
+                // 今のところは何もしない
             }
         }
     }
@@ -155,5 +181,110 @@ mod tests {
         ).await;
         
         assert!(result.is_ok(), "Main loop should have stopped after shutdown signal");
+    }
+
+    #[tokio::test]
+    async fn test_handler_receives_request() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (engine_tx, engine_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        
+        let engine = JsonRpcEngine::new(engine_rx, tx, DummyHandler, shutdown_rx);
+        
+        // メインループを非同期で開始
+        let loop_handle = tokio::spawn(async move {
+            engine.run_main_loop().await;
+        });
+        
+        // リクエストを送信
+        let request = JsonRpcRequest {
+            id: 42,
+            method: "test_method".to_string(),
+            params: Some(json!({"test": "data"})),
+        };
+        engine_tx.send(JsonRpcPayload::Request(request)).unwrap();
+        
+        // ハンドラーからのレスポンスを受信
+        let response = rx.recv().await.unwrap();
+        match response {
+            JsonRpcPayload::Response(resp) => {
+                assert_eq!(resp.id, 42);
+                assert_eq!(resp.result, Some(json!("test_result")));
+                assert!(resp.error.is_none());
+            }
+            _ => panic!("Expected Response payload"),
+        }
+        
+        // クリーンアップ
+        shutdown_tx.send(()).unwrap();
+        let _ = tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            loop_handle
+        ).await;
+    }
+
+    #[tokio::test]
+    async fn test_handler_receives_notification() {
+        use std::sync::{Arc, Mutex};
+        
+        // 通知を受信したかどうかを記録するハンドラー
+        #[derive(Clone)]
+        struct TestHandler {
+            received_notifications: Arc<Mutex<Vec<JsonRpcNotification>>>,
+        }
+        
+        #[async_trait]
+        impl JsonRpcHandler for TestHandler {
+            async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+                JsonRpcResponse {
+                    id: request.id,
+                    result: Some(json!("test_result")),
+                    error: None,
+                }
+            }
+
+            async fn on_notification(&mut self, notification: JsonRpcNotification) {
+                let mut notifications = self.received_notifications.lock().unwrap();
+                notifications.push(notification);
+            }
+        }
+        
+        let received_notifications = Arc::new(Mutex::new(Vec::new()));
+        let test_handler = TestHandler {
+            received_notifications: received_notifications.clone(),
+        };
+        
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (engine_tx, engine_rx) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        
+        let engine = JsonRpcEngine::new(engine_rx, tx, test_handler, shutdown_rx);
+        
+        // メインループを非同期で開始
+        let loop_handle = tokio::spawn(async move {
+            engine.run_main_loop().await;
+        });
+        
+        // 通知を送信
+        let notification = JsonRpcNotification {
+            method: "test_notification".to_string(),
+            params: Some(json!({"notification": "data"})),
+        };
+        engine_tx.send(JsonRpcPayload::Notification(notification.clone())).unwrap();
+        
+        // 少し待って通知が処理されることを確認
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        let notifications = received_notifications.lock().unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].method, notification.method);
+        assert_eq!(notifications[0].params, notification.params);
+        
+        // クリーンアップ
+        shutdown_tx.send(()).unwrap();
+        let _ = tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            loop_handle
+        ).await;
     }
 }
