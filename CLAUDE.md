@@ -203,6 +203,10 @@ cargo build --release # Release build must succeed
 - **SearchRouter**: 自動ワーカー起動、メッセージルーティング、TUI接続管理
 - **Test Coverage**: 単体テスト（SearchRouter、ContentSearchWorker）、統合テスト全て成功
 - **Architecture Validation**: 物理プロセス分離アーキテクチャの実用性を実証
+- **JsonRpcEngine**: セルフマネージドライフサイクル実装完了
+  - コンストラクタで自動タスク起動、デストラクタでgracefulシャットダウン
+  - `Option<JoinHandle<()>>`と`PhantomData<H>`による所有権管理
+  - RAII原則に基づく自動リソース管理パターン
 
 ### Next Phase Candidates (Phase 8-9)
 - **File Watching**: Real-time index updates with notify integration
