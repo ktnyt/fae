@@ -1,7 +1,6 @@
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 
-use super::message::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcPayload, JsonRpcSendError};
+use super::message::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcSendError};
 use super::engine::JsonRpcRequestError;
 
 /// JsonRPC双方向通信インターフェース

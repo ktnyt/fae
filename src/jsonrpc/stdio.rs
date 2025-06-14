@@ -3,7 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader as Async
 use tokio::sync::mpsc;
 
 use super::engine::JsonRpcEngine;
-use super::handler::{JsonRpcHandler, JsonRpcSender};
+use super::handler::JsonRpcHandler;
 use super::message::JsonRpcPayload;
 
 /// LSPスタイルのContent-Lengthヘッダーを使ったメッセージフレーミング
@@ -522,7 +522,7 @@ impl<H: JsonRpcHandler + Send + 'static> Drop for JsonRpcStdioAdapter<H> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::handler::JsonRpcHandler;
+    use super::super::handler::{JsonRpcHandler, JsonRpcSender};
     use super::super::message::{
         JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
     };

@@ -185,7 +185,6 @@ impl LiteralSearchHandler {
     async fn execute_search(&self, query: &str, cancellation_token: CancellationToken, sender: &dyn JsonRpcSender) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log::debug!("Starting search with backend: {}", self.backend.backend_type().name());
         
-        let current_search_clone = self.current_search.clone();
         
         // JsonRpcSenderを非同期コールバック内で使えるように工夫
         // 一旦結果を収集してから通知する方式に変更

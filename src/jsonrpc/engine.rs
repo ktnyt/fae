@@ -93,6 +93,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         &self,
         request: JsonRpcRequest,
     ) -> Result<JsonRpcResponse, JsonRpcRequestError> {
+        let request_id = request.id;
         log::debug!(
             "Sending request: id={}, method={}",
             request.id,
@@ -104,10 +105,10 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         // pending_requestsに登録
         {
             let mut pending = self.pending_requests.lock().unwrap();
-            pending.insert(request.id, tx);
+            pending.insert(request_id, tx);
             log::trace!(
                 "Registered pending request: id={}, total_pending={}",
-                request.id,
+                request_id,
                 pending.len()
             );
         }
@@ -135,6 +136,10 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             }
             Err(_) => {
                 log::warn!("Request timed out after 30 seconds");
+                // タイムアウト時にpending_requestsからエントリを削除
+                let mut pending = self.pending_requests.lock().unwrap();
+                pending.remove(&request_id);
+                log::trace!("Removed timed out request from pending: id={}", request_id);
                 Err(JsonRpcRequestError::ResponseTimeout)
             }
         }
@@ -209,6 +214,10 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                 }
                 Err(_) => {
                     log::warn!("Request timed out after {}ms", timeout_ms);
+                    // タイムアウト時にpending_requestsからエントリを削除
+                    let mut pending = self.pending_requests.lock().unwrap();
+                    pending.remove(&id);
+                    log::trace!("Removed timed out request from pending: id={}", id);
                     Err(JsonRpcRequestError::ResponseTimeout)
                 }
             }
@@ -404,7 +413,13 @@ impl JsonRpcSender for EngineJsonRpcSender {
         match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(JsonRpcRequestError::ResponseTimeout),
-            Err(_) => Err(JsonRpcRequestError::ResponseTimeout),
+            Err(_) => {
+                // タイムアウト時にpending_requestsからエントリを削除
+                let mut pending = self.pending_requests.lock().unwrap();
+                pending.remove(&id);
+                log::trace!("Removed timed out request from pending: id={}", id);
+                Err(JsonRpcRequestError::ResponseTimeout)
+            }
         }
     }
 
