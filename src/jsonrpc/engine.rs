@@ -1,9 +1,23 @@
+use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 
-use super::message::{JsonRpcPayload, JsonRpcSendError};
+use super::message::{JsonRpcPayload, JsonRpcSendError, JsonRpcRequest, JsonRpcResponse};
 use super::handler::JsonRpcHandler;
+
+#[derive(Debug)]
+pub enum JsonRpcRequestError {
+    SendError(JsonRpcSendError),
+    ResponseTimeout,
+}
+
+impl From<JsonRpcSendError> for JsonRpcRequestError {
+    fn from(err: JsonRpcSendError) -> Self {
+        JsonRpcRequestError::SendError(err)
+    }
+}
 
 pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
     // レスポンス・リクエストを送信するためのチャンネル
@@ -12,6 +26,8 @@ pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
     shutdown_sender: Option<oneshot::Sender<()>>,
     // メインループのスレッドハンドル
     thread_handle: Option<JoinHandle<()>>,
+    // リクエストID -> レスポンス待機チャンネルのマップ
+    pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>>,
     // ハンドラータイプを保持するためのマーカー
     _phantom: PhantomData<H>,
 }
@@ -24,6 +40,8 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     ) -> Self {
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let sender_clone = sender.clone();
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let pending_requests_clone = pending_requests.clone();
         
         // メインループを別スレッドで実行
         let thread_handle = std::thread::spawn(move || {
@@ -34,6 +52,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                 sender_clone,
                 handler,
                 shutdown_receiver,
+                pending_requests_clone,
             ));
         });
         
@@ -41,6 +60,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             sender,
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
+            pending_requests,
             _phantom: PhantomData,
         }
     }
@@ -49,11 +69,35 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         self.sender.send(payload).map_err(|_| JsonRpcSendError::ChannelClosed)
     }
 
+    pub async fn send_request(&self, request: JsonRpcRequest) -> Result<JsonRpcResponse, JsonRpcRequestError> {
+        let (tx, rx) = oneshot::channel();
+        
+        // pending_requestsに登録
+        {
+            let mut pending = self.pending_requests.lock().unwrap();
+            pending.insert(request.id, tx);
+        }
+        
+        // リクエストを送信
+        self.send(JsonRpcPayload::Request(request)).await?;
+        
+        // レスポンスを待機（タイムアウト付き）
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(30), // 30秒タイムアウト
+            rx
+        ).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(JsonRpcRequestError::ResponseTimeout),
+            Err(_) => Err(JsonRpcRequestError::ResponseTimeout),
+        }
+    }
+
     async fn run_main_loop_internal(
         mut receiver: mpsc::UnboundedReceiver<JsonRpcPayload>,
         sender: mpsc::UnboundedSender<JsonRpcPayload>,
         mut handler: H,
         mut shutdown_receiver: oneshot::Receiver<()>,
+        pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>>,
     ) {
         loop {
             tokio::select! {
@@ -65,7 +109,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
                 payload = receiver.recv() => {
                     match payload {
                         Some(payload) => {
-                            Self::handle_received_payload(payload, &mut handler, &sender).await;
+                            Self::handle_received_payload(payload, &mut handler, &sender, &pending_requests).await;
                         }
                         None => {
                             // チャンネルが閉じられた場合はループを終了
@@ -80,7 +124,8 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
     async fn handle_received_payload(
         payload: JsonRpcPayload, 
         handler: &mut H, 
-        sender: &mpsc::UnboundedSender<JsonRpcPayload>
+        sender: &mpsc::UnboundedSender<JsonRpcPayload>,
+        pending_requests: &Arc<Mutex<HashMap<u64, oneshot::Sender<crate::jsonrpc::message::JsonRpcResponse>>>>
     ) {
         match payload {
             JsonRpcPayload::Request(request) => {
@@ -92,9 +137,13 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
             JsonRpcPayload::Notification(notification) => {
                 handler.on_notification(notification).await;
             }
-            JsonRpcPayload::Response(_response) => {
-                // レスポンスの処理は今後実装予定（リクエスト送信とのペア処理）
-                // 今のところは何もしない
+            JsonRpcPayload::Response(response) => {
+                // pending_requestsから対応するチャンネルを取得してレスポンスを送信
+                let mut pending = pending_requests.lock().unwrap();
+                if let Some(tx) = pending.remove(&response.id) {
+                    let _ = tx.send(response);
+                }
+                // 対応するリクエストが見つからない場合は無視
             }
         }
     }
@@ -166,6 +215,44 @@ mod tests {
             }
             _ => panic!("Expected Request payload"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_send_request_with_response() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let (engine_tx, engine_rx) = mpsc::unbounded_channel();
+        
+        let engine: JsonRpcEngine<DummyHandler> = JsonRpcEngine::new(engine_rx, tx, DummyHandler);
+        
+        let request = JsonRpcRequest {
+            id: 42,
+            method: "test_method".to_string(),
+            params: Some(json!({"test": "data"})),
+        };
+        
+        let response = JsonRpcResponse {
+            id: 42,
+            result: Some(json!("test_response")),
+            error: None,
+        };
+        
+        // レスポンス送信タスクを非同期で起動
+        let engine_tx_clone = engine_tx.clone();
+        let response_clone = response.clone();
+        tokio::spawn(async move {
+            // 少し待ってからレスポンスを送信
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            engine_tx_clone.send(JsonRpcPayload::Response(response_clone)).unwrap();
+        });
+        
+        // send_requestを実行（レスポンスを待機）
+        let received_response = engine.send_request(request.clone()).await.unwrap();
+        assert_eq!(received_response.id, 42);
+        assert_eq!(received_response.result, Some(json!("test_response")));
+        assert!(received_response.error.is_none());
+        
+        // engineをdropしてクリーンアップ
+        drop(engine);
     }
 
     #[tokio::test]
