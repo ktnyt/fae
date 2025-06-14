@@ -213,6 +213,12 @@ cargo build --release # Release build must succeed
   - `parse_error`, `method_not_found`等のコンビニエンスメソッド
   - パニックベース境界チェックによる開発時エラー早期検出
   - 21テストによる包括的仕様適合性検証
+- **JsonRpcStdioAdapter**: stdin/stdout完全統合アダプター実装完了 (2025-06-14)
+  - LSPスタイルContent-Lengthフレーミングによる確実なメッセージ境界検出
+  - StdioTransport: 非同期stdin読み取り、stdout書き込み、JSON-RPC 2.0準拠変換
+  - JsonRpcStdioAdapter: JsonRpcEngine統合、自動通信ループ、gracefulシャットダウン
+  - 包括的テストスイート: 14単体テスト、統合テスト、実用サンプルアプリケーション
+  - 実用機能: ping/echo/reverse/shutdownメソッド、oneshot channel gracefulシャットダウン
 
 ### Next Phase Candidates (Phase 8-9)
 - **File Watching**: Real-time index updates with notify integration
