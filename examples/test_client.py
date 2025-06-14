@@ -120,6 +120,11 @@ class JsonRpcClient:
                 line = params.get("line", "?")
                 content = params.get("content", "").strip()
                 print(f"📄 Result #{self.result_count}: {filename}:{line} - {content}")
+            elif method == "searchCompleted":
+                params = message.get("params", {})
+                query = params.get("query", "?")
+                total = params.get("total_results", "?")
+                print(f"🎯 Search completed for '{query}': {total} results found")
         else:
             # レスポンス
             if "result" in message:

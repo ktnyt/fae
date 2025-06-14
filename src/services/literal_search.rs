@@ -51,6 +51,15 @@ impl LiteralSearchHandler {
         );
     }
 
+    /// searchCompleted 通知を送信（検索終了を通知）
+    async fn send_search_completed_notification(&self, query: &str, total_results: u32) {
+        log::info!(
+            "Search completed for query '{}': {} results found",
+            query,
+            total_results
+        );
+    }
+
     /// updateQuery 通知を処理
     async fn handle_update_query(&mut self, params: Option<Value>) -> Result<(), JsonRpcError> {
         let query = params
@@ -82,7 +91,7 @@ impl LiteralSearchHandler {
         Ok(())
     }
 
-    /// ripgrepを使って実際の検索を実行
+    /// ripgrepを使って実際の検索を実行（リアルタイムストリーミング）
     async fn execute_ripgrep_search(&mut self, query: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mut cmd = Command::new("rg");
         cmd.arg("--line-number")
@@ -104,36 +113,79 @@ impl LiteralSearchHandler {
             .take()
             .ok_or("Failed to capture ripgrep stdout")?;
 
-        // 出力を行ごとに処理
+        // リアルタイムで出力を行ごとに処理
         use tokio::io::{AsyncBufReadExt, BufReader};
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
 
-        while let Some(line) = lines.next_line().await? {
-            if let Some((filename, line_num, byte_offset, content)) = self.parse_ripgrep_line(&line)
-            {
-                self.send_result_notification(&filename, line_num, byte_offset, &content)
-                    .await;
-            }
-        }
-
-        // プロセス終了を待機
-        let status = child.wait().await?;
-        if !status.success() {
-            let stderr_content = if let Some(stderr) = child.stderr.take() {
+        // スレッドを分岐してstderrもバックグラウンドで読み取り
+        let stderr = child.stderr.take();
+        let stderr_task = if let Some(stderr) = stderr {
+            Some(tokio::spawn(async move {
                 let mut stderr_reader = BufReader::new(stderr);
                 let mut content = String::new();
                 use tokio::io::AsyncReadExt;
-                stderr_reader.read_to_string(&mut content).await.unwrap_or_default();
+                let _ = stderr_reader.read_to_string(&mut content).await;
                 content
-            } else {
-                "Unknown error".to_string()
-            };
+            }))
+        } else {
+            None
+        };
 
-            log::warn!("ripgrep exited with status: {}, stderr: {}", status, stderr_content);
+        // 結果のストリーミング処理
+        let mut lines_processed = 0;
+        while let Some(line_result) = lines.next_line().await.transpose() {
+            match line_result {
+                Ok(line) => {
+                    if let Some((filename, line_num, byte_offset, content)) = self.parse_ripgrep_line(&line) {
+                        lines_processed += 1;
+                        self.send_result_notification(&filename, line_num, byte_offset, &content).await;
+                        
+                        // 大量の結果の場合は適度にyieldして他のタスクに譲る
+                        if lines_processed % 100 == 0 {
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Error reading ripgrep line: {}", e);
+                    break;
+                }
+            }
         }
 
-        log::info!("Search completed for query: '{}'", query);
+        // 検索完了通知を送信
+        self.send_search_completed_notification(query, lines_processed).await;
+
+        // プロセス終了をバックグラウンドで待機（ブロックしない）
+        let query_copy = query.to_string();
+        let wait_task = tokio::spawn(async move {
+            let status = child.wait().await;
+            match status {
+                Ok(status) if status.success() => {
+                    log::debug!("ripgrep process completed successfully for query: '{}'", query_copy);
+                }
+                Ok(status) => {
+                    log::warn!("ripgrep exited with non-zero status: {} for query: '{}'", status, query_copy);
+                }
+                Err(e) => {
+                    log::error!("Failed to wait for ripgrep process: {} for query: '{}'", e, query_copy);
+                }
+            }
+            
+            // stderrの内容をログ出力
+            if let Some(stderr_task) = stderr_task {
+                if let Ok(stderr_content) = stderr_task.await {
+                    if !stderr_content.trim().is_empty() {
+                        log::debug!("ripgrep stderr for query '{}': {}", query_copy, stderr_content.trim());
+                    }
+                }
+            }
+        });
+
+        // バックグラウンドタスクを実行
+        tokio::spawn(wait_task);
+        
         Ok(())
     }
 

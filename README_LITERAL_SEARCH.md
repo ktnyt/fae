@@ -31,8 +31,9 @@ faeはJSON-RPCプロトコルを使用したリテラル検索サーバーです
 
 **動作:**
 1. `clearSearchResults` 通知を送信
-2. ripgrepで検索実行
-3. ヒットごとに `pushSearchResult` 通知を送信
+2. ripgrepで検索実行開始
+3. **リアルタイム**: ripgrepが1行出力するたびに `pushSearchResult` 通知を即座に送信
+4. 全ての出力処理完了後に `searchCompleted` 通知を送信
 
 #### サーバーからの通知
 
@@ -47,7 +48,7 @@ faeはJSON-RPCプロトコルを使用したリテラル検索サーバーです
 ```
 
 #### `pushSearchResult`
-検索結果を1件送信します。
+検索結果を1件送信します（リアルタイムストリーミング）。
 
 ```json
 {
@@ -67,6 +68,29 @@ faeはJSON-RPCプロトコルを使用したリテラル検索サーバーです
 - `line` (number): 行番号
 - `offset` (number): バイトオフセット
 - `content` (string): マッチした行の内容
+
+**特徴:**
+- ripgrepが1行出力するたびに即座に送信
+- プロセスの終了を待たずにリアルタイム配信
+- 大量結果時は100件ごとにyield（応答性確保）
+
+#### `searchCompleted`
+検索が完了したことを通知します。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "searchCompleted",
+  "params": {
+    "query": "search_term",
+    "total_results": 42
+  }
+}
+```
+
+**パラメータ:**
+- `query` (string): 実行された検索クエリ
+- `total_results` (number): 見つかった結果の総数
 
 ### リクエスト (Requests)
 
