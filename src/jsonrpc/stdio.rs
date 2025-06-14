@@ -19,7 +19,15 @@ impl StdioTransport {
             writer: Some(tokio::io::stdout()),
         }
     }
+}
 
+impl Default for StdioTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StdioTransport {
     /// stdioから読み取り、JsonRpcPayloadに変換してチャンネルに送信
     pub async fn read_loop(
         &mut self,
@@ -84,7 +92,7 @@ impl StdioTransport {
             let payload = Self::parse_json_to_payload(json_value)?;
 
             // チャンネルに送信
-            if let Err(_) = sender.send(payload) {
+            if sender.send(payload).is_err() {
                 log::debug!("Receiver dropped, terminating read loop");
                 break;
             }
@@ -259,7 +267,6 @@ impl StdioTransport {
 /// JsonRpcEngineとStdioTransportを接続する高レベルアダプター
 pub struct JsonRpcStdioAdapter<H: JsonRpcHandler + Send + 'static> {
     engine: JsonRpcEngine<H>,
-    transport: StdioTransport,
     shutdown_handles: Vec<tokio::task::JoinHandle<()>>,
     // stdio終了検知用チャンネル
     stdio_shutdown_rx: Option<tokio::sync::oneshot::Receiver<StdioShutdownReason>>,
@@ -289,12 +296,8 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcStdioAdapter<H> {
         // JsonRpcEngineを作成
         let engine = JsonRpcEngine::new(stdio_to_engine_rx, engine_to_stdio_tx, handler);
 
-        // StdioTransportを作成
-        let transport = StdioTransport::new();
-
         let mut adapter = Self {
             engine,
-            transport,
             shutdown_handles: Vec::new(),
             stdio_shutdown_rx: Some(stdio_shutdown_rx),
         };
@@ -404,7 +407,7 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcStdioAdapter<H> {
             let payload = StdioTransport::parse_json_to_payload(json_value)?;
 
             // チャンネルに送信
-            if let Err(_) = sender.send(payload) {
+            if sender.send(payload).is_err() {
                 log::debug!("Receiver dropped, terminating read loop");
                 break;
             }
@@ -701,10 +704,6 @@ mod tests {
             Self {
                 request_count: Arc::new(Mutex::new(0)),
             }
-        }
-
-        fn get_request_count(&self) -> u64 {
-            *self.request_count.lock().unwrap()
         }
     }
 

@@ -87,8 +87,7 @@ impl JsonRpcErrorCode {
             error_codes::METHOD_NOT_FOUND => JsonRpcErrorCode::MethodNotFound,
             error_codes::INVALID_PARAMS => JsonRpcErrorCode::InvalidParams,
             error_codes::INTERNAL_ERROR => JsonRpcErrorCode::InternalError,
-            code if code <= error_codes::SERVER_ERROR_END
-                && code >= error_codes::SERVER_ERROR_START =>
+            code if (error_codes::SERVER_ERROR_START..=error_codes::SERVER_ERROR_END).contains(&code) =>
             {
                 JsonRpcErrorCode::ServerError(code)
             }
@@ -176,7 +175,7 @@ impl JsonRpcError {
         message: Option<impl Into<String>>,
         data: Option<Value>,
     ) -> Self {
-        if code > error_codes::SERVER_ERROR_END || code < error_codes::SERVER_ERROR_START {
+        if !(error_codes::SERVER_ERROR_START..=error_codes::SERVER_ERROR_END).contains(&code) {
             panic!(
                 "Server error code must be between {} and {}",
                 error_codes::SERVER_ERROR_START,
