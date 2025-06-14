@@ -577,4 +577,213 @@ mod tests {
         // engineをdropしてクリーンアップ
         drop(engine);
     }
+
+    // 双方向通信用のハンドラー実装
+    struct PingHandler {
+        counter: Arc<Mutex<u64>>,
+    }
+
+    impl PingHandler {
+        fn new() -> Self {
+            Self {
+                counter: Arc::new(Mutex::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl JsonRpcHandler for PingHandler {
+        async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+            log::info!("PingHandler received request: method={}", request.method);
+
+            match request.method.as_str() {
+                "pong" => {
+                    // pongを受信したらカウンターをインクリメント
+                    let mut counter = self.counter.lock().unwrap();
+                    *counter += 1;
+                    log::info!("PingHandler received pong #{}, responding with ping", *counter);
+
+                    JsonRpcResponse {
+                        id: request.id,
+                        result: Some(json!("ping")),
+                        error: None,
+                    }
+                }
+                "init" => {
+                    // 初期化リクエスト: 最初のpingを送信
+                    log::info!("PingHandler initialized, starting ping sequence");
+                    JsonRpcResponse {
+                        id: request.id,
+                        result: Some(json!("ping")),
+                        error: None,
+                    }
+                }
+                _ => JsonRpcResponse {
+                    id: request.id,
+                    result: None,
+                    error: Some(crate::jsonrpc::message::JsonRpcError::method_not_found(
+                        Some(format!("Method '{}' not found", request.method)),
+                        Some(serde_json::json!({"method": request.method})),
+                    )),
+                },
+            }
+        }
+
+        async fn on_notification(&mut self, notification: JsonRpcNotification) {
+            log::info!("PingHandler received notification: method={}", notification.method);
+        }
+    }
+
+    struct PongHandler {
+        counter: Arc<Mutex<u64>>,
+    }
+
+    impl PongHandler {
+        fn new() -> Self {
+            Self {
+                counter: Arc::new(Mutex::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl JsonRpcHandler for PongHandler {
+        async fn on_request(&mut self, request: JsonRpcRequest) -> JsonRpcResponse {
+            log::info!("PongHandler received request: method={}", request.method);
+
+            match request.method.as_str() {
+                "ping" => {
+                    // pingを受信したらカウンターをインクリメント
+                    let mut counter = self.counter.lock().unwrap();
+                    *counter += 1;
+                    log::info!("PongHandler received ping #{}, responding with pong", *counter);
+
+                    JsonRpcResponse {
+                        id: request.id,
+                        result: Some(json!("pong")),
+                        error: None,
+                    }
+                }
+                _ => JsonRpcResponse {
+                    id: request.id,
+                    result: None,
+                    error: Some(crate::jsonrpc::message::JsonRpcError::method_not_found(
+                        Some(format!("Method '{}' not found", request.method)),
+                        Some(serde_json::json!({"method": request.method})),
+                    )),
+                },
+            }
+        }
+
+        async fn on_notification(&mut self, notification: JsonRpcNotification) {
+            log::info!("PongHandler received notification: method={}", notification.method);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bidirectional_ping_pong_engines() {
+        // ログ初期化（テスト用）
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        log::info!("Starting bidirectional ping/pong test");
+
+        // 双方向チャンネルセットアップ
+        // Engine A -> Engine B
+        let (tx_a_to_b, rx_a_to_b) = mpsc::unbounded_channel();
+        // Engine B -> Engine A  
+        let (tx_b_to_a, rx_b_to_a) = mpsc::unbounded_channel();
+
+        // ハンドラー作成
+        let ping_handler = PingHandler::new();
+        let ping_counter = ping_handler.counter.clone();
+        let pong_handler = PongHandler::new();
+        let pong_counter = pong_handler.counter.clone();
+
+        // Engine A (PingHandler) - Engine Bからの応答を受信
+        let engine_a: JsonRpcEngine<PingHandler> = 
+            JsonRpcEngine::new(rx_b_to_a, tx_a_to_b, ping_handler);
+
+        // Engine B (PongHandler) - Engine Aからのリクエストを受信
+        let engine_b: JsonRpcEngine<PongHandler> = 
+            JsonRpcEngine::new(rx_a_to_b, tx_b_to_a, pong_handler);
+
+        // 少し待ってエンジンが起動することを確認
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        log::info!("Both engines initialized, starting ping sequence");
+
+        // Engine Aに初期化リクエストを送信して最初のpingを開始
+        let init_request = JsonRpcRequest {
+            id: 1,
+            method: "init".to_string(),
+            params: None,
+        };
+
+        let init_response = engine_a.send_request(init_request).await.unwrap();
+        assert_eq!(init_response.result, Some(json!("ping")));
+        log::info!("Initial ping sent successfully");
+
+        // 最初のping -> pong交換
+        let ping_request = JsonRpcRequest {
+            id: 2,
+            method: "ping".to_string(), 
+            params: None,
+        };
+
+        let pong_response = engine_b.send_request(ping_request).await.unwrap();
+        assert_eq!(pong_response.result, Some(json!("pong")));
+        log::info!("First ping -> pong exchange completed");
+
+        // pong -> ping交換
+        let pong_request = JsonRpcRequest {
+            id: 3,
+            method: "pong".to_string(),
+            params: None,
+        };
+
+        let ping_response = engine_a.send_request(pong_request).await.unwrap();
+        assert_eq!(ping_response.result, Some(json!("ping")));
+        log::info!("First pong -> ping exchange completed");
+
+        // カウンターを確認
+        assert_eq!(ping_counter.lock().unwrap().clone(), 1);
+        assert_eq!(pong_counter.lock().unwrap().clone(), 1);
+
+        // 複数回の交換をテスト
+        for i in 4..8 {
+            let ping_req = JsonRpcRequest {
+                id: i,
+                method: "ping".to_string(),
+                params: None,
+            };
+            let pong_resp = engine_b.send_request(ping_req).await.unwrap();
+            assert_eq!(pong_resp.result, Some(json!("pong")));
+
+            let pong_req = JsonRpcRequest {
+                id: i + 100,
+                method: "pong".to_string(), 
+                params: None,
+            };
+            let ping_resp = engine_a.send_request(pong_req).await.unwrap();
+            assert_eq!(ping_resp.result, Some(json!("ping")));
+        }
+
+        // 最終カウンター確認
+        let final_ping_count = ping_counter.lock().unwrap().clone();
+        let final_pong_count = pong_counter.lock().unwrap().clone();
+        
+        log::info!("Final counts - ping: {}, pong: {}", final_ping_count, final_pong_count);
+        
+        assert_eq!(final_ping_count, 5); // init時の1回 + 4回の交換
+        assert_eq!(final_pong_count, 5); // 最初の1回 + 4回の交換
+
+        log::info!("Bidirectional ping/pong test completed successfully!");
+
+        // クリーンアップ
+        drop(engine_a);
+        drop(engine_b);
+    }
 }
