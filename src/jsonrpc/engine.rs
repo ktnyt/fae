@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
+use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
 
 use super::message::{JsonRpcPayload, JsonRpcSendError};
 use super::handler::JsonRpcHandler;
@@ -10,8 +10,8 @@ pub struct JsonRpcEngine<H: JsonRpcHandler + Send + 'static> {
     sender: mpsc::UnboundedSender<JsonRpcPayload>,
     // シャットダウン通知を送信するためのチャンネル
     shutdown_sender: Option<oneshot::Sender<()>>,
-    // メインループのタスクハンドル
-    task_handle: Option<JoinHandle<()>>,
+    // メインループのスレッドハンドル
+    thread_handle: Option<JoinHandle<()>>,
     // ハンドラータイプを保持するためのマーカー
     _phantom: PhantomData<H>,
 }
@@ -23,19 +23,24 @@ impl<H: JsonRpcHandler + Send + 'static> JsonRpcEngine<H> {
         handler: H,
     ) -> Self {
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let sender_clone = sender.clone();
         
-        // メインループを非同期タスクとして起動
-        let task_handle = tokio::spawn(Self::run_main_loop_internal(
-            receiver,
-            sender.clone(),
-            handler,
-            shutdown_receiver,
-        ));
+        // メインループを別スレッドで実行
+        let thread_handle = std::thread::spawn(move || {
+            // 新しいtokioランタイムを作成してメインループを実行
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(Self::run_main_loop_internal(
+                receiver,
+                sender_clone,
+                handler,
+                shutdown_receiver,
+            ));
+        });
         
         Self {
             sender,
             shutdown_sender: Some(shutdown_sender),
-            task_handle: Some(task_handle),
+            thread_handle: Some(thread_handle),
             _phantom: PhantomData,
         }
     }
@@ -102,9 +107,9 @@ impl<H: JsonRpcHandler + Send + 'static> Drop for JsonRpcEngine<H> {
             let _ = shutdown_sender.send(());
         }
         
-        // タスクをabortしてリソースを確実にクリーンアップ
-        if let Some(task_handle) = self.task_handle.take() {
-            task_handle.abort();
+        // スレッドのjoinを待つ（graceful shutdown）
+        if let Some(thread_handle) = self.thread_handle.take() {
+            let _ = thread_handle.join();
         }
     }
 }
