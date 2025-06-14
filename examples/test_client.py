@@ -125,6 +125,11 @@ class JsonRpcClient:
                 query = params.get("query", "?")
                 total = params.get("total_results", "?")
                 print(f"🎯 Search completed for '{query}': {total} results found")
+            elif method == "searchCancelled":
+                params = message.get("params", {})
+                query = params.get("query", "?")
+                partial = params.get("partial_results", "?")
+                print(f"🚫 Search cancelled for '{query}': {partial} partial results found")
         else:
             # レスポンス
             if "result" in message:
