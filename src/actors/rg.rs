@@ -11,6 +11,15 @@ use std::sync::{Arc, Mutex};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+/// Search mode for ripgrep execution
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SearchMode {
+    /// Literal string search (exact match)
+    Literal,
+    /// Regular expression search
+    Regexp,
+}
+
 /// Search result data structure for ripgrep output
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchResult {
@@ -27,8 +36,16 @@ pub enum SearchMessage {
     PushSearchResult { result: SearchResult },
 }
 
-/// Factory for creating ripgrep commands
-pub struct RipgrepCommandFactory;
+/// Factory for creating ripgrep commands with search mode support
+pub struct RipgrepCommandFactory {
+    mode: SearchMode,
+}
+
+impl RipgrepCommandFactory {
+    pub fn new(mode: SearchMode) -> Self {
+        Self { mode }
+    }
+}
 
 impl CommandFactory<String> for RipgrepCommandFactory {
     fn create_command(&self, query: String) -> Command {
@@ -37,9 +54,19 @@ impl CommandFactory<String> for RipgrepCommandFactory {
             .arg("--column")
             .arg("--no-heading")
             .arg("--with-filename")
-            .arg("--color=never")
-            .arg(query)
-            .arg(".");
+            .arg("--color=never");
+
+        // Add search mode specific flags
+        match self.mode {
+            SearchMode::Literal => {
+                cmd.arg("--fixed-strings"); // -F flag for literal search
+            }
+            SearchMode::Regexp => {
+                // Default mode is already regex, no additional flags needed
+            }
+        }
+
+        cmd.arg(query).arg(".");
         cmd
     }
 }
@@ -176,14 +203,15 @@ pub type RipgrepActor = CommandActor<
 >;
 
 impl RipgrepActor {
-    /// Create a new RipgrepActor with default configuration
+    /// Create a new RipgrepActor with specified search mode
     pub fn create(
         receiver: mpsc::UnboundedReceiver<Message<SearchMessage>>,
         sender: mpsc::UnboundedSender<Message<SearchMessage>>,
+        mode: SearchMode,
     ) -> Self {
         let message_handler = RipgrepMessageHandler::new();
         let command_handler = RipgrepOutputHandler::new();
-        let command_factory = Arc::new(RipgrepCommandFactory);
+        let command_factory = Arc::new(RipgrepCommandFactory::new(mode));
 
         Self::new(
             receiver,
@@ -240,7 +268,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let _actor = RipgrepActor::create(actor_rx, tx);
+        let _actor = RipgrepActor::create(actor_rx, tx, SearchMode::Literal);
         
         // Test that actor can be created without issues
         assert!(true);
@@ -251,7 +279,7 @@ mod tests {
         let (tx, mut _rx) = mpsc::unbounded_channel();
         let (actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let actor = RipgrepActor::create(actor_rx, tx);
+        let actor = RipgrepActor::create(actor_rx, tx, SearchMode::Regexp);
 
         // Send updateQuery message
         let query_message = Message::new(
@@ -279,7 +307,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let actor = RipgrepActor::create(actor_rx, tx);
+        let actor = RipgrepActor::create(actor_rx, tx, SearchMode::Literal);
 
         // Send a search result message directly
         let search_result = SearchResult {
@@ -312,5 +340,41 @@ mod tests {
         } else {
             panic!("Expected PushSearchResult message");
         }
+    }
+
+    #[test]
+    fn test_search_mode_literal() {
+        let factory = RipgrepCommandFactory::new(SearchMode::Literal);
+        let cmd = factory.create_command("test query".to_string());
+        
+        // Check that the command includes --fixed-strings flag for literal search
+        let cmd_debug = format!("{:?}", cmd);
+        assert!(cmd_debug.contains("--fixed-strings"));
+    }
+
+    #[test]
+    fn test_search_mode_regexp() {
+        let factory = RipgrepCommandFactory::new(SearchMode::Regexp);
+        let cmd = factory.create_command("test.*pattern".to_string());
+        
+        // Check that the command does not include --fixed-strings flag for regex search
+        let cmd_debug = format!("{:?}", cmd);
+        assert!(!cmd_debug.contains("--fixed-strings"));
+    }
+
+    #[tokio::test]
+    async fn test_literal_vs_regexp_actors() {
+        // Test that we can create actors with different modes
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (_actor_tx1, actor_rx1) = mpsc::unbounded_channel();
+        let literal_actor = RipgrepActor::create(actor_rx1, tx1, SearchMode::Literal);
+
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let (_actor_tx2, actor_rx2) = mpsc::unbounded_channel();
+        let regexp_actor = RipgrepActor::create(actor_rx2, tx2, SearchMode::Regexp);
+
+        // Both should be created successfully
+        assert!(std::ptr::addr_of!(literal_actor) as *const _ != std::ptr::null());
+        assert!(std::ptr::addr_of!(regexp_actor) as *const _ != std::ptr::null());
     }
 }

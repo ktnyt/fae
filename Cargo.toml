@@ -66,3 +66,7 @@ tokio-test = "0.4"    # 非同期テスト用
 [[example]]
 name = "ripgrep_search"
 path = "examples/ripgrep_search.rs"
+
+[[example]]
+name = "search_modes"
+path = "examples/search_modes.rs"

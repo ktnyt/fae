@@ -3,7 +3,7 @@
 //! This example shows how to use the RipgrepActor to perform
 //! real-time code search with ripgrep integration.
 
-use fae::actors::{RipgrepActor, SearchMessage, SearchResult};
+use fae::actors::{RipgrepActor, SearchMessage, SearchMode, SearchResult};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -17,10 +17,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-    // Create the RipgrepActor
-    let actor = RipgrepActor::create(actor_rx, tx);
+    // Create the RipgrepActor with regex mode for function pattern matching
+    let actor = RipgrepActor::create(actor_rx, tx, SearchMode::Regexp);
 
-    println!("✨ RipgrepActor created successfully");
+    println!("✨ RipgrepActor created successfully with Regexp mode");
 
     // Start a task to listen for search results
     let result_listener = tokio::spawn(async move {
@@ -51,12 +51,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         results_count
     });
 
-    // Perform a search for Rust function definitions
-    println!("🚀 Searching for 'fn ' (Rust functions)...");
+    // Perform a regex search for Rust function definitions with patterns
+    println!("🚀 Searching for 'fn \\w+.*\\{{' (Rust function patterns)...");
 
-    match actor.search("fn ".to_string()).await {
+    match actor.search(r"fn \w+.*\{".to_string()).await {
         Ok(_) => {
-            println!("✅ Search command executed successfully");
+            println!("✅ Regex search command executed successfully");
         }
         Err(e) => {
             println!("❌ Search failed: {}", e);

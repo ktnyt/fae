@@ -5,4 +5,4 @@
 
 pub mod rg;
 
-pub use rg::{RipgrepActor, SearchMessage, SearchResult};
+pub use rg::{RipgrepActor, SearchMessage, SearchMode, SearchResult};
