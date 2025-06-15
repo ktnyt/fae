@@ -77,10 +77,7 @@ pub trait MessageHandler<T: Send + Sync + 'static>: Send + Sync + 'static {
     /// # Arguments
     /// * `message` - The incoming message to process
     /// * `sender` - Sender for outgoing messages (responses, forwarding, etc.)
-    async fn on_message<C>(&mut self, message: Message<T>, controller: &C)
-    where
-        C: crate::core::ActorController<T>,
-        Self: Sized;
+    async fn on_message(&mut self, message: Message<T>, controller: &crate::core::ActorController<T>);
 }
 
 #[cfg(test)]

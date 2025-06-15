@@ -165,13 +165,11 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<TestMessage> for TestHandler {
-        async fn on_message<C>(
+        async fn on_message(
             &mut self,
             message: Message<TestMessage>,
-            _controller: &C,
+            _controller: &crate::core::ActorController<TestMessage>,
         )
-        where
-            C: crate::core::ActorController<TestMessage>,
         {
             log::debug!("Actor {} received message: {:?}", self.actor_id, message);
             let mut messages = self.received_messages.lock().unwrap();

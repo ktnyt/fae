@@ -4,7 +4,6 @@
 //! bidirectional notification messages in a lightweight actor system.
 
 use crate::core::message::{Message, MessageHandler};
-use async_trait::async_trait;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
@@ -18,6 +17,8 @@ use tokio::sync::{mpsc, oneshot};
 pub struct Actor<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> {
     /// Channel for sending messages to external recipients
     sender: mpsc::UnboundedSender<Message<T>>,
+    /// Controller for external use
+    controller: ActorController<T>,
     /// Channel for sending shutdown signal
     shutdown_sender: Option<oneshot::Sender<()>>,
     /// Handle to the message processing thread
@@ -41,6 +42,9 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let sender_clone = sender.clone();
 
+        // Create controller
+        let controller = ActorController::new(sender.clone());
+
         // Start the message processing loop in a separate thread
         let thread_handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -54,6 +58,7 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
 
         Self {
             sender,
+            controller,
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
             _phantom: PhantomData,
@@ -77,6 +82,16 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
         self.send(message).await
     }
 
+    /// Get a reference to the sender channel.
+    pub fn sender(&self) -> &mpsc::UnboundedSender<Message<T>> {
+        &self.sender
+    }
+
+    /// Get a reference to the controller.
+    pub fn controller(&self) -> &ActorController<T> {
+        &self.controller
+    }
+
     /// Main message processing loop.
     async fn run_message_loop(
         mut receiver: mpsc::UnboundedReceiver<Message<T>>,
@@ -84,13 +99,8 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
         mut handler: H,
         mut shutdown_receiver: oneshot::Receiver<()>,
     ) {
-        // Create an actor instance for the handler to use for sending messages
-        let actor_for_handler: Actor<T, H> = Actor {
-            sender: sender.clone(),
-            shutdown_sender: None,
-            thread_handle: None,
-            _phantom: PhantomData,
-        };
+        // Create a controller for the handler to use for sending messages
+        let controller = ActorController::new(sender.clone());
 
         loop {
             tokio::select! {
@@ -104,7 +114,7 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
                     match message {
                         Some(message) => {
                             log::trace!("Received message: method={}", message.method);
-                            handler.on_message(message, &actor_for_handler).await;
+                            handler.on_message(message, &controller).await;
                         }
                         None => {
                             log::debug!("Receiver channel closed");
@@ -137,28 +147,39 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
     }
 }
 
-// Implement ActorController for Actor so it can be passed to message handlers
-#[async_trait]
-impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> ActorController<T>
-    for Actor<T, H>
-{
-    async fn send_message(&self, method: String, payload: T) -> Result<(), ActorSendError> {
-        self.send_message(method, payload).await
-    }
-}
-
 /// Error type for Actor message sending operations.
 #[derive(Debug)]
 pub enum ActorSendError {
     ChannelClosed,
 }
 
-/// Trait for sending messages in the Actor system.
-/// This provides a common interface for message sending operations.
-#[async_trait]
-pub trait ActorController<T>: Send + Sync {
+/// Controller for sending messages in the Actor system.
+/// This provides a concrete implementation for message sending operations.
+pub struct ActorController<T> {
+    sender: mpsc::UnboundedSender<Message<T>>,
+}
+
+impl<T: Send + Sync + 'static> ActorController<T> {
+    /// Create a new ActorController with the given sender.
+    pub fn new(sender: mpsc::UnboundedSender<Message<T>>) -> Self {
+        Self { sender }
+    }
+
     /// Send a message to external recipients.
-    async fn send_message(&self, method: String, payload: T) -> Result<(), ActorSendError>;
+    pub async fn send_message(&self, method: String, payload: T) -> Result<(), ActorSendError> {
+        let message = Message::new(method, payload);
+        self.sender
+            .send(message)
+            .map_err(|_| ActorSendError::ChannelClosed)
+    }
+}
+
+impl<T> Clone for ActorController<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+        }
+    }
 }
 
 impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Drop for Actor<T, H> {
@@ -216,10 +237,11 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<String> for StringTestHandler {
-        async fn on_message<C>(&mut self, message: Message<String>, _controller: &C)
-        where
-            C: crate::core::ActorController<String>,
-        {
+        async fn on_message(
+            &mut self,
+            message: Message<String>,
+            _controller: &crate::core::ActorController<String>,
+        ) {
             let mut messages = self.received_messages.lock().unwrap();
             messages.push(message);
         }
@@ -245,10 +267,11 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<i32> for IntTestHandler {
-        async fn on_message<C>(&mut self, message: Message<i32>, _controller: &C)
-        where
-            C: crate::core::ActorController<i32>,
-        {
+        async fn on_message(
+            &mut self,
+            message: Message<i32>,
+            _controller: &crate::core::ActorController<i32>,
+        ) {
             let mut messages = self.received_messages.lock().unwrap();
             messages.push(message);
         }
@@ -274,15 +297,18 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<UserData> for UserDataHandler {
-        async fn on_message<C>(&mut self, message: Message<UserData>, controller: &C)
-        where
-            C: crate::core::ActorController<UserData>,
-        {
+        async fn on_message(
+            &mut self,
+            message: Message<UserData>,
+            controller: &crate::core::ActorController<UserData>,
+        ) {
             // Echo back a modified user (demonstrate struct manipulation)
             if message.method == "update_user" {
                 let mut updated_user = message.payload.clone();
                 updated_user.active = !updated_user.active; // Toggle active status
-                let _ = controller.send_message("user_updated".to_string(), updated_user).await;
+                let _ = controller
+                    .send_message("user_updated".to_string(), updated_user)
+                    .await;
             }
 
             // Push to messages after async operation
@@ -311,10 +337,11 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<TaskInfo> for TaskInfoHandler {
-        async fn on_message<C>(&mut self, message: Message<TaskInfo>, controller: &C)
-        where
-            C: crate::core::ActorController<TaskInfo>,
-        {
+        async fn on_message(
+            &mut self,
+            message: Message<TaskInfo>,
+            controller: &crate::core::ActorController<TaskInfo>,
+        ) {
             // Demonstrate complex struct processing
             if message.method == "process_task" {
                 let mut processed_task = message.payload.clone();
@@ -324,7 +351,9 @@ mod tests {
                     .metadata
                     .insert("status".to_string(), "completed".to_string());
 
-                let _ = controller.send_message("task_processed".to_string(), processed_task).await;
+                let _ = controller
+                    .send_message("task_processed".to_string(), processed_task)
+                    .await;
             }
 
             // Push to messages after async operation
@@ -559,10 +588,11 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<String> for StringEchoHandler {
-        async fn on_message<C>(&mut self, message: Message<String>, controller: &C)
-        where
-            C: crate::core::ActorController<String>,
-        {
+        async fn on_message(
+            &mut self,
+            message: Message<String>,
+            controller: &crate::core::ActorController<String>,
+        ) {
             log::debug!("StringEchoHandler received message: {}", message.method);
 
             // Echo the message back with a modified method name and payload
