@@ -130,7 +130,7 @@ impl<T: Clone + Send + 'static> Drop for Broadcaster<T> {
 mod tests {
     use super::*;
     use crate::core::message::{Message, MessageHandler};
-    use crate::core::{Actor, ActorSender};
+    use crate::core::Actor;
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
     use tokio::sync::mpsc;
@@ -165,11 +165,14 @@ mod tests {
 
     #[async_trait]
     impl MessageHandler<TestMessage> for TestHandler {
-        async fn on_message(
+        async fn on_message<C>(
             &mut self,
             message: Message<TestMessage>,
-            _sender: &ActorSender<TestMessage>,
-        ) {
+            _controller: &C,
+        )
+        where
+            C: crate::core::ActorController<TestMessage>,
+        {
             log::debug!("Actor {} received message: {:?}", self.actor_id, message);
             let mut messages = self.received_messages.lock().unwrap();
             messages.push(message);

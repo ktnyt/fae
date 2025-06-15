@@ -6,9 +6,11 @@
 
 pub mod actor;
 pub mod broadcaster;
+pub mod command;
 pub mod message;
 
 // Re-exports for convenience
-pub use actor::{Actor, ActorSendError, ActorSender};
+pub use actor::{Actor, ActorController, ActorSendError};
 pub use broadcaster::Broadcaster;
+pub use command::{CommandController, CommandHandler, CommandFactory, CommandActor};
 pub use message::{Message, MessageHandler};
