@@ -3,7 +3,8 @@
 //! This example shows how to use the RipgrepActor to perform
 //! real-time code search with ripgrep integration.
 
-use fae::actors::{RipgrepActor, SearchMessage, SearchMode, SearchResult};
+use fae::actors::RipgrepActor;
+use fae::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -26,26 +27,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result_listener = tokio::spawn(async move {
         let mut results_count = 0;
         while let Some(message) = rx.recv().await {
-            match message.payload {
-                SearchMessage::PushSearchResult { result } => {
-                    results_count += 1;
-                    println!(
-                        "📄 {}:{}:{} | {}",
-                        result.filename,
-                        result.line,
-                        result.offset,
-                        result.content.trim()
-                    );
+            if let Some(search_msg) = message.payload.as_search() {
+                match search_msg {
+                        SearchMessage::PushSearchResult { result } => {
+                        results_count += 1;
+                        println!(
+                            "📄 {}:{}:{} | {}",
+                            result.filename,
+                            result.line,
+                            result.offset,
+                            result.content.trim()
+                        );
 
-                    // Stop after receiving 10 results for demo purposes
-                    if results_count >= 10 {
-                        println!("🎯 Stopping after {} results", results_count);
-                        break;
+                        // Stop after receiving 10 results for demo purposes
+                        if results_count >= 10 {
+                            println!("🎯 Stopping after {} results", results_count);
+                            break;
+                        }
+                    }
+                    _ => {
+                        println!("📨 Received other message: {:?}", message.method);
                     }
                 }
-                _ => {
-                    println!("📨 Received other message: {:?}", message.method);
-                }
+            } else {
+                println!("📨 Received non-search message: {:?}", message.method);
             }
         }
         results_count
@@ -77,9 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .actor()
         .send_message(
             "pushSearchResult".to_string(),
-            SearchMessage::PushSearchResult {
-                result: manual_result,
-            },
+            FaeMessage::push_search_result(manual_result),
         )
         .await?;
 

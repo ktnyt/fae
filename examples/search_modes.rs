@@ -3,7 +3,8 @@
 //! This example shows the difference between literal and regex search modes
 //! when using RipgrepActor.
 
-use fae::actors::{RipgrepActor, SearchMessage, SearchMode};
+use fae::actors::RipgrepActor;
+use fae::messages::{SearchMessage, SearchMode};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -23,25 +24,27 @@ async fn demonstrate_search_mode(mode: SearchMode, query: &str, description: &st
     let result_listener = tokio::spawn(async move {
         let mut results_count = 0;
         while let Some(message) = rx.recv().await {
-            match message.payload {
-                SearchMessage::PushSearchResult { result } => {
-                    results_count += 1;
-                    println!(
-                        "  📄 {}:{}:{} | {}",
-                        result.filename,
-                        result.line,
-                        result.offset,
-                        result.content.trim()
-                    );
-                    
-                    // Stop after receiving 5 results for demo purposes
-                    if results_count >= 5 {
-                        println!("  🎯 Stopping after {} results", results_count);
-                        break;
+            if let Some(search_msg) = message.payload.as_search() {
+                match search_msg {
+                        SearchMessage::PushSearchResult { result } => {
+                        results_count += 1;
+                        println!(
+                            "  📄 {}:{}:{} | {}",
+                            result.filename,
+                            result.line,
+                            result.offset,
+                            result.content.trim()
+                        );
+                        
+                        // Stop after receiving 5 results for demo purposes
+                        if results_count >= 5 {
+                            println!("  🎯 Stopping after {} results", results_count);
+                            break;
+                        }
                     }
-                }
-                _ => {
-                    // Ignore other messages
+                    _ => {
+                        // Ignore other messages
+                    }
                 }
             }
         }

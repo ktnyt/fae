@@ -5,36 +5,11 @@
 
 use crate::core::command::{CommandActor, CommandFactory, CommandHandler, CommandMessageHandler};
 use crate::core::{ActorController, Message, MessageHandler};
+use crate::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tokio::process::Command;
 use tokio::sync::mpsc;
-
-/// Search mode for ripgrep execution
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SearchMode {
-    /// Literal string search (exact match)
-    Literal,
-    /// Regular expression search
-    Regexp,
-}
-
-/// Search result data structure for ripgrep output
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SearchResult {
-    pub filename: String,
-    pub line: u32,
-    pub offset: u32,
-    pub content: String,
-}
-
-/// Message types for search operations
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum SearchMessage {
-    UpdateQuery { query: String },
-    PushSearchResult { result: SearchResult },
-}
 
 /// Factory for creating ripgrep commands with search mode support
 pub struct RipgrepCommandFactory {
@@ -75,65 +50,93 @@ impl CommandFactory<String> for RipgrepCommandFactory {
 #[derive(Clone)]
 pub struct RipgrepMessageHandler {
     current_query: Arc<Mutex<Option<String>>>,
+    current_mode: Arc<Mutex<SearchMode>>,
 }
 
 impl RipgrepMessageHandler {
-    pub fn new() -> Self {
+    pub fn new(mode: SearchMode) -> Self {
         Self {
             current_query: Arc::new(Mutex::new(None)),
+            current_mode: Arc::new(Mutex::new(mode)),
         }
     }
 }
 
 #[async_trait]
-impl MessageHandler<SearchMessage> for RipgrepMessageHandler {
+impl MessageHandler<FaeMessage> for RipgrepMessageHandler {
     async fn on_message(
         &mut self,
-        message: Message<SearchMessage>,
-        _controller: &ActorController<SearchMessage>,
+        message: Message<FaeMessage>,
+        _controller: &ActorController<FaeMessage>,
     ) {
-        match message.payload {
-            SearchMessage::UpdateQuery { query } => {
-                log::debug!("Received search query: {}", query);
-                let mut current_query = self.current_query.lock().unwrap();
-                *current_query = Some(query);
-            }
-            SearchMessage::PushSearchResult { result } => {
-                log::trace!("Search result: {}:{}:{}", result.filename, result.line, result.content);
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl CommandMessageHandler<SearchMessage> for RipgrepMessageHandler {
-    async fn on_message<Args: Send + 'static>(
-        &mut self,
-        message: Message<SearchMessage>,
-        controller: &crate::core::command::CommandController<SearchMessage, Args>,
-    ) {
-        match message.payload {
-            SearchMessage::UpdateQuery { query } => {
-                log::info!("Starting ripgrep search for: {}", query);
-                
-                // Store the current query
-                {
+        if let Some(search_msg) = message.payload.as_search() {
+            match search_msg {
+                SearchMessage::UpdateQuery { query } => {
+                    log::debug!("Received search query: {}", query);
                     let mut current_query = self.current_query.lock().unwrap();
                     *current_query = Some(query.clone());
                 }
-
-                // This would trigger command spawn, but we need to handle Args properly
-                // For now, just log the query
-                log::debug!("Query stored: {}", query);
+                SearchMessage::PushSearchResult { result } => {
+                    log::trace!("Search result: {}:{}:{}", result.filename, result.line, result.content);
+                }
+                SearchMessage::SetSearchMode { mode } => {
+                    log::debug!("Setting search mode to: {:?}", mode);
+                    let mut current_mode = self.current_mode.lock().unwrap();
+                    *current_mode = *mode;
+                }
+                SearchMessage::ClearResults => {
+                    log::debug!("Clearing search results");
+                }
             }
-            SearchMessage::PushSearchResult { result } => {
-                // Forward search results to external listeners
-                let _ = controller
-                    .send_message(
-                        "pushSearchResult".to_string(),
-                        SearchMessage::PushSearchResult { result },
-                    )
-                    .await;
+        }
+    }
+}
+
+#[async_trait]
+impl CommandMessageHandler<FaeMessage> for RipgrepMessageHandler {
+    async fn on_message<Args: Send + 'static>(
+        &mut self,
+        message: Message<FaeMessage>,
+        controller: &crate::core::command::CommandController<FaeMessage, Args>,
+    ) {
+        if let Some(search_msg) = message.payload.as_search() {
+            match search_msg {
+                SearchMessage::UpdateQuery { query } => {
+                    log::info!("Starting ripgrep search for: {}", query);
+                    
+                    // Store the current query
+                    {
+                        let mut current_query = self.current_query.lock().unwrap();
+                        *current_query = Some(query.clone());
+                    }
+
+                    // This would trigger command spawn, but we need to handle Args properly
+                    // For now, just log the query
+                    log::debug!("Query stored: {}", query);
+                }
+                SearchMessage::PushSearchResult { result } => {
+                    // Forward search results to external listeners
+                    let _ = controller
+                        .send_message(
+                            "pushSearchResult".to_string(),
+                            FaeMessage::push_search_result(result.clone()),
+                        )
+                        .await;
+                }
+                SearchMessage::SetSearchMode { mode } => {
+                    log::info!("Setting search mode to: {:?}", mode);
+                    let mut current_mode = self.current_mode.lock().unwrap();
+                    *current_mode = *mode;
+                }
+                SearchMessage::ClearResults => {
+                    log::info!("Clearing search results");
+                    let _ = controller
+                        .send_message(
+                            "clearResults".to_string(),
+                            FaeMessage::clear_results(),
+                        )
+                        .await;
+                }
             }
         }
     }
@@ -167,17 +170,17 @@ impl RipgrepOutputHandler {
 }
 
 #[async_trait]
-impl CommandHandler<SearchMessage> for RipgrepOutputHandler {
+impl CommandHandler<FaeMessage> for RipgrepOutputHandler {
     async fn on_stdout<Args: Send + 'static>(
         &mut self,
         line: String,
-        controller: &crate::core::command::CommandController<SearchMessage, Args>,
+        controller: &crate::core::command::CommandController<FaeMessage, Args>,
     ) {
         if let Some(result) = Self::parse_rg_line(&line) {
             let _ = controller
                 .send_message(
                     "pushSearchResult".to_string(),
-                    SearchMessage::PushSearchResult { result },
+                    FaeMessage::push_search_result(result),
                 )
                 .await;
         } else {
@@ -188,7 +191,7 @@ impl CommandHandler<SearchMessage> for RipgrepOutputHandler {
     async fn on_stderr<Args: Send + 'static>(
         &mut self,
         line: String,
-        _controller: &crate::core::command::CommandController<SearchMessage, Args>,
+        _controller: &crate::core::command::CommandController<FaeMessage, Args>,
     ) {
         log::warn!("Ripgrep stderr: {}", line);
     }
@@ -196,7 +199,7 @@ impl CommandHandler<SearchMessage> for RipgrepOutputHandler {
 
 /// Type alias for the complete RipgrepActor
 pub type RipgrepActor = CommandActor<
-    SearchMessage,
+    FaeMessage,
     RipgrepMessageHandler,
     RipgrepOutputHandler,
     String,
@@ -205,11 +208,11 @@ pub type RipgrepActor = CommandActor<
 impl RipgrepActor {
     /// Create a new RipgrepActor with specified search mode
     pub fn create(
-        receiver: mpsc::UnboundedReceiver<Message<SearchMessage>>,
-        sender: mpsc::UnboundedSender<Message<SearchMessage>>,
+        receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+        sender: mpsc::UnboundedSender<Message<FaeMessage>>,
         mode: SearchMode,
     ) -> Self {
-        let message_handler = RipgrepMessageHandler::new();
+        let message_handler = RipgrepMessageHandler::new(mode);
         let command_handler = RipgrepOutputHandler::new();
         let command_factory = Arc::new(RipgrepCommandFactory::new(mode));
 
@@ -227,11 +230,31 @@ impl RipgrepActor {
         // Send updateQuery message
         self.actor().send_message(
             "updateQuery".to_string(),
-            SearchMessage::UpdateQuery { query: query.clone() },
+            FaeMessage::update_query(query.clone()),
         ).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
         // Spawn ripgrep command with the query
         self.spawn(query).await?;
+
+        Ok(())
+    }
+
+    /// Set the search mode
+    pub async fn set_search_mode(&self, mode: SearchMode) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.actor().send_message(
+            "setSearchMode".to_string(),
+            FaeMessage::set_search_mode(mode),
+        ).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+        Ok(())
+    }
+
+    /// Clear search results
+    pub async fn clear_results(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.actor().send_message(
+            "clearResults".to_string(),
+            FaeMessage::clear_results(),
+        ).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
         Ok(())
     }
@@ -284,9 +307,7 @@ mod tests {
         // Send updateQuery message
         let query_message = Message::new(
             "updateQuery",
-            SearchMessage::UpdateQuery {
-                query: "test_search".to_string(),
-            },
+            FaeMessage::update_query("test_search".to_string()),
         );
 
         actor_tx.send(query_message).unwrap();
@@ -321,9 +342,7 @@ mod tests {
             .actor()
             .send_message(
                 "pushSearchResult".to_string(),
-                SearchMessage::PushSearchResult {
-                    result: search_result.clone(),
-                },
+                FaeMessage::push_search_result(search_result.clone()),
             )
             .await
             .unwrap();
@@ -332,7 +351,7 @@ mod tests {
         let received = rx.recv().await.unwrap();
         assert_eq!(received.method, "pushSearchResult");
         
-        if let SearchMessage::PushSearchResult { result } = received.payload {
+        if let Some(SearchMessage::PushSearchResult { result }) = received.payload.as_search() {
             assert_eq!(result.filename, search_result.filename);
             assert_eq!(result.line, search_result.line);
             assert_eq!(result.offset, search_result.offset);
