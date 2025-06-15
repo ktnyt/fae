@@ -220,7 +220,31 @@ cargo build --release # Release build must succeed
   - 包括的テストスイート: 14単体テスト、統合テスト、実用サンプルアプリケーション
   - 実用機能: ping/echo/reverse/shutdownメソッド、oneshot channel gracefulシャットダウン
 
+### Actor System Implementation Status (2025-06-15)
+- **Core Architecture**: 軽量notification-based communication system実装完了
+  - `Actor<T, H>`: 型安全なメッセージ処理、自動ライフサイクル管理
+  - `MessageHandler<T>`: async/await対応のメッセージハンドラートレイト
+  - `Message<T>`: method + payload構造のシンプルなメッセージ型
+  - `ActorSender<T>`: 外部・内部両方向への送信機能
+- **RAII Design Pattern**: JsonRpcEngineと同様の自動管理パターン採用
+  - コンストラクタで自動message loop起動
+  - デストラクタでgracefulシャットダウン
+  - `Option<JoinHandle<()>>`によるスレッド管理
+- **Test Coverage**: 包括的テストスイート実装済み
+  - 基本型（String, i32）およびカスタム構造体（UserData, TaskInfo）対応
+  - エコーパターン、内部通信、複雑な構造体処理のテスト
+  - 13テストによる多様なユースケース検証
+- **Current Limitations**: 
+  - ❌ **Broadcast機能未実装**: 1対1通信のみサポート
+  - ❌ **複数Actor統合**: Actor間の協調メカニズム未実装
+  - ❌ **型統一**: 異なる`Message<T>`型のActor統合課題
+
 ### Next Phase Candidates (Phase 8-9)
+- **Actor Broadcaster System**: Multi-actor broadcast communication
+  - Actor Registry for管理複数actor instances
+  - BroadcastSender for一斉メッセージ配信
+  - Type-unified messaging across different Actor<T, H> types
+  - Subscription-based topic routing
 - **File Watching**: Real-time index updates with notify integration
 - **Git Integration**: Changed file detection, branch information
 - **Configuration**: .fae.toml support for customization

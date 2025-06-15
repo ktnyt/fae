@@ -5,8 +5,10 @@
 //! system focuses solely on bidirectional notification passing.
 
 pub mod actor;
+pub mod broadcaster;
 pub mod message;
 
 // Re-exports for convenience
-pub use actor::{Actor, ActorSender, ActorSendError};
+pub use actor::{Actor, ActorSendError, ActorSender};
+pub use broadcaster::Broadcaster;
 pub use message::{Message, MessageHandler};
