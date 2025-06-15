@@ -87,11 +87,11 @@ impl MessageHandler<FaeMessage> for RipgrepMessageHandler {
 }
 
 #[async_trait]
-impl CommandMessageHandler<FaeMessage> for RipgrepMessageHandler {
-    async fn on_message<Args: Send + 'static>(
+impl CommandMessageHandler<FaeMessage, SearchParams> for RipgrepMessageHandler {
+    async fn on_message(
         &mut self,
         message: Message<FaeMessage>,
-        controller: &crate::core::command::CommandController<FaeMessage, Args>,
+        controller: &crate::core::command::CommandController<FaeMessage, SearchParams>,
     ) {
         if let Some(search_msg) = message.payload.as_search() {
             match search_msg {
@@ -115,13 +115,12 @@ impl CommandMessageHandler<FaeMessage> for RipgrepMessageHandler {
                         *current_mode = search_params.mode;
                     }
 
-                    // This would trigger command spawn, but we need to handle Args properly
-                    // For now, just log the query and mode
-                    log::debug!(
-                        "Query and mode stored: {} {:?}",
-                        search_params.query,
-                        search_params.mode
-                    );
+                    // Spawn ripgrep command with the search parameters
+                    if let Err(e) = controller.spawn(search_params.clone()).await {
+                        log::error!("Failed to spawn ripgrep command: {}", e);
+                    } else {
+                        log::debug!("Ripgrep command spawned successfully for: {}", search_params.query);
+                    }
                 }
                 SearchMessage::PushSearchResult { result } => {
                     // Forward search results to external listeners
@@ -229,16 +228,14 @@ impl RipgrepActor {
         let search_params = SearchParams::new(query, mode);
 
         // Send updateQuery message with SearchParams
+        // Command spawning will be handled automatically by the CommandMessageHandler
         self.actor()
             .send_message(
                 "updateQuery".to_string(),
-                FaeMessage::update_search_query(search_params.clone()),
+                FaeMessage::update_search_query(search_params),
             )
             .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-
-        // Spawn ripgrep command with the search params
-        self.spawn(search_params).await?;
 
         Ok(())
     }
@@ -249,16 +246,14 @@ impl RipgrepActor {
         search_params: SearchParams,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Send updateQuery message with SearchParams
+        // Command spawning will be handled automatically by the CommandMessageHandler
         self.actor()
             .send_message(
                 "updateQuery".to_string(),
-                FaeMessage::update_search_query(search_params.clone()),
+                FaeMessage::update_search_query(search_params),
             )
             .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-
-        // Spawn ripgrep command with the search params
-        self.spawn(search_params).await?;
 
         Ok(())
     }

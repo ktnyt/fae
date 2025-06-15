@@ -99,12 +99,14 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
         }
 
         // Kill the current process
-        {
+        let child_option = {
             let mut current_process = self.current_process.lock().unwrap();
-            if let Some(mut child) = current_process.take() {
-                child.kill().await?;
-                child.wait().await?;
-            }
+            current_process.take()
+        };
+        
+        if let Some(mut child) = child_option {
+            child.kill().await?;
+            child.wait().await?;
         }
 
         Ok(())
@@ -116,13 +118,13 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
 /// This trait provides message handling capabilities with access to CommandController
 /// for command lifecycle management operations like spawn and kill.
 #[async_trait]
-pub trait CommandMessageHandler<T: Send + Sync + 'static>: Send + Sync + 'static {
+pub trait CommandMessageHandler<T: Send + Sync + 'static, Args: Send + 'static>: Send + Sync + 'static {
     /// Handle an incoming message with command control capabilities.
     ///
     /// # Arguments
     /// * `message` - The incoming message to process
     /// * `controller` - Controller with command lifecycle management (spawn/kill)
-    async fn on_message<Args: Send + 'static>(
+    async fn on_message(
         &mut self,
         message: Message<T>,
         controller: &CommandController<T, Args>,
@@ -183,9 +185,9 @@ impl<F, Args> CommandFactory<Args> for F where F: Fn(Args) -> Command + Send + S
 /// allowing flexible command construction and configuration.
 pub struct CommandActor<
     T: Send + Sync + 'static,
-    MH: CommandMessageHandler<T> + MessageHandler<T> + Send + Sync + 'static,
+    MH: CommandMessageHandler<T, Args> + MessageHandler<T> + Send + Sync + 'static,
     CH: CommandHandler<T> + Clone + Send + Sync + 'static,
-    Args = (),
+    Args: Send + 'static = (),
 > {
     /// Underlying actor for message handling
     actor: Actor<T, MH>,
@@ -209,7 +211,7 @@ pub struct CommandActor<
 
 impl<
         T: Send + Sync + 'static,
-        MH: CommandMessageHandler<T> + MessageHandler<T> + Send + Sync + 'static,
+        MH: CommandMessageHandler<T, Args> + MessageHandler<T> + Send + Sync + 'static,
         CH: CommandHandler<T> + Clone + Send + Sync + 'static,
         Args: Send + 'static,
     > CommandActor<T, MH, CH, Args>
@@ -328,7 +330,7 @@ impl<
 
 impl<
         T: Send + Sync + 'static,
-        MH: CommandMessageHandler<T> + MessageHandler<T> + Send + Sync + 'static,
+        MH: CommandMessageHandler<T, Args> + MessageHandler<T> + Send + Sync + 'static,
         CH: CommandHandler<T> + Clone + Send + Sync + 'static,
         Args: Send + 'static,
     > CommandActor<T, MH, CH, Args>
@@ -542,11 +544,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl CommandMessageHandler<TestMessage> for TestCommandHandler {
-        async fn on_message<Args: Send + 'static>(
+    impl CommandMessageHandler<TestMessage, ()> for TestCommandHandler {
+        async fn on_message(
             &mut self,
             message: Message<TestMessage>,
-            controller: &CommandController<TestMessage, Args>,
+            controller: &CommandController<TestMessage, ()>,
         ) {
             // Record the message
             {
