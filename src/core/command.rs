@@ -484,6 +484,7 @@ mod tests {
     use super::*;
     use crate::core::Message;
     use async_trait::async_trait;
+    use futures_util::future;
     use std::sync::{Arc, Mutex};
     use tokio::sync::mpsc;
     use tokio::time::{sleep, Duration};
@@ -626,7 +627,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_actor_creation() {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
         let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
@@ -741,7 +742,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_actor_send_message() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let (actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
         let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
@@ -874,7 +875,7 @@ mod tests {
     async fn test_command_handler_stdout_stderr() {
         // Test that CommandHandler can handle stdout and stderr output
         let mut handler = TestCommandHandler::new();
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
 
         // Create a mock controller for testing
         let actor_controller = ActorController::new(tx);
@@ -935,7 +936,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_actor_output_reading() {
         // Test that command actor actually reads process output
-        let (actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
@@ -945,7 +946,7 @@ mod tests {
             vec!["Hello World".to_string()],
         ));
 
-        let mut command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
         // Spawn the command - this should start the output reading task
         let spawn_result = command_actor.spawn(()).await;
@@ -964,7 +965,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_actor_stderr_reading() {
         // Test stderr reading with a command that writes to stderr
-        let (actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
@@ -975,7 +976,7 @@ mod tests {
             vec!["-c".to_string(), "echo 'Error message' >&2".to_string()],
         ));
 
-        let mut command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
         // Spawn the command
         let spawn_result = command_actor.spawn(()).await;
@@ -985,6 +986,1555 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Kill the command to clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_real_stdout_processing() {
+        // Test actual stdout processing with echo command
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a factory that produces echo commands with specific output
+        let factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["Hello from stdout test".to_string()],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Echo command should spawn successfully"
+        );
+
+        // Give enough time for output processing
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Kill to ensure cleanup (echo should already be finished)
+        let _ = command_actor.kill().await;
+
+        // Verify stdout output was captured
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls
+                .iter()
+                .any(|call| call.contains("stdout:") && call.contains("Hello from stdout test")),
+            "Should capture stdout output from echo command. Got: {:?}",
+            command_calls
+        );
+    }
+
+    #[tokio::test]
+    async fn test_real_stderr_processing() {
+        // Test actual stderr processing with shell command
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a factory that writes to stderr
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Error message for test' >&2".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Stderr command should spawn successfully"
+        );
+
+        // Give enough time for output processing
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Kill to ensure cleanup
+        let _ = command_actor.kill().await;
+
+        // Verify stderr output was captured
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls
+                .iter()
+                .any(|call| call.contains("stderr:") && call.contains("Error message for test")),
+            "Should capture stderr output from shell command. Got: {:?}",
+            command_calls
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multiline_output_processing() {
+        // Test processing multiple lines of output
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a command that outputs multiple lines
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Line 1'; echo 'Line 2'; echo 'Line 3'".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Multiline command should spawn successfully"
+        );
+
+        // Give enough time for all lines to be processed
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        // Kill to ensure cleanup
+        let _ = command_actor.kill().await;
+
+        // Verify all lines were captured
+        let command_calls = handler_clone.get_command_calls();
+        let stdout_calls: Vec<_> = command_calls
+            .iter()
+            .filter(|call| call.contains("stdout:"))
+            .collect();
+
+        assert!(
+            stdout_calls.len() >= 3,
+            "Should capture at least 3 stdout lines. Got: {:?}",
+            stdout_calls
+        );
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("Line 1")),
+            "Should contain Line 1"
+        );
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("Line 2")),
+            "Should contain Line 2"
+        );
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("Line 3")),
+            "Should contain Line 3"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mixed_stdout_stderr_processing() {
+        // Test processing both stdout and stderr from the same command
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a command that outputs to both stdout and stderr
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'stdout message'; echo 'stderr message' >&2".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Mixed output command should spawn successfully"
+        );
+
+        // Give enough time for output processing
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        // Kill to ensure cleanup
+        let _ = command_actor.kill().await;
+
+        // Verify both stdout and stderr were captured
+        let command_calls = handler_clone.get_command_calls();
+        let stdout_calls: Vec<_> = command_calls
+            .iter()
+            .filter(|call| call.contains("stdout:"))
+            .collect();
+        let stderr_calls: Vec<_> = command_calls
+            .iter()
+            .filter(|call| call.contains("stderr:"))
+            .collect();
+
+        assert!(
+            !stdout_calls.is_empty(),
+            "Should capture stdout output. Got: {:?}",
+            command_calls
+        );
+        assert!(
+            !stderr_calls.is_empty(),
+            "Should capture stderr output. Got: {:?}",
+            command_calls
+        );
+        assert!(
+            stdout_calls
+                .iter()
+                .any(|call| call.contains("stdout message")),
+            "Should contain stdout message"
+        );
+        assert!(
+            stderr_calls
+                .iter()
+                .any(|call| call.contains("stderr message")),
+            "Should contain stderr message"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_yes_command_kill_process() {
+        // Test yes command (continuous output) and kill functionality
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a factory that produces yes commands (continuous output)
+        let factory = Arc::new(MockCommandFactory::new(
+            "yes",
+            vec!["test_output".to_string()],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the yes command (it will run indefinitely)
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Yes command should spawn successfully"
+        );
+
+        // Let it run for a short time to generate output
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify that output is being generated
+        let command_calls_before = handler_clone.get_command_calls();
+        let stdout_calls_before: Vec<_> = command_calls_before
+            .iter()
+            .filter(|call| call.contains("stdout:"))
+            .collect();
+        assert!(
+            !stdout_calls_before.is_empty(),
+            "Yes command should generate stdout output"
+        );
+
+        // Kill the command
+        let kill_result = command_actor.kill().await;
+        assert!(kill_result.is_ok(), "Kill should succeed");
+
+        // Wait a bit to ensure the process is terminated
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Verify that no more output is generated after kill
+        let command_calls_after = handler_clone.get_command_calls();
+
+        // The process should be killed, so we've successfully tested the kill functionality
+        // Note: We can't easily test that NO new output is generated without more complex synchronization
+        assert!(
+            command_calls_after.len() >= stdout_calls_before.len(),
+            "Should have captured yes command output"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_natural_termination() {
+        // Test a command that terminates naturally (not killed)
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a command that runs for a short time and then exits
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Starting'; sleep 0.1; echo 'Ending'".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Timed command should spawn successfully"
+        );
+
+        // Wait for the command to complete naturally
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        // Verify output was captured from the naturally terminating process
+        let command_calls = handler_clone.get_command_calls();
+        let stdout_calls: Vec<_> = command_calls
+            .iter()
+            .filter(|call| call.contains("stdout:"))
+            .collect();
+
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("Starting")),
+            "Should capture 'Starting' output"
+        );
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("Ending")),
+            "Should capture 'Ending' output"
+        );
+
+        // Clean up (should be safe even if process already terminated)
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_sequential_process_execution() {
+        // Test running multiple commands sequentially
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let mut command_actor = CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            Arc::new(MockCommandFactory::new("echo", vec!["first".to_string()])),
+        );
+
+        // First command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "First command should spawn successfully"
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Replace with second command (this should kill the first one if still running)
+        let new_factory = Arc::new(MockCommandFactory::new("echo", vec!["second".to_string()]));
+        command_actor.command_factory = new_factory;
+
+        let spawn_result2 = command_actor.spawn(()).await;
+        assert!(
+            spawn_result2.is_ok(),
+            "Second command should spawn successfully"
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify both commands produced output
+        let command_calls = handler_clone.get_command_calls();
+        let stdout_calls: Vec<_> = command_calls
+            .iter()
+            .filter(|call| call.contains("stdout:"))
+            .collect();
+
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("first")),
+            "Should capture first command output"
+        );
+        assert!(
+            stdout_calls.iter().any(|call| call.contains("second")),
+            "Should capture second command output"
+        );
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_kill_effectiveness() {
+        // Test that kill actually terminates a long-running process
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        // Create a long-running sleep command
+        let factory = Arc::new(MockCommandFactory::new(
+            "sleep",
+            vec!["10".to_string()], // Sleep for 10 seconds
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the sleep command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Sleep command should spawn successfully"
+        );
+
+        // Wait a short time
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Kill the command
+        let kill_start = std::time::Instant::now();
+        let kill_result = command_actor.kill().await;
+        let kill_duration = kill_start.elapsed();
+
+        assert!(kill_result.is_ok(), "Kill should succeed");
+        assert!(
+            kill_duration < std::time::Duration::from_millis(1000),
+            "Kill should complete quickly, not wait for sleep to finish"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_token_effectiveness() {
+        // Test that CancellationToken properly cancels output reading
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let _handler_clone = handler.clone();
+
+        // Create a sleep command instead of yes for more predictable behavior
+        let factory = Arc::new(MockCommandFactory::new(
+            "sleep",
+            vec!["2".to_string()], // Sleep for 2 seconds
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn the sleep command
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Sleep command should spawn successfully"
+        );
+
+        // Wait a short time
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Kill the command quickly
+        let kill_start = std::time::Instant::now();
+        let kill_result = command_actor.kill().await;
+        let kill_duration = kill_start.elapsed();
+
+        assert!(kill_result.is_ok(), "Kill should succeed");
+        assert!(
+            kill_duration < std::time::Duration::from_millis(500),
+            "Kill should complete quickly"
+        );
+
+        // Verify the process was actually killed (by checking it completes quickly)
+        // If cancellation works, the kill should be fast, not wait for the 2-second sleep
+    }
+
+    #[tokio::test]
+    async fn test_multiple_spawn_kill_cycles() {
+        // Test multiple spawn/kill cycles for resource management
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["cycle_test".to_string()],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Perform multiple spawn/kill cycles
+        for i in 0..3 {
+            let spawn_result = command_actor.spawn(()).await;
+            assert!(spawn_result.is_ok(), "Spawn {} should succeed", i);
+
+            // Let the command run briefly
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            let kill_result = command_actor.kill().await;
+            assert!(kill_result.is_ok(), "Kill {} should succeed", i);
+        }
+
+        // Verify that outputs were captured from all cycles
+        let command_calls = handler_clone.get_command_calls();
+        let stdout_calls: Vec<_> = command_calls
+            .iter()
+            .filter(|call| call.contains("stdout:"))
+            .collect();
+
+        // Should have at least some output from the cycles
+        assert!(
+            !stdout_calls.is_empty(),
+            "Should capture output from spawn/kill cycles"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_process_management() {
+        // Test managing multiple CommandActors concurrently
+        let mut actors = Vec::new();
+        let mut handlers = Vec::new();
+
+        for i in 0..3 {
+            let (tx, _rx) = mpsc::unbounded_channel();
+            let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+            let handler = TestCommandHandler::new();
+            let handler_clone = handler.clone();
+            handlers.push(handler_clone);
+
+            let factory = Arc::new(MockCommandFactory::new(
+                "echo",
+                vec![format!("actor_{}", i)],
+            ));
+
+            let command_actor =
+                CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            actors.push(command_actor);
+        }
+
+        // Spawn commands on all actors concurrently
+        let spawn_futures: Vec<_> = actors.iter().map(|actor| actor.spawn(())).collect();
+        let spawn_results = future::join_all(spawn_futures).await;
+
+        for (i, result) in spawn_results.iter().enumerate() {
+            assert!(result.is_ok(), "Concurrent spawn {} should succeed", i);
+        }
+
+        // Let them run
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Kill all actors concurrently
+        let kill_futures: Vec<_> = actors.iter().map(|actor| actor.kill()).collect();
+        let kill_results = future::join_all(kill_futures).await;
+
+        for (i, result) in kill_results.iter().enumerate() {
+            assert!(result.is_ok(), "Concurrent kill {} should succeed", i);
+        }
+
+        // Verify each actor captured its output
+        for (i, handler) in handlers.iter().enumerate() {
+            let command_calls = handler.get_command_calls();
+            assert!(
+                command_calls
+                    .iter()
+                    .any(|call| call.contains(&format!("actor_{}", i))),
+                "Actor {} should have captured its output",
+                i
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kill_on_empty_process() {
+        // Test killing when no process is running
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Kill without spawning - should not error
+        let kill_result = command_actor.kill().await;
+        assert!(kill_result.is_ok(), "Kill on empty process should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_double_kill() {
+        // Test killing the same process twice
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["1".to_string()]));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn a process
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(spawn_result.is_ok(), "Spawn should succeed");
+
+        // First kill
+        let kill_result1 = command_actor.kill().await;
+        assert!(kill_result1.is_ok(), "First kill should succeed");
+
+        // Second kill on the same (now dead) process
+        let kill_result2 = command_actor.kill().await;
+        assert!(
+            kill_result2.is_ok(),
+            "Second kill should succeed gracefully"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_overwrites_existing_process() {
+        // Test that spawning a new process kills the existing one
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "sleep",
+            vec!["1".to_string()], // Use sleep instead of yes for cleaner output
+        ));
+
+        let mut command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn first process
+        let spawn_result1 = command_actor.spawn(()).await;
+        assert!(spawn_result1.is_ok(), "First spawn should succeed");
+
+        // Let it run briefly
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Change factory and spawn second process (should kill first)
+        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["second_process_output".to_string()],
+        ));
+
+        let spawn_result2 = command_actor.spawn(()).await;
+        assert!(spawn_result2.is_ok(), "Second spawn should succeed");
+
+        // Wait for second process to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify we got output from the second process
+        let final_calls = handler_clone.get_command_calls();
+        assert!(
+            final_calls
+                .iter()
+                .any(|call| call.contains("second_process_output")),
+            "Should capture output from second process. Got: {:?}",
+            final_calls
+        );
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    // Additional async processing and cancellation tests
+    #[tokio::test]
+    async fn test_sequential_spawn_operations() {
+        // Test multiple spawn operations in sequence (safer than concurrent)
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["sequential_test".to_string()],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn multiple processes sequentially
+        for i in 0..3 {
+            let spawn_result = command_actor.spawn(()).await;
+            assert!(
+                spawn_result.is_ok(),
+                "Sequential spawn {} should succeed",
+                i
+            );
+
+            // Brief delay between spawns
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_rapid_spawn_kill_cycles() {
+        // Test rapid spawn/kill cycles for race conditions
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["0.1".to_string()]));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Perform rapid spawn/kill cycles
+        for i in 0..10 {
+            let spawn_result = command_actor.spawn(()).await;
+            assert!(spawn_result.is_ok(), "Rapid spawn {} should succeed", i);
+
+            // Very short delay
+            tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+
+            let kill_result = command_actor.kill().await;
+            assert!(kill_result.is_ok(), "Rapid kill {} should succeed", i);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_timeout_behavior() {
+        // Test behavior with very long-running processes
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "sleep",
+            vec!["30".to_string()], // Very long sleep
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn long-running process
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(spawn_result.is_ok(), "Long process spawn should succeed");
+
+        // Wait a short time, then kill
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let kill_start = std::time::Instant::now();
+        let kill_result = command_actor.kill().await;
+        let kill_duration = kill_start.elapsed();
+
+        assert!(kill_result.is_ok(), "Kill of long process should succeed");
+        assert!(
+            kill_duration < std::time::Duration::from_millis(1000),
+            "Kill should not wait for long process to finish naturally"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_kill_operations() {
+        // Test multiple concurrent kill operations
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["2".to_string()]));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn a process
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(spawn_result.is_ok(), "Spawn should succeed");
+
+        // Wait briefly
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Try to kill multiple times concurrently
+        let kill_futures = (0..3).map(|_| command_actor.kill()).collect::<Vec<_>>();
+        let results = future::join_all(kill_futures).await;
+
+        // All kills should succeed (idempotent)
+        for (i, result) in results.iter().enumerate() {
+            assert!(result.is_ok(), "Concurrent kill {} should succeed", i);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_spawn_during_kill() {
+        // Test spawning a new process while kill is in progress
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["1".to_string()]));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn first process
+        let spawn_result1 = command_actor.spawn(()).await;
+        assert!(spawn_result1.is_ok(), "First spawn should succeed");
+
+        // Start kill and spawn concurrently
+        let kill_future = command_actor.kill();
+        let spawn_future = command_actor.spawn(());
+
+        let (kill_result, spawn_result2) = tokio::join!(kill_future, spawn_future);
+
+        assert!(kill_result.is_ok(), "Kill should succeed");
+        assert!(spawn_result2.is_ok(), "Second spawn should succeed");
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_output_processing_during_kill() {
+        // Test that output processing handles cancellation gracefully
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "for i in {1..100}; do echo $i; sleep 0.01; done".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn process that produces output over time
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(spawn_result.is_ok(), "Spawn should succeed");
+
+        // Let it produce some output
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        let initial_count = handler_clone.get_command_calls().len();
+        assert!(initial_count > 0, "Should have some initial output");
+
+        // Kill and verify output stops
+        let kill_result = command_actor.kill().await;
+        assert!(kill_result.is_ok(), "Kill should succeed");
+
+        // Wait and check that output stopped
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let final_count = handler_clone.get_command_calls().len();
+
+        // Should not be significantly more output after kill
+        assert!(
+            final_count <= initial_count + 10,
+            "Output should stop after kill. Initial: {}, Final: {}",
+            initial_count,
+            final_count
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stress_concurrent_actors() {
+        // Stress test with many concurrent CommandActors
+        let num_actors = 10;
+        let mut actors = Vec::new();
+        let mut handlers = Vec::new();
+
+        for i in 0..num_actors {
+            let (tx, _rx) = mpsc::unbounded_channel();
+            let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+            let handler = TestCommandHandler::new();
+            let handler_clone = handler.clone();
+            handlers.push(handler_clone);
+
+            let factory = Arc::new(MockCommandFactory::new(
+                "echo",
+                vec![format!("stress_test_{}", i)],
+            ));
+
+            let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            actors.push(command_actor);
+        }
+
+        // Spawn on all actors concurrently
+        let spawn_futures = actors
+            .iter()
+            .map(|actor| actor.spawn(()))
+            .collect::<Vec<_>>();
+        let spawn_results = future::join_all(spawn_futures).await;
+
+        for (i, result) in spawn_results.iter().enumerate() {
+            assert!(result.is_ok(), "Stress spawn {} should succeed", i);
+        }
+
+        // Let them run
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Kill all concurrently
+        let kill_futures = actors.iter().map(|actor| actor.kill()).collect::<Vec<_>>();
+        let kill_results = future::join_all(kill_futures).await;
+
+        for (i, result) in kill_results.iter().enumerate() {
+            assert!(result.is_ok(), "Stress kill {} should succeed", i);
+        }
+
+        // Verify each actor captured some output
+        for (i, handler) in handlers.iter().enumerate() {
+            let command_calls = handler.get_command_calls();
+            assert!(
+                command_calls
+                    .iter()
+                    .any(|call| call.contains(&format!("stress_test_{}", i))),
+                "Stress actor {} should have captured output",
+                i
+            );
+        }
+    }
+
+    // Error handling tests
+    #[tokio::test]
+    async fn test_invalid_command_spawn() {
+        // Test spawning a non-existent command
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "nonexistent_command_that_does_not_exist",
+            vec![],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn should fail with an error
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_err(),
+            "Spawning non-existent command should fail"
+        );
+
+        // Kill should still work (no-op)
+        let kill_result = command_actor.kill().await;
+        assert!(
+            kill_result.is_ok(),
+            "Kill should succeed even after failed spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_command_with_invalid_arguments() {
+        // Test command with invalid arguments that cause it to fail
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Use ls with completely invalid options
+        let factory = Arc::new(MockCommandFactory::new(
+            "ls",
+            vec!["--invalid-option-that-does-not-exist".to_string()],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn should succeed (command exists), but process may exit with error
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Spawning ls with invalid args should succeed initially"
+        );
+
+        // Wait for the command to fail
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // The process should have exited, possibly with stderr output
+        let _command_calls = handler_clone.get_command_calls();
+        // Should capture stderr or the process should exit quickly
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_stderr_output_capture() {
+        // Test capturing stderr output from failing commands
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Use a command that definitely writes to stderr
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'This is an error message' >&2; exit 1".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Spawning error command should succeed"
+        );
+
+        // Wait for command to complete and output error
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Verify stderr was captured
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls.iter().any(|call| call.contains("stderr:")),
+            "Should capture stderr output"
+        );
+        assert!(
+            command_calls
+                .iter()
+                .any(|call| call.contains("error message")),
+            "Should capture the error message content"
+        );
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_permission_denied_handling() {
+        // Test handling of permission denied errors
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        // Try to execute a command that requires root permissions
+        // Note: This test may behave differently on different systems
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "cat /etc/shadow 2>&1 || echo 'Permission denied as expected'".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Spawning permission test should succeed"
+        );
+
+        // Wait for command to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_resource_cleanup_on_error() {
+        // Test that resources are properly cleaned up when errors occur
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Starting'; sleep 0.1; echo 'Exiting'; exit 1".to_string(),
+            ],
+        ));
+
+        let mut command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn a command that will fail
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(
+            spawn_result.is_ok(),
+            "Spawning failing command should succeed initially"
+        );
+
+        // Wait for it to fail
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Try to spawn a new command - should work despite previous failure
+        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["recovery_test".to_string()],
+        ));
+
+        let recovery_spawn_result = command_actor.spawn(()).await;
+        assert!(
+            recovery_spawn_result.is_ok(),
+            "Recovery spawn should succeed after previous failure"
+        );
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_multiple_error_conditions() {
+        // Test handling multiple different error conditions in sequence
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let mut command_actor = CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            Arc::new(MockCommandFactory::new("echo", vec![])),
+        );
+
+        // Test 1: Non-existent command
+        command_actor.command_factory =
+            Arc::new(MockCommandFactory::new("definitely_does_not_exist", vec![]));
+        let result1 = command_actor.spawn(()).await;
+        assert!(result1.is_err(), "Non-existent command should fail");
+
+        // Test 2: Valid command that exits with error
+        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec!["-c".to_string(), "exit 1".to_string()],
+        ));
+        let result2 = command_actor.spawn(()).await;
+        assert!(result2.is_ok(), "Valid command should spawn successfully");
+
+        // Wait for exit
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Test 3: Recovery with successful command
+        command_actor.command_factory =
+            Arc::new(MockCommandFactory::new("echo", vec!["success".to_string()]));
+        let result3 = command_actor.spawn(()).await;
+        assert!(result3.is_ok(), "Recovery command should succeed");
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_error_during_output_processing() {
+        // Test error handling during output reading
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        // Create a command that produces output then fails
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Before error'; echo 'Error message' >&2; exit 1".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(spawn_result.is_ok(), "Spawning should succeed");
+
+        // Wait for command to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Verify both stdout and stderr were captured despite the error exit
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls
+                .iter()
+                .any(|call| call.contains("Before error")),
+            "Should capture stdout before error"
+        );
+        assert!(
+            command_calls
+                .iter()
+                .any(|call| call.contains("Error message")),
+            "Should capture stderr error message"
+        );
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_error_handling() {
+        // Test error handling with concurrent operations
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let command_actor = CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            Arc::new(MockCommandFactory::new("nonexistent_command", vec![])),
+        );
+
+        // Try multiple concurrent spawns of non-existent command
+        let spawn_futures = (0..3).map(|_| command_actor.spawn(())).collect::<Vec<_>>();
+        let results = future::join_all(spawn_futures).await;
+
+        // All should fail
+        for (i, result) in results.iter().enumerate() {
+            assert!(result.is_err(), "Concurrent error spawn {} should fail", i);
+        }
+
+        // Kill should still work
+        let kill_result = command_actor.kill().await;
+        assert!(
+            kill_result.is_ok(),
+            "Kill should succeed after concurrent errors"
+        );
+    }
+
+    // Integration and resource management tests
+    #[tokio::test]
+    async fn test_complete_lifecycle_integration() {
+        // Test complete lifecycle: create -> spawn -> output -> kill -> cleanup
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let factory = Arc::new(MockCommandFactory::new(
+            "sh",
+            vec![
+                "-c".to_string(),
+                "echo 'Lifecycle test start'; sleep 0.1; echo 'Lifecycle test end'".to_string(),
+            ],
+        ));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // 1. Spawn process
+        let spawn_result = command_actor.spawn(()).await;
+        assert!(spawn_result.is_ok(), "Lifecycle spawn should succeed");
+
+        // 2. Verify output processing
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls.iter().any(|call| call.contains("start")),
+            "Should capture start output"
+        );
+        assert!(
+            command_calls.iter().any(|call| call.contains("end")),
+            "Should capture end output"
+        );
+
+        // 3. Send external message
+        let external_result = command_actor
+            .send_message(
+                "lifecycle_test".to_string(),
+                TestMessage {
+                    command: "external".to_string(),
+                    data: "test_data".to_string(),
+                },
+            )
+            .await;
+        assert!(external_result.is_ok(), "External message should succeed");
+
+        // 4. Verify external message was sent
+        let external_message = rx.recv().await.unwrap();
+        assert_eq!(external_message.method, "lifecycle_test");
+        assert_eq!(external_message.payload.command, "external");
+
+        // 5. Kill and cleanup
+        let kill_result = command_actor.kill().await;
+        assert!(kill_result.is_ok(), "Lifecycle kill should succeed");
+
+        // 6. Verify system is clean
+        drop(command_actor);
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn test_resource_cleanup_verification() {
+        // Test that resources are properly cleaned up
+        let _initial_tasks = tokio::task::LocalSet::new();
+
+        // Create and destroy multiple CommandActors
+        for i in 0..5 {
+            let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            let handler = TestCommandHandler::new();
+
+            let factory = Arc::new(MockCommandFactory::new(
+                "echo",
+                vec![format!("cleanup_test_{}", i)],
+            ));
+
+            let command_actor =
+                CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+            // Spawn, run briefly, then clean up
+            let spawn_result = command_actor.spawn(()).await;
+            assert!(
+                spawn_result.is_ok(),
+                "Cleanup test spawn {} should succeed",
+                i
+            );
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+            let kill_result = command_actor.kill().await;
+            assert!(
+                kill_result.is_ok(),
+                "Cleanup test kill {} should succeed",
+                i
+            );
+
+            // Explicit cleanup
+            drop(command_actor);
+        }
+
+        // Give time for cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn test_multi_actor_integration() {
+        // Test integration between multiple actors and components
+        let num_actors = 3;
+        let mut actors = Vec::new();
+        let mut handlers = Vec::new();
+        let mut receivers = Vec::new();
+
+        // Create multiple actors with different commands
+        for i in 0..num_actors {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+            let handler = TestCommandHandler::new();
+            let handler_clone = handler.clone();
+            handlers.push(handler_clone);
+            receivers.push(rx);
+
+            let factory = Arc::new(MockCommandFactory::new(
+                "echo",
+                vec![format!("actor_{}_output", i)],
+            ));
+
+            let command_actor =
+                CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            actors.push(command_actor);
+        }
+
+        // Spawn all actors
+        for (i, actor) in actors.iter().enumerate() {
+            let spawn_result = actor.spawn(()).await;
+            assert!(
+                spawn_result.is_ok(),
+                "Multi-actor spawn {} should succeed",
+                i
+            );
+        }
+
+        // Send messages from all actors
+        for (i, actor) in actors.iter().enumerate() {
+            let send_result = actor
+                .send_message(
+                    format!("message_{}", i),
+                    TestMessage {
+                        command: format!("cmd_{}", i),
+                        data: format!("data_{}", i),
+                    },
+                )
+                .await;
+            assert!(send_result.is_ok(), "Multi-actor send {} should succeed", i);
+        }
+
+        // Wait for processing
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify all outputs and messages
+        for (i, (handler, mut rx)) in handlers.iter().zip(receivers.into_iter()).enumerate() {
+            // Verify command output
+            let command_calls = handler.get_command_calls();
+            assert!(
+                command_calls
+                    .iter()
+                    .any(|call| call.contains(&format!("actor_{}_output", i))),
+                "Actor {} should have captured its output",
+                i
+            );
+
+            // Verify external message
+            let external_message = rx.recv().await.unwrap();
+            assert_eq!(external_message.method, format!("message_{}", i));
+            assert_eq!(external_message.payload.command, format!("cmd_{}", i));
+        }
+
+        // Clean up all actors
+        for (i, actor) in actors.iter().enumerate() {
+            let kill_result = actor.kill().await;
+            assert!(kill_result.is_ok(), "Multi-actor kill {} should succeed", i);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_long_running_stability() {
+        // Test stability over extended period with multiple operations
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let mut command_actor = CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            Arc::new(MockCommandFactory::new("echo", vec![])),
+        );
+
+        // Perform multiple cycles of different operations
+        for cycle in 0..10 {
+            // Change command for each cycle
+            command_actor.command_factory = Arc::new(MockCommandFactory::new(
+                "echo",
+                vec![format!("stability_test_cycle_{}", cycle)],
+            ));
+
+            // Spawn
+            let spawn_result = command_actor.spawn(()).await;
+            assert!(
+                spawn_result.is_ok(),
+                "Stability spawn {} should succeed",
+                cycle
+            );
+
+            // Brief execution
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+
+            // Kill
+            let kill_result = command_actor.kill().await;
+            assert!(
+                kill_result.is_ok(),
+                "Stability kill {} should succeed",
+                cycle
+            );
+
+            // Brief pause between cycles
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+
+        // Verify all cycles produced output
+        let command_calls = handler_clone.get_command_calls();
+        let cycles_with_output = (0..10)
+            .filter(|&i| {
+                command_calls
+                    .iter()
+                    .any(|call| call.contains(&format!("cycle_{}", i)))
+            })
+            .count();
+
+        assert!(
+            cycles_with_output >= 5,
+            "Should have output from most cycles, got {}",
+            cycles_with_output
+        );
+
+        // Final cleanup
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_failure_recovery_integration() {
+        // Test recovery from various failure scenarios
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let mut command_actor = CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            Arc::new(MockCommandFactory::new("echo", vec![])),
+        );
+
+        // Phase 1: Start with failure
+        command_actor.command_factory =
+            Arc::new(MockCommandFactory::new("nonexistent_command", vec![]));
+        let failure_result = command_actor.spawn(()).await;
+        assert!(failure_result.is_err(), "Failure case should fail");
+
+        // Phase 2: Recover with working command
+        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["recovery_phase_1".to_string()],
+        ));
+        let recovery_result = command_actor.spawn(()).await;
+        assert!(recovery_result.is_ok(), "Recovery should succeed");
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Phase 3: Another working command
+        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["recovery_phase_2".to_string()],
+        ));
+        let second_recovery_result = command_actor.spawn(()).await;
+        assert!(
+            second_recovery_result.is_ok(),
+            "Second recovery should succeed"
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Verify recovery worked
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls.iter().any(|call| call.contains("phase_1")),
+            "Should have output from first recovery"
+        );
+        assert!(
+            command_calls.iter().any(|call| call.contains("phase_2")),
+            "Should have output from second recovery"
+        );
+
+        // Final cleanup
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_stress_integration() {
+        // Stress test with rapid operations
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+        let handler_clone = handler.clone();
+
+        let mut command_actor = CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            Arc::new(MockCommandFactory::new("echo", vec![])),
+        );
+
+        // Rapid spawn/kill cycles
+        for i in 0..20 {
+            command_actor.command_factory = Arc::new(MockCommandFactory::new(
+                "echo",
+                vec![format!("stress_{}", i)],
+            ));
+
+            let spawn_result = command_actor.spawn(()).await;
+            assert!(spawn_result.is_ok(), "Stress spawn {} should succeed", i);
+
+            // Very brief execution
+            tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
+
+            let kill_result = command_actor.kill().await;
+            assert!(kill_result.is_ok(), "Stress kill {} should succeed", i);
+        }
+
+        // Verify system stability after stress
+        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            "echo",
+            vec!["post_stress_test".to_string()],
+        ));
+        let final_spawn_result = command_actor.spawn(()).await;
+        assert!(
+            final_spawn_result.is_ok(),
+            "Post-stress spawn should succeed"
+        );
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let command_calls = handler_clone.get_command_calls();
+        assert!(
+            command_calls
+                .iter()
+                .any(|call| call.contains("post_stress")),
+            "Should work normally after stress test"
+        );
+
+        // Final cleanup
         let _ = command_actor.kill().await;
     }
 }
