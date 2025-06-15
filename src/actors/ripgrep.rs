@@ -4,44 +4,34 @@
 //! that processes search queries and emits real-time search results.
 
 use crate::actors::messages::{FaeMessage, SearchMessage, SearchMode, SearchParams, SearchResult};
-use crate::core::command::{CommandActor, CommandFactory, CommandHandler, CommandMessageHandler};
+use crate::core::command::{CommandActor, CommandHandler, CommandMessageHandler};
 use crate::core::{ActorController, Message, MessageHandler};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-/// Factory for creating ripgrep commands with search query and mode support
-pub struct RipgrepCommandFactory;
+/// Create a ripgrep command with specified search parameters
+pub fn create_ripgrep_command(search_params: SearchParams) -> Command {
+    let mut cmd = Command::new("rg");
+    cmd.arg("--line-number")
+        .arg("--column")
+        .arg("--no-heading")
+        .arg("--with-filename")
+        .arg("--color=never");
 
-impl RipgrepCommandFactory {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl CommandFactory<SearchParams> for RipgrepCommandFactory {
-    fn create_command(&self, search_query: SearchParams) -> Command {
-        let mut cmd = Command::new("rg");
-        cmd.arg("--line-number")
-            .arg("--column")
-            .arg("--no-heading")
-            .arg("--with-filename")
-            .arg("--color=never");
-
-        // Add search mode specific flags
-        match search_query.mode {
-            SearchMode::Literal => {
-                cmd.arg("--fixed-strings"); // -F flag for literal search
-            }
-            SearchMode::Regexp => {
-                // Default mode is already regex, no additional flags needed
-            }
+    // Add search mode specific flags
+    match search_params.mode {
+        SearchMode::Literal => {
+            cmd.arg("--fixed-strings"); // -F flag for literal search
         }
-
-        cmd.arg(search_query.query).arg(".");
-        cmd
+        SearchMode::Regexp => {
+            // Default mode is already regex, no additional flags needed
+        }
     }
+
+    cmd.arg(search_params.query).arg(".");
+    cmd
 }
 
 /// Handler for processing search messages and managing ripgrep execution
@@ -216,7 +206,7 @@ impl RipgrepActor {
     ) -> Self {
         let message_handler = RipgrepMessageHandler::new(default_mode);
         let command_handler = RipgrepOutputHandler::new();
-        let command_factory = Arc::new(RipgrepCommandFactory::new());
+        let command_factory = Arc::new(create_ripgrep_command);
 
         Self::new(
             receiver,
@@ -386,9 +376,8 @@ mod tests {
 
     #[test]
     fn test_search_mode_literal() {
-        let factory = RipgrepCommandFactory::new();
         let search_params = SearchParams::literal("test query".to_string());
-        let cmd = factory.create_command(search_params);
+        let cmd = create_ripgrep_command(search_params);
 
         // Check that the command includes --fixed-strings flag for literal search
         let cmd_debug = format!("{:?}", cmd);
@@ -397,9 +386,8 @@ mod tests {
 
     #[test]
     fn test_search_mode_regexp() {
-        let factory = RipgrepCommandFactory::new();
         let search_params = SearchParams::regex("test.*pattern".to_string());
-        let cmd = factory.create_command(search_params);
+        let cmd = create_ripgrep_command(search_params);
 
         // Check that the command does not include --fixed-strings flag for regex search
         let cmd_debug = format!("{:?}", cmd);

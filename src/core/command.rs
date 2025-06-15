@@ -70,7 +70,7 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
         }
 
         // Create command using factory with provided arguments
-        let mut command = self.command_factory.create_command(args);
+        let mut command = (self.command_factory)(args);
 
         // Configure command to capture stdout and stderr
         command.stdout(Stdio::piped());
@@ -169,16 +169,13 @@ pub trait CommandHandler<T: Send + Sync + 'static>: Send + Sync + 'static {
 
 /// Factory trait for creating command objects with flexible parameters.
 ///
-/// This trait allows different strategies for command creation,
-/// enabling flexible command construction and configuration with
-/// arbitrary parameter types for runtime customization.
-pub trait CommandFactory<Args = ()>: Send + Sync {
-    /// Create a new command object ready for execution.
-    ///
-    /// # Arguments
-    /// * `args` - Parameters for command customization
-    fn create_command(&self, args: Args) -> Command;
-}
+/// This trait is automatically implemented for functions and closures that
+/// take Args and return Command, enabling flexible command construction
+/// and configuration with arbitrary parameter types for runtime customization.
+pub trait CommandFactory<Args = ()>: Fn(Args) -> Command + Send + Sync {}
+
+/// Blanket implementation for functions and closures
+impl<F, Args> CommandFactory<Args> for F where F: Fn(Args) -> Command + Send + Sync {}
 
 /// A command actor that manages external process execution.
 ///
@@ -354,7 +351,7 @@ impl<
         }
 
         // Create command using factory with provided arguments
-        let mut command = self.command_factory.create_command(args);
+        let mut command = (self.command_factory)(args);
 
         // Configure command to capture stdout and stderr
         command.stdout(Stdio::piped());
@@ -496,25 +493,14 @@ mod tests {
         data: String,
     }
 
-    // Mock CommandFactory for testing
-    struct MockCommandFactory {
-        program: String,
+    // Helper function to create test commands
+    fn create_mock_command(
+        program: &str,
         args: Vec<String>,
-    }
-
-    impl MockCommandFactory {
-        fn new(program: impl Into<String>, args: Vec<String>) -> Self {
-            Self {
-                program: program.into(),
-                args,
-            }
-        }
-    }
-
-    impl CommandFactory for MockCommandFactory {
-        fn create_command(&self, _args: ()) -> Command {
-            let mut command = Command::new(&self.program);
-            command.args(&self.args);
+    ) -> impl Fn(()) -> Command + Send + Sync + '_ {
+        move |_: ()| {
+            let mut command = Command::new(program);
+            command.args(&args);
             command
         }
     }
@@ -617,8 +603,8 @@ mod tests {
 
     #[test]
     fn test_mock_command_factory() {
-        let factory = MockCommandFactory::new("echo", vec!["hello".to_string()]);
-        let command = factory.create_command(());
+        let factory = create_mock_command("echo", vec!["hello".to_string()]);
+        let command = factory(());
 
         // We can't easily test the internal state of Command, but we can verify
         // the factory creates a command without panicking
@@ -630,7 +616,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
@@ -645,7 +631,7 @@ mod tests {
         let (tx, mut _rx) = mpsc::unbounded_channel();
         let (actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
         let handler_clone = handler.clone();
 
@@ -684,7 +670,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel();
 
         // Use a simple command that should exist on most systems
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
         let handler_clone = handler.clone();
 
@@ -722,7 +708,7 @@ mod tests {
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
         // Use echo for reliable testing
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
@@ -744,7 +730,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
@@ -775,7 +761,7 @@ mod tests {
         let (tx, mut _rx) = mpsc::unbounded_channel();
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let handler = TestCommandHandler::new();
 
         let mut command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
@@ -798,7 +784,7 @@ mod tests {
         // Create a mock controller for testing
         let (tx, _rx) = mpsc::unbounded_channel();
         let actor_controller = ActorController::new(tx);
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let controller = CommandController::new(
             actor_controller,
             Arc::new(Mutex::new(None)),
@@ -856,16 +842,8 @@ mod tests {
     #[test]
     fn test_command_factory_trait() {
         // Test that CommandFactory trait can be implemented and used
-        struct SimpleFactory;
-
-        impl CommandFactory for SimpleFactory {
-            fn create_command(&self, _args: ()) -> Command {
-                Command::new("echo")
-            }
-        }
-
-        let factory = SimpleFactory;
-        let command = factory.create_command(());
+        let factory = |_args: ()| Command::new("echo");
+        let command = factory(());
 
         // Verify we can create a command
         assert!(std::ptr::addr_of!(command) as *const _ != std::ptr::null());
@@ -879,7 +857,7 @@ mod tests {
 
         // Create a mock controller for testing
         let actor_controller = ActorController::new(tx);
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let controller = CommandController::new(
             actor_controller,
             Arc::new(Mutex::new(None)),
@@ -910,7 +888,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
 
         let actor_controller = ActorController::new(tx);
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
         let controller = CommandController::new(
             actor_controller,
             Arc::new(Mutex::new(None)),
@@ -941,7 +919,7 @@ mod tests {
         let handler = TestCommandHandler::new();
 
         // Create a factory that produces echo commands
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "echo",
             vec!["Hello World".to_string()],
         ));
@@ -971,7 +949,7 @@ mod tests {
 
         // Create a factory that produces commands that write to stderr
         // Using a shell command that writes to stderr
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec!["-c".to_string(), "echo 'Error message' >&2".to_string()],
         ));
@@ -998,7 +976,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a factory that produces echo commands with specific output
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "echo",
             vec!["Hello from stdout test".to_string()],
         ));
@@ -1038,7 +1016,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a factory that writes to stderr
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -1081,7 +1059,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a command that outputs multiple lines
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -1139,7 +1117,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a command that outputs to both stdout and stderr
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -1206,7 +1184,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a factory that produces yes commands (continuous output)
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "yes",
             vec!["test_output".to_string()],
         ));
@@ -1261,7 +1239,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a command that runs for a short time and then exits
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -1314,7 +1292,7 @@ mod tests {
             tx,
             handler.clone(),
             handler,
-            Arc::new(MockCommandFactory::new("echo", vec!["first".to_string()])),
+            Arc::new(create_mock_command("echo", vec!["first".to_string()])),
         );
 
         // First command
@@ -1326,7 +1304,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Replace with second command (this should kill the first one if still running)
-        let new_factory = Arc::new(MockCommandFactory::new("echo", vec!["second".to_string()]));
+        let new_factory = Arc::new(create_mock_command("echo", vec!["second".to_string()]));
         command_actor.command_factory = new_factory;
 
         let spawn_result2 = command_actor.spawn(()).await;
@@ -1364,7 +1342,7 @@ mod tests {
         let handler = TestCommandHandler::new();
 
         // Create a long-running sleep command
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sleep",
             vec!["10".to_string()], // Sleep for 10 seconds
         ));
@@ -1402,7 +1380,7 @@ mod tests {
         let _handler_clone = handler.clone();
 
         // Create a sleep command instead of yes for more predictable behavior
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sleep",
             vec!["2".to_string()], // Sleep for 2 seconds
         ));
@@ -1442,7 +1420,7 @@ mod tests {
         let handler = TestCommandHandler::new();
         let handler_clone = handler.clone();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "echo",
             vec!["cycle_test".to_string()],
         ));
@@ -1488,7 +1466,7 @@ mod tests {
             let handler_clone = handler.clone();
             handlers.push(handler_clone);
 
-            let factory = Arc::new(MockCommandFactory::new(
+            let factory = Arc::new(create_mock_command(
                 "echo",
                 vec![format!("actor_{}", i)],
             ));
@@ -1536,7 +1514,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new("echo", vec!["test".to_string()]));
+        let factory = Arc::new(create_mock_command("echo", vec!["test".to_string()]));
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
@@ -1552,7 +1530,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["1".to_string()]));
+        let factory = Arc::new(create_mock_command("sleep", vec!["1".to_string()]));
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
@@ -1580,7 +1558,7 @@ mod tests {
         let handler = TestCommandHandler::new();
         let handler_clone = handler.clone();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sleep",
             vec!["1".to_string()], // Use sleep instead of yes for cleaner output
         ));
@@ -1595,7 +1573,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         // Change factory and spawn second process (should kill first)
-        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+        command_actor.command_factory = Arc::new(create_mock_command(
             "echo",
             vec!["second_process_output".to_string()],
         ));
@@ -1628,7 +1606,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "echo",
             vec!["sequential_test".to_string()],
         ));
@@ -1659,7 +1637,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["0.1".to_string()]));
+        let factory = Arc::new(create_mock_command("sleep", vec!["0.1".to_string()]));
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
@@ -1683,7 +1661,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sleep",
             vec!["30".to_string()], // Very long sleep
         ));
@@ -1715,7 +1693,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["2".to_string()]));
+        let factory = Arc::new(create_mock_command("sleep", vec!["2".to_string()]));
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
@@ -1743,7 +1721,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["0.1".to_string()]));
+        let factory = Arc::new(create_mock_command("sleep", vec!["0.1".to_string()]));
 
         let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
@@ -1773,9 +1751,15 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["0.5".to_string()]));
+        let factory = Arc::new(create_mock_command("sleep", vec!["0.5".to_string()]));
 
-        let command_actor = Arc::new(CommandActor::new(actor_rx, tx, handler.clone(), handler, factory));
+        let command_actor = Arc::new(CommandActor::new(
+            actor_rx,
+            tx,
+            handler.clone(),
+            handler,
+            factory,
+        ));
 
         // Spawn first process
         let spawn_result1 = command_actor.spawn(()).await;
@@ -1825,7 +1809,7 @@ mod tests {
         let handler = TestCommandHandler::new();
         let handler_clone = handler.clone();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -1875,7 +1859,7 @@ mod tests {
             let handler_clone = handler.clone();
             handlers.push(handler_clone);
 
-            let factory = Arc::new(MockCommandFactory::new(
+            let factory = Arc::new(create_mock_command(
                 "echo",
                 vec![format!("stress_test_{}", i)],
             ));
@@ -1927,7 +1911,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "nonexistent_command_that_does_not_exist",
             vec![],
         ));
@@ -1958,7 +1942,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Use ls with completely invalid options
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "ls",
             vec!["--invalid-option-that-does-not-exist".to_string()],
         ));
@@ -1992,7 +1976,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Use a command that definitely writes to stderr
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -2037,7 +2021,7 @@ mod tests {
 
         // Try to execute a command that requires root permissions
         // Note: This test may behave differently on different systems
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -2067,7 +2051,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let handler = TestCommandHandler::new();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -2088,7 +2072,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
         // Try to spawn a new command - should work despite previous failure
-        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+        command_actor.command_factory = Arc::new(create_mock_command(
             "echo",
             vec!["recovery_test".to_string()],
         ));
@@ -2115,17 +2099,17 @@ mod tests {
             tx,
             handler.clone(),
             handler,
-            Arc::new(MockCommandFactory::new("echo", vec![])),
+            Arc::new(create_mock_command("echo", vec![])),
         );
 
         // Test 1: Non-existent command
         command_actor.command_factory =
-            Arc::new(MockCommandFactory::new("definitely_does_not_exist", vec![]));
+            Arc::new(create_mock_command("definitely_does_not_exist", vec![]));
         let result1 = command_actor.spawn(()).await;
         assert!(result1.is_err(), "Non-existent command should fail");
 
         // Test 2: Valid command that exits with error
-        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+        command_actor.command_factory = Arc::new(create_mock_command(
             "sh",
             vec!["-c".to_string(), "exit 1".to_string()],
         ));
@@ -2137,7 +2121,7 @@ mod tests {
 
         // Test 3: Recovery with successful command
         command_actor.command_factory =
-            Arc::new(MockCommandFactory::new("echo", vec!["success".to_string()]));
+            Arc::new(create_mock_command("echo", vec!["success".to_string()]));
         let result3 = command_actor.spawn(()).await;
         assert!(result3.is_ok(), "Recovery command should succeed");
 
@@ -2154,7 +2138,7 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create a command that produces output then fails
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -2201,7 +2185,7 @@ mod tests {
             tx,
             handler.clone(),
             handler,
-            Arc::new(MockCommandFactory::new("nonexistent_command", vec![])),
+            Arc::new(create_mock_command("nonexistent_command", vec![])),
         );
 
         // Try multiple concurrent spawns of non-existent command
@@ -2230,7 +2214,7 @@ mod tests {
         let handler = TestCommandHandler::new();
         let handler_clone = handler.clone();
 
-        let factory = Arc::new(MockCommandFactory::new(
+        let factory = Arc::new(create_mock_command(
             "sh",
             vec![
                 "-c".to_string(),
@@ -2293,7 +2277,7 @@ mod tests {
             let (tx, _rx) = mpsc::unbounded_channel();
             let handler = TestCommandHandler::new();
 
-            let factory = Arc::new(MockCommandFactory::new(
+            let factory = Arc::new(create_mock_command(
                 "echo",
                 vec![format!("cleanup_test_{}", i)],
             ));
@@ -2342,7 +2326,7 @@ mod tests {
             handlers.push(handler_clone);
             receivers.push(rx);
 
-            let factory = Arc::new(MockCommandFactory::new(
+            let factory = Arc::new(create_mock_command(
                 "echo",
                 vec![format!("actor_{}_output", i)],
             ));
@@ -2416,13 +2400,13 @@ mod tests {
             tx,
             handler.clone(),
             handler,
-            Arc::new(MockCommandFactory::new("echo", vec![])),
+            Arc::new(create_mock_command("echo", vec![])),
         );
 
         // Perform multiple cycles of different operations
         for cycle in 0..10 {
             // Change command for each cycle
-            command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            command_actor.command_factory = Arc::new(create_mock_command(
                 "echo",
                 vec![format!("stability_test_cycle_{}", cycle)],
             ));
@@ -2483,17 +2467,17 @@ mod tests {
             tx,
             handler.clone(),
             handler,
-            Arc::new(MockCommandFactory::new("echo", vec![])),
+            Arc::new(create_mock_command("echo", vec![])),
         );
 
         // Phase 1: Start with failure
         command_actor.command_factory =
-            Arc::new(MockCommandFactory::new("nonexistent_command", vec![]));
+            Arc::new(create_mock_command("nonexistent_command", vec![]));
         let failure_result = command_actor.spawn(()).await;
         assert!(failure_result.is_err(), "Failure case should fail");
 
         // Phase 2: Recover with working command
-        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+        command_actor.command_factory = Arc::new(create_mock_command(
             "echo",
             vec!["recovery_phase_1".to_string()],
         ));
@@ -2503,7 +2487,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         // Phase 3: Another working command
-        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+        command_actor.command_factory = Arc::new(create_mock_command(
             "echo",
             vec!["recovery_phase_2".to_string()],
         ));
@@ -2543,12 +2527,12 @@ mod tests {
             tx,
             handler.clone(),
             handler,
-            Arc::new(MockCommandFactory::new("echo", vec![])),
+            Arc::new(create_mock_command("echo", vec![])),
         );
 
         // Rapid spawn/kill cycles
         for i in 0..20 {
-            command_actor.command_factory = Arc::new(MockCommandFactory::new(
+            command_actor.command_factory = Arc::new(create_mock_command(
                 "echo",
                 vec![format!("stress_{}", i)],
             ));
@@ -2564,7 +2548,7 @@ mod tests {
         }
 
         // Verify system stability after stress
-        command_actor.command_factory = Arc::new(MockCommandFactory::new(
+        command_actor.command_factory = Arc::new(create_mock_command(
             "echo",
             vec!["post_stress_test".to_string()],
         ));
