@@ -5,7 +5,9 @@
 
 pub mod ag;
 pub mod messages;
+pub mod native;
 pub mod ripgrep;
 
 pub use ag::AgActor;
+pub use native::NativeSearchActor;
 pub use ripgrep::RipgrepActor;

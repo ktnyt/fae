@@ -4,8 +4,8 @@
 //! real-time code search with ag (The Silver Searcher) integration.
 //! Serves as a fallback when ripgrep is not available.
 
-use fae::actors::AgActor;
 use fae::actors::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
+use fae::actors::AgActor;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -60,7 +60,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Perform a regex search for Rust function definitions with patterns
     println!("🚀 Searching for 'fn \\\\w+.*\\\\{{' (Rust function patterns)...");
 
-    match actor.search(r"fn \w+.*\{".to_string(), SearchMode::Regexp).await {
+    match actor
+        .search(r"fn \w+.*\{".to_string(), SearchMode::Regexp)
+        .await
+    {
         Ok(_) => {
             println!("✅ Regex search command executed successfully");
         }
