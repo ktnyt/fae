@@ -3,27 +3,25 @@
 //! This module provides a CommandActor-based ripgrep search implementation
 //! that processes search queries and emits real-time search results.
 
+use crate::actors::messages::{FaeMessage, SearchMessage, SearchMode, SearchParams, SearchResult};
 use crate::core::command::{CommandActor, CommandFactory, CommandHandler, CommandMessageHandler};
 use crate::core::{ActorController, Message, MessageHandler};
-use crate::actors::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-/// Factory for creating ripgrep commands with search mode support
-pub struct RipgrepCommandFactory {
-    mode: SearchMode,
-}
+/// Factory for creating ripgrep commands with search query and mode support
+pub struct RipgrepCommandFactory;
 
 impl RipgrepCommandFactory {
-    pub fn new(mode: SearchMode) -> Self {
-        Self { mode }
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl CommandFactory<String> for RipgrepCommandFactory {
-    fn create_command(&self, query: String) -> Command {
+impl CommandFactory<SearchParams> for RipgrepCommandFactory {
+    fn create_command(&self, search_query: SearchParams) -> Command {
         let mut cmd = Command::new("rg");
         cmd.arg("--line-number")
             .arg("--column")
@@ -32,7 +30,7 @@ impl CommandFactory<String> for RipgrepCommandFactory {
             .arg("--color=never");
 
         // Add search mode specific flags
-        match self.mode {
+        match search_query.mode {
             SearchMode::Literal => {
                 cmd.arg("--fixed-strings"); // -F flag for literal search
             }
@@ -41,7 +39,7 @@ impl CommandFactory<String> for RipgrepCommandFactory {
             }
         }
 
-        cmd.arg(query).arg(".");
+        cmd.arg(search_query.query).arg(".");
         cmd
     }
 }
@@ -71,18 +69,24 @@ impl MessageHandler<FaeMessage> for RipgrepMessageHandler {
     ) {
         if let Some(search_msg) = message.payload.as_search() {
             match search_msg {
-                SearchMessage::UpdateQuery { query } => {
-                    log::debug!("Received search query: {}", query);
+                SearchMessage::UpdateQuery { search_params } => {
+                    log::debug!(
+                        "Received search query: {} with mode: {:?}",
+                        search_params.query,
+                        search_params.mode
+                    );
                     let mut current_query = self.current_query.lock().unwrap();
-                    *current_query = Some(query.clone());
+                    *current_query = Some(search_params.query.clone());
+                    let mut current_mode = self.current_mode.lock().unwrap();
+                    *current_mode = search_params.mode;
                 }
                 SearchMessage::PushSearchResult { result } => {
-                    log::trace!("Search result: {}:{}:{}", result.filename, result.line, result.content);
-                }
-                SearchMessage::SetSearchMode { mode } => {
-                    log::debug!("Setting search mode to: {:?}", mode);
-                    let mut current_mode = self.current_mode.lock().unwrap();
-                    *current_mode = *mode;
+                    log::trace!(
+                        "Search result: {}:{}:{}",
+                        result.filename,
+                        result.line,
+                        result.content
+                    );
                 }
                 SearchMessage::ClearResults => {
                     log::debug!("Clearing search results");
@@ -101,18 +105,28 @@ impl CommandMessageHandler<FaeMessage> for RipgrepMessageHandler {
     ) {
         if let Some(search_msg) = message.payload.as_search() {
             match search_msg {
-                SearchMessage::UpdateQuery { query } => {
-                    log::info!("Starting ripgrep search for: {}", query);
-                    
-                    // Store the current query
+                SearchMessage::UpdateQuery { search_params } => {
+                    log::info!(
+                        "Starting ripgrep search for: {} with mode: {:?}",
+                        search_params.query,
+                        search_params.mode
+                    );
+
+                    // Store the current query and mode
                     {
                         let mut current_query = self.current_query.lock().unwrap();
-                        *current_query = Some(query.clone());
+                        *current_query = Some(search_params.query.clone());
+                        let mut current_mode = self.current_mode.lock().unwrap();
+                        *current_mode = search_params.mode;
                     }
 
                     // This would trigger command spawn, but we need to handle Args properly
-                    // For now, just log the query
-                    log::debug!("Query stored: {}", query);
+                    // For now, just log the query and mode
+                    log::debug!(
+                        "Query and mode stored: {} {:?}",
+                        search_params.query,
+                        search_params.mode
+                    );
                 }
                 SearchMessage::PushSearchResult { result } => {
                     // Forward search results to external listeners
@@ -123,18 +137,10 @@ impl CommandMessageHandler<FaeMessage> for RipgrepMessageHandler {
                         )
                         .await;
                 }
-                SearchMessage::SetSearchMode { mode } => {
-                    log::info!("Setting search mode to: {:?}", mode);
-                    let mut current_mode = self.current_mode.lock().unwrap();
-                    *current_mode = *mode;
-                }
                 SearchMessage::ClearResults => {
                     log::info!("Clearing search results");
                     let _ = controller
-                        .send_message(
-                            "clearResults".to_string(),
-                            FaeMessage::clear_results(),
-                        )
+                        .send_message("clearResults".to_string(), FaeMessage::clear_results())
                         .await;
                 }
             }
@@ -198,23 +204,19 @@ impl CommandHandler<FaeMessage> for RipgrepOutputHandler {
 }
 
 /// Type alias for the complete RipgrepActor
-pub type RipgrepActor = CommandActor<
-    FaeMessage,
-    RipgrepMessageHandler,
-    RipgrepOutputHandler,
-    String,
->;
+pub type RipgrepActor =
+    CommandActor<FaeMessage, RipgrepMessageHandler, RipgrepOutputHandler, SearchParams>;
 
 impl RipgrepActor {
-    /// Create a new RipgrepActor with specified search mode
+    /// Create a new RipgrepActor
     pub fn create(
         receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-        mode: SearchMode,
+        default_mode: SearchMode,
     ) -> Self {
-        let message_handler = RipgrepMessageHandler::new(mode);
+        let message_handler = RipgrepMessageHandler::new(default_mode);
         let command_handler = RipgrepOutputHandler::new();
-        let command_factory = Arc::new(RipgrepCommandFactory::new(mode));
+        let command_factory = Arc::new(RipgrepCommandFactory::new());
 
         Self::new(
             receiver,
@@ -225,36 +227,55 @@ impl RipgrepActor {
         )
     }
 
-    /// Execute a search query
-    pub async fn search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Send updateQuery message
-        self.actor().send_message(
-            "updateQuery".to_string(),
-            FaeMessage::update_query(query.clone()),
-        ).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    /// Execute a search query with specified mode
+    pub async fn search(
+        &self,
+        query: String,
+        mode: SearchMode,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let search_params = SearchParams::new(query, mode);
 
-        // Spawn ripgrep command with the query
-        self.spawn(query).await?;
+        // Send updateQuery message with SearchParams
+        self.actor()
+            .send_message(
+                "updateQuery".to_string(),
+                FaeMessage::update_search_query(search_params.clone()),
+            )
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+        // Spawn ripgrep command with the search params
+        self.spawn(search_params).await?;
 
         Ok(())
     }
 
-    /// Set the search mode
-    pub async fn set_search_mode(&self, mode: SearchMode) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.actor().send_message(
-            "setSearchMode".to_string(),
-            FaeMessage::set_search_mode(mode),
-        ).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    /// Execute a search with SearchParams directly
+    pub async fn search_params(
+        &self,
+        search_params: SearchParams,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Send updateQuery message with SearchParams
+        self.actor()
+            .send_message(
+                "updateQuery".to_string(),
+                FaeMessage::update_search_query(search_params.clone()),
+            )
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+        // Spawn ripgrep command with the search params
+        self.spawn(search_params).await?;
 
         Ok(())
     }
 
     /// Clear search results
     pub async fn clear_results(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.actor().send_message(
-            "clearResults".to_string(),
-            FaeMessage::clear_results(),
-        ).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        self.actor()
+            .send_message("clearResults".to_string(), FaeMessage::clear_results())
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
         Ok(())
     }
@@ -270,7 +291,7 @@ mod tests {
     fn test_parse_rg_line() {
         let line = "src/main.rs:42:15:    let result = search_function();";
         let result = RipgrepOutputHandler::parse_rg_line(line);
-        
+
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.filename, "src/main.rs");
@@ -292,7 +313,7 @@ mod tests {
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
 
         let _actor = RipgrepActor::create(actor_rx, tx, SearchMode::Literal);
-        
+
         // Test that actor can be created without issues
         assert!(true);
     }
@@ -307,7 +328,7 @@ mod tests {
         // Send updateQuery message
         let query_message = Message::new(
             "updateQuery",
-            FaeMessage::update_query("test_search".to_string()),
+            FaeMessage::update_query("test_search".to_string(), SearchMode::Literal),
         );
 
         actor_tx.send(query_message).unwrap();
@@ -316,8 +337,10 @@ mod tests {
         sleep(Duration::from_millis(10)).await;
 
         // Test search method
-        let search_result = actor.search("test_pattern".to_string()).await;
-        
+        let search_result = actor
+            .search("test_pattern".to_string(), SearchMode::Regexp)
+            .await;
+
         // Should succeed even if ripgrep is not available (command creation should work)
         // The actual execution might fail but the setup should work
         assert!(search_result.is_ok() || search_result.is_err()); // Either is acceptable for this test
@@ -350,7 +373,7 @@ mod tests {
         // Should receive the search result message
         let received = rx.recv().await.unwrap();
         assert_eq!(received.method, "pushSearchResult");
-        
+
         if let Some(SearchMessage::PushSearchResult { result }) = received.payload.as_search() {
             assert_eq!(result.filename, search_result.filename);
             assert_eq!(result.line, search_result.line);
@@ -363,9 +386,10 @@ mod tests {
 
     #[test]
     fn test_search_mode_literal() {
-        let factory = RipgrepCommandFactory::new(SearchMode::Literal);
-        let cmd = factory.create_command("test query".to_string());
-        
+        let factory = RipgrepCommandFactory::new();
+        let search_params = SearchParams::literal("test query".to_string());
+        let cmd = factory.create_command(search_params);
+
         // Check that the command includes --fixed-strings flag for literal search
         let cmd_debug = format!("{:?}", cmd);
         assert!(cmd_debug.contains("--fixed-strings"));
@@ -373,9 +397,10 @@ mod tests {
 
     #[test]
     fn test_search_mode_regexp() {
-        let factory = RipgrepCommandFactory::new(SearchMode::Regexp);
-        let cmd = factory.create_command("test.*pattern".to_string());
-        
+        let factory = RipgrepCommandFactory::new();
+        let search_params = SearchParams::regex("test.*pattern".to_string());
+        let cmd = factory.create_command(search_params);
+
         // Check that the command does not include --fixed-strings flag for regex search
         let cmd_debug = format!("{:?}", cmd);
         assert!(!cmd_debug.contains("--fixed-strings"));
