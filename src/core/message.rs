@@ -63,6 +63,36 @@ pub mod types {
     }
 }
 
+/// Extended controller interface for command actors.
+/// 
+/// This trait extends basic message sending with command lifecycle control.
+/// It allows message handlers to spawn and shutdown commands as needed.
+#[async_trait]
+pub trait CommandController<T>: Send + Sync {
+    /// Send a message to external recipients.
+    async fn send_message(&self, method: impl Into<String> + Send, payload: T) -> Result<(), crate::core::ActorSendError>;
+    
+    /// Spawn a new command execution.
+    async fn spawn(&self, command: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    
+    /// Shutdown the currently running command.
+    async fn shutdown(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Trait for handling messages specifically in command actors.
+/// 
+/// This trait provides access to CommandController for lifecycle management.
+/// It's separate from MessageHandler to avoid breaking existing Actor implementations.
+#[async_trait]
+pub trait CommandMessageHandler<T>: Send + Sync {
+    /// Handle an incoming message with command control capabilities.
+    /// 
+    /// # Arguments
+    /// * `message` - The incoming message to process
+    /// * `controller` - Controller for message sending and command lifecycle management
+    async fn on_message(&mut self, message: Message<T>, controller: &dyn CommandController<T>);
+}
+
 /// Trait for handling messages in the Actor system.
 /// 
 /// This trait is generic over the message payload type T, allowing for type-safe

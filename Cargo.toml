@@ -3,9 +3,9 @@ name = "fae"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "fae-service"
-path = "src/main.rs"
+# [[bin]]
+# name = "fae-service"
+# path = "src/main.rs"
 
 
 [dependencies]
