@@ -12,5 +12,5 @@ pub mod message;
 // Re-exports for convenience
 pub use actor::{Actor, ActorController, ActorSendError};
 pub use broadcaster::Broadcaster;
-pub use command::{CommandController, CommandHandler, CommandFactory, CommandActor};
+pub use command::{CommandActor, CommandController, CommandFactory, CommandHandler};
 pub use message::{Message, MessageHandler};

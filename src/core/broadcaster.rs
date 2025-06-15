@@ -169,8 +169,7 @@ mod tests {
             &mut self,
             message: Message<TestMessage>,
             _controller: &crate::core::ActorController<TestMessage>,
-        )
-        {
+        ) {
             log::debug!("Actor {} received message: {:?}", self.actor_id, message);
             let mut messages = self.received_messages.lock().unwrap();
             messages.push(message);

@@ -535,7 +535,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel();
 
         let handler = TaskInfoHandler::new();
-        let _handler_clone = handler.clone();
+        let handler_clone = handler.clone();
         let actor: Actor<TaskInfo, TaskInfoHandler> = Actor::new(actor_rx, tx, handler);
 
         // Create complex task info with Vec and HashMap
@@ -578,6 +578,11 @@ mod tests {
             processed_message.payload.metadata.get("status"),
             Some(&"completed".to_string())
         );
+
+        // Verify the handler recorded the original message
+        let received_messages = handler_clone.get_messages();
+        assert_eq!(received_messages.len(), 1);
+        assert_eq!(received_messages[0].payload.task_id, task_info.task_id);
 
         // Clean up
         drop(actor);

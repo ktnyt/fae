@@ -1493,8 +1493,7 @@ mod tests {
                 vec![format!("actor_{}", i)],
             ));
 
-            let command_actor =
-                CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
             actors.push(command_actor);
         }
 
@@ -2246,8 +2245,7 @@ mod tests {
                 vec![format!("cleanup_test_{}", i)],
             ));
 
-            let command_actor =
-                CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
 
             // Spawn, run briefly, then clean up
             let spawn_result = command_actor.spawn(()).await;
@@ -2296,8 +2294,7 @@ mod tests {
                 vec![format!("actor_{}_output", i)],
             ));
 
-            let command_actor =
-                CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
             actors.push(command_actor);
         }
 

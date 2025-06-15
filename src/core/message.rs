@@ -63,7 +63,6 @@ pub mod types {
     }
 }
 
-
 /// Trait for handling messages in the Actor system.
 ///
 /// This trait is generic over the message payload type T, allowing for type-safe
@@ -77,7 +76,11 @@ pub trait MessageHandler<T: Send + Sync + 'static>: Send + Sync + 'static {
     /// # Arguments
     /// * `message` - The incoming message to process
     /// * `sender` - Sender for outgoing messages (responses, forwarding, etc.)
-    async fn on_message(&mut self, message: Message<T>, controller: &crate::core::ActorController<T>);
+    async fn on_message(
+        &mut self,
+        message: Message<T>,
+        controller: &crate::core::ActorController<T>,
+    );
 }
 
 #[cfg(test)]
