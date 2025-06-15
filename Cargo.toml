@@ -64,9 +64,9 @@ tempfile = "3.8"      # テスト用
 tokio-test = "0.4"    # 非同期テスト用
 
 [[example]]
-name = "ripgrep_search"
-path = "examples/ripgrep_search.rs"
+name = "search_comparison"
+path = "examples/search_comparison.rs"
 
 [[example]]
-name = "search_modes"
-path = "examples/search_modes.rs"
+name = "basic_search"
+path = "examples/basic_search.rs"
