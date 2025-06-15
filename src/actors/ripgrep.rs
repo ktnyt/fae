@@ -5,7 +5,7 @@
 
 use crate::core::command::{CommandActor, CommandFactory, CommandHandler, CommandMessageHandler};
 use crate::core::{ActorController, Message, MessageHandler};
-use crate::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
+use crate::actors::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tokio::process::Command;

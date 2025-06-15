@@ -3,6 +3,7 @@
 //! This module contains concrete actor implementations that extend
 //! the core actor system with specific functionality.
 
-pub mod rg;
+pub mod messages;
+pub mod ripgrep;
 
-pub use rg::RipgrepActor;
+pub use ripgrep::RipgrepActor;
