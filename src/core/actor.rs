@@ -1,13 +1,9 @@
-//! Actor System for Notification-based Communication
+//! Actor implementation for notification-based communication
 //!
-//! This module provides a lightweight actor system based on notification messages.
-//! Unlike the JsonRpc system which supports request/response patterns, this actor
-//! system focuses solely on bidirectional notification passing.
+//! This module contains the core Actor struct and related types for handling
+//! bidirectional notification messages in a lightweight actor system.
 
-pub mod message;
-
-pub use message::{MessageHandler, Message};
-
+use crate::core::message::{Message, MessageHandler};
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
@@ -173,7 +169,7 @@ pub struct ActorSender<T> {
 }
 
 impl<T> ActorSender<T> {
-    fn new(
+    pub(crate) fn new(
         sender: mpsc::UnboundedSender<Message<T>>,
         internal_sender: mpsc::UnboundedSender<Message<T>>,
     ) -> Self {
@@ -221,7 +217,7 @@ impl<T: Send + 'static, H: MessageHandler<T> + Send + 'static> Drop for Actor<T,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::message::{Message, MessageHandler};
+    use crate::core::message::{Message, MessageHandler};
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
     use std::collections::HashMap;
@@ -460,7 +456,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_userdata_struct_actor() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut _rx) = mpsc::unbounded_channel();
         let (actor_tx, actor_rx) = mpsc::unbounded_channel();
         
         let handler = UserDataHandler::new();
@@ -536,7 +532,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel();
         
         let handler = TaskInfoHandler::new();
-        let handler_clone = handler.clone();
+        let _handler_clone = handler.clone();
         let actor: Actor<TaskInfo, TaskInfoHandler> = Actor::new(actor_rx, tx, handler);
         
         // Create complex task info with Vec and HashMap

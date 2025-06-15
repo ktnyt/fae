@@ -76,7 +76,7 @@ pub trait MessageHandler<T> {
     /// # Arguments
     /// * `message` - The incoming message to process
     /// * `sender` - Sender for outgoing messages (responses, forwarding, etc.)
-    async fn on_message(&mut self, message: Message<T>, sender: &crate::actor::ActorSender<T>);
+    async fn on_message(&mut self, message: Message<T>, sender: &crate::core::ActorSender<T>);
 }
 
 #[cfg(test)]
