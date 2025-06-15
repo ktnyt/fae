@@ -1,7 +1,7 @@
 //! Search tool comparison example
 //!
 //! This example demonstrates and compares the behavior of RipgrepActor and AgActor
-//! using the same search queries to verify they work correctly and produce 
+//! using the same search queries to verify they work correctly and produce
 //! consistent results.
 
 use fae::actors::messages::FaeMessage;
@@ -60,7 +60,10 @@ async fn run_search_test(
     stats.query = query.to_string();
     stats.mode = mode;
 
-    println!("🔍 Testing {} with query '{}' (mode: {:?})", tool_name, query, mode);
+    println!(
+        "🔍 Testing {} with query '{}' (mode: {:?})",
+        tool_name, query, mode
+    );
 
     // Check if tool is available
     let available = match tool_name {
@@ -71,7 +74,10 @@ async fn run_search_test(
 
     if !available {
         stats.error = Some(format!("{} is not available", tool_name));
-        println!("  ❌ {} is not installed or not available in PATH", tool_name);
+        println!(
+            "  ❌ {} is not installed or not available in PATH",
+            tool_name
+        );
         return stats;
     }
 
@@ -129,7 +135,7 @@ async fn run_search_test(
                             first_result_time = Some(start_time.elapsed());
                         }
                         stats.result_count += 1;
-                        
+
                         // Print first few results as examples
                         if stats.result_count <= 3 {
                             println!(
@@ -166,13 +172,30 @@ async fn run_search_test(
 
 fn print_comparison(ripgrep_stats: &SearchStats, ag_stats: &SearchStats) {
     println!("\n📊 === COMPARISON RESULTS ===");
-    println!("Query: '{}' (mode: {:?})", ripgrep_stats.query, ripgrep_stats.mode);
+    println!(
+        "Query: '{}' (mode: {:?})",
+        ripgrep_stats.query, ripgrep_stats.mode
+    );
     println!();
 
     // Availability
     println!("🔧 Tool Availability:");
-    println!("  ripgrep: {}", if ripgrep_stats.available { "✅ Available" } else { "❌ Not available" });
-    println!("  ag:      {}", if ag_stats.available { "✅ Available" } else { "❌ Not available" });
+    println!(
+        "  ripgrep: {}",
+        if ripgrep_stats.available {
+            "✅ Available"
+        } else {
+            "❌ Not available"
+        }
+    );
+    println!(
+        "  ag:      {}",
+        if ag_stats.available {
+            "✅ Available"
+        } else {
+            "❌ Not available"
+        }
+    );
     println!();
 
     if !ripgrep_stats.available && !ag_stats.available {
@@ -207,7 +230,7 @@ fn print_comparison(ripgrep_stats: &SearchStats, ag_stats: &SearchStats) {
     // Comparison analysis
     if ripgrep_stats.available && ag_stats.available {
         println!("\n🔍 Analysis:");
-        
+
         let result_diff = (ripgrep_stats.result_count as i32) - (ag_stats.result_count as i32);
         match result_diff {
             0 => println!("  ✅ Both tools found the same number of results"),
@@ -288,8 +311,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("🔧 Tool Support:");
-    println!("  ripgrep: {}", if ripgrep_available { "✅ Fully functional" } else { "❌ Not available" });
-    println!("  ag:      {}", if ag_available { "✅ Fully functional" } else { "❌ Not available" });
+    println!(
+        "  ripgrep: {}",
+        if ripgrep_available {
+            "✅ Fully functional"
+        } else {
+            "❌ Not available"
+        }
+    );
+    println!(
+        "  ag:      {}",
+        if ag_available {
+            "✅ Fully functional"
+        } else {
+            "❌ Not available"
+        }
+    );
     println!();
 
     if ripgrep_available && ag_available {

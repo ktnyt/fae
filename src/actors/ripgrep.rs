@@ -25,7 +25,7 @@ pub fn create_ripgrep_command_factory(search_path: String) -> impl CommandFactor
 
         // Common flags for structured output
         cmd.arg("--line-number") // Show line numbers
-            .arg("--byte-offset") // Show byte offset
+            .arg("--column") // Show column numbers
             .arg("--no-heading") // Don't group by file
             .arg("--with-filename") // Always show filename
             .arg("--color=never") // No color codes
@@ -46,19 +46,19 @@ impl RipgrepHandler {
 
     /// Parse ripgrep output line into SearchResult
     fn parse_ripgrep_line(&self, line: &str) -> Option<SearchResult> {
-        // Ripgrep output format with --line-number --byte-offset --with-filename:
-        // filename:line:offset:content
+        // Ripgrep output format with --line-number --column --with-filename:
+        // filename:line:column:content
         let parts: Vec<&str> = line.splitn(4, ':').collect();
         if parts.len() >= 4 {
             let filename = parts[0].to_string();
             let line = parts[1].parse::<u32>().ok()?;
-            let offset = parts[2].parse::<u32>().ok()?;
+            let column = parts[2].parse::<u32>().ok()?;
             let content = parts[3].to_string();
 
             Some(SearchResult {
                 filename,
                 line,
-                offset,
+                offset: column, // Store column position in offset field for compatibility
                 content,
             })
         } else {
@@ -152,13 +152,13 @@ mod tests {
     fn test_parse_ripgrep_line() {
         let handler = RipgrepHandler::new();
 
-        // Test valid ripgrep output
-        let line = "src/main.rs:42:1024:fn main() {";
+        // Test valid ripgrep output with column position
+        let line = "src/main.rs:42:15:fn main() {";
         let result = handler.parse_ripgrep_line(line).unwrap();
 
         assert_eq!(result.filename, "src/main.rs");
         assert_eq!(result.line, 42);
-        assert_eq!(result.offset, 1024);
+        assert_eq!(result.offset, 15); // Now represents column position
         assert_eq!(result.content, "fn main() {");
     }
 
@@ -167,12 +167,12 @@ mod tests {
         let handler = RipgrepHandler::new();
 
         // Test ripgrep output with colons in the content
-        let line = "config.toml:10:256:server = \"localhost:8080\"";
+        let line = "config.toml:10:5:server = \"localhost:8080\"";
         let result = handler.parse_ripgrep_line(line).unwrap();
 
         assert_eq!(result.filename, "config.toml");
         assert_eq!(result.line, 10);
-        assert_eq!(result.offset, 256);
+        assert_eq!(result.offset, 5); // Column position
         assert_eq!(result.content, "server = \"localhost:8080\"");
     }
 

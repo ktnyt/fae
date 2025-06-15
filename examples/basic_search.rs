@@ -84,12 +84,15 @@ async fn demonstrate_search_actor<T>(
     }
 
     println!();
-    println!("✅ {} search completed with {} results", actor_name, result_count);
+    println!(
+        "✅ {} search completed with {} results",
+        actor_name, result_count
+    );
 
     // Clean up - this requires the actor to have a shutdown method
     // Since we can't call shutdown on a generic T, we'll just let it drop
     drop(actor);
-    
+
     println!();
 }
 
@@ -102,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let search_path = "./src";
-    let query = "CommandActor";
+    let query = "Command";
     let mode = SearchMode::Literal;
 
     // Check if tools are available
@@ -132,15 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, search_path);
 
-        demonstrate_search_actor(
-            "RipgrepActor",
-            actor,
-            actor_tx,
-            external_rx,
-            query,
-            mode,
-        )
-        .await;
+        demonstrate_search_actor("RipgrepActor", actor, actor_tx, external_rx, query, mode).await;
     } else {
         println!("⚠️  Skipping RipgrepActor demo - ripgrep not available");
         println!();
@@ -153,14 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let actor = AgActor::new_ag_actor(actor_rx, external_tx, search_path);
 
-        demonstrate_search_actor(
-            "AgActor", 
-            actor, 
-            actor_tx, 
-            external_rx, 
-            query, 
-            mode
-        ).await;
+        demonstrate_search_actor("AgActor", actor, actor_tx, external_rx, query, mode).await;
     } else {
         println!("⚠️  Skipping AgActor demo - ag not available");
         println!();

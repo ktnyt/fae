@@ -12,6 +12,6 @@ pub struct SearchParams {
 pub struct SearchResult {
     pub filename: String,
     pub line: u32,
-    pub offset: u32,
+    pub offset: u32, // Column position (1-based) within the line
     pub content: String,
 }
