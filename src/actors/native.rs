@@ -146,6 +146,15 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
                         search_params.mode
                     );
 
+                    // Clear previous results before starting new search
+                    let clear_message = Message::new(
+                        "clearResults",
+                        FaeMessage::clear_results(),
+                    );
+                    if let Err(e) = self.sender.send(clear_message) {
+                        log::debug!("Failed to send clearResults: {}", e);
+                    }
+
                     // Store the current query and mode
                     {
                         let mut current_query = self.current_query.lock().unwrap();
@@ -171,7 +180,8 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
                     );
                 }
                 SearchMessage::ClearResults => {
-                    log::info!("Clearing search results");
+                    // ClearResults is now sent automatically at the start of UpdateQuery
+                    // No action needed here
                 }
             }
         }
@@ -512,5 +522,43 @@ mod tests {
         let result = actor.clear_results().await;
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_query_auto_sends_clear_results() {
+        use crate::core::ActorController;
+        
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        
+        // Create a NativeSearchHandler directly for testing
+        let mut message_handler = NativeSearchHandler::new(tx.clone(), SearchMode::Literal);
+        
+        // Create ActorController mock for testing (NativeSearchHandler uses MessageHandler, not CommandMessageHandler)
+        let controller = ActorController::new(tx.clone());
+        
+        // Create UpdateQuery message
+        let search_params = SearchParams::new("test_query".to_string(), SearchMode::Literal);
+        let update_message = Message::new(
+            "updateQuery",
+            FaeMessage::update_search_query(search_params),
+        );
+        
+        // Send UpdateQuery message via MessageHandler
+        message_handler.on_message(update_message, &controller).await;
+        
+        // Verify that ClearResults message was sent first
+        let received = rx.recv().await.expect("Should receive ClearResults message");
+        assert_eq!(received.method, "clearResults");
+        
+        if let Some(search_msg) = received.payload.as_search() {
+            match search_msg {
+                SearchMessage::ClearResults => {
+                    // This is what we expect
+                }
+                _ => panic!("Expected ClearResults message, got: {:?}", search_msg),
+            }
+        } else {
+            panic!("Expected search message payload");
+        }
     }
 }

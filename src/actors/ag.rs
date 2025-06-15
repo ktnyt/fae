@@ -104,6 +104,11 @@ impl CommandMessageHandler<FaeMessage> for AgMessageHandler {
                         search_params.mode
                     );
 
+                    // Clear previous results before starting new search
+                    let _ = controller
+                        .send_message("clearResults".to_string(), FaeMessage::clear_results())
+                        .await;
+
                     // Store the current query and mode
                     {
                         let mut current_query = self.current_query.lock().unwrap();
@@ -128,10 +133,8 @@ impl CommandMessageHandler<FaeMessage> for AgMessageHandler {
                         .await;
                 }
                 SearchMessage::ClearResults => {
-                    log::info!("Clearing search results");
-                    let _ = controller
-                        .send_message("clearResults".to_string(), FaeMessage::clear_results())
-                        .await;
+                    // ClearResults is now sent automatically at the start of UpdateQuery
+                    // No action needed here
                 }
             }
         }
@@ -420,5 +423,56 @@ mod tests {
         assert!(cmd_debug.contains("--column"));
         assert!(cmd_debug.contains("--nogroup"));
         assert!(cmd_debug.contains("--nocolor"));
+    }
+
+    #[tokio::test]
+    async fn test_update_query_auto_sends_clear_results() {
+        use crate::core::command::{CommandController, CommandMessageHandler};
+        use crate::core::ActorController;
+        use std::sync::{Arc, Mutex};
+        use tokio_util::sync::CancellationToken;
+        
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        
+        // Create an AgMessageHandler directly for testing
+        let mut message_handler = AgMessageHandler::new(SearchMode::Literal);
+        
+        // Create CommandController mock for testing
+        let actor_controller = ActorController::new(tx.clone());
+        let current_process = Arc::new(Mutex::new(None));
+        let cancellation_token = Arc::new(Mutex::new(None::<CancellationToken>));
+        let command_factory = Arc::new(create_ag_command);
+        
+        let controller = CommandController::new(
+            actor_controller,
+            current_process,
+            cancellation_token,
+            command_factory,
+        );
+        
+        // Create UpdateQuery message
+        let search_params = SearchParams::new("test_query".to_string(), SearchMode::Literal);
+        let update_message = Message::new(
+            "updateQuery",
+            FaeMessage::update_search_query(search_params),
+        );
+        
+        // Send UpdateQuery message via CommandMessageHandler
+        CommandMessageHandler::on_message(&mut message_handler, update_message, &controller).await;
+        
+        // Verify that ClearResults message was sent first
+        let received = rx.recv().await.expect("Should receive ClearResults message");
+        assert_eq!(received.method, "clearResults");
+        
+        if let Some(search_msg) = received.payload.as_search() {
+            match search_msg {
+                SearchMessage::ClearResults => {
+                    // This is what we expect
+                }
+                _ => panic!("Expected ClearResults message, got: {:?}", search_msg),
+            }
+        } else {
+            panic!("Expected search message payload");
+        }
     }
 }
