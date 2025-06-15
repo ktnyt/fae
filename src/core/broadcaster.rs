@@ -129,7 +129,7 @@ impl<T: Clone + Send + 'static> Drop for Broadcaster<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::message::{Message, MessageHandler};
+    use crate::core::{Message, MessageHandler};
     use crate::core::Actor;
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};

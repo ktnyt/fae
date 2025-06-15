@@ -1,7 +1,5 @@
 //! Message types and handler traits for the Actor system.
 
-use async_trait::async_trait;
-
 /// A generic message in the Actor system.
 /// T represents the payload type, which can be any type that satisfies the required bounds.
 #[derive(Debug, Clone, PartialEq)]
@@ -61,26 +59,6 @@ pub mod types {
             Message::new(method, payload)
         }
     }
-}
-
-/// Trait for handling messages in the Actor system.
-///
-/// This trait is generic over the message payload type T, allowing for type-safe
-/// message handling without JSON serialization overhead.
-/// Implementors define how to process incoming messages and can send responses or
-/// additional messages using the provided ActorSender.
-#[async_trait]
-pub trait MessageHandler<T: Send + Sync + 'static>: Send + Sync + 'static {
-    /// Handle an incoming message.
-    ///
-    /// # Arguments
-    /// * `message` - The incoming message to process
-    /// * `sender` - Sender for outgoing messages (responses, forwarding, etc.)
-    async fn on_message(
-        &mut self,
-        message: Message<T>,
-        controller: &crate::core::ActorController<T>,
-    );
 }
 
 #[cfg(test)]

@@ -1,13 +1,7 @@
-//! Actor implementations for fae
-//!
-//! This module contains concrete actor implementations that extend
-//! the core actor system with specific functionality.
+//! Actor implementations for various functionalities
 
-pub mod ag;
 pub mod messages;
-pub mod native;
 pub mod ripgrep;
+pub mod types;
 
-pub use ag::AgActor;
-pub use native::NativeSearchActor;
-pub use ripgrep::RipgrepActor;
+pub use ripgrep::*;

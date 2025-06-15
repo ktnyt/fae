@@ -3,10 +3,66 @@
 //! This module contains the core Actor struct and related types for handling
 //! bidirectional notification messages in a lightweight actor system.
 
-use crate::core::message::{Message, MessageHandler};
+use crate::core::message::Message;
+use async_trait::async_trait;
 use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
+
+/// Controller for sending messages in the Actor system.
+/// This provides a concrete implementation for message sending operations.
+pub struct ActorController<T> {
+    sender: mpsc::UnboundedSender<Message<T>>,
+}
+
+impl<T: Send + Sync + 'static> ActorController<T> {
+    /// Create a new ActorController with the given sender.
+    pub fn new(sender: mpsc::UnboundedSender<Message<T>>) -> Self {
+        Self { sender }
+    }
+
+    /// Send a message to external recipients.
+    pub async fn send_message(&self, method: String, payload: T) -> Result<(), ActorSendError> {
+        let message = Message::new(method, payload);
+        self.sender
+            .send(message)
+            .map_err(|_| ActorSendError::ChannelClosed)
+    }
+}
+
+impl<T> Clone for ActorController<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+        }
+    }
+}
+
+impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Drop for Actor<T, H> {
+    fn drop(&mut self) {
+        // Perform cleanup if shutdown hasn't been called explicitly
+        if self.shutdown_sender.is_some() || self.thread_handle.is_some() {
+            log::debug!("Actor dropped without explicit shutdown, performing cleanup");
+            self.shutdown();
+        }
+    }
+}
+
+/// Trait for handling messages in the Actor system.
+///
+/// This trait is generic over the message payload type T, allowing for type-safe
+/// message handling without JSON serialization overhead.
+/// Implementors define how to process incoming messages and can send responses or
+/// additional messages using the provided ActorSender.
+#[async_trait]
+pub trait MessageHandler<T: Send + Sync + 'static>: Send + Sync + 'static {
+    /// Handle an incoming message.
+    ///
+    /// # Arguments
+    /// * `message` - The incoming message to process
+    /// * `sender` - Sender for outgoing messages (responses, forwarding, etc.)
+    async fn on_message(&mut self, message: Message<T>, controller: &ActorController<T>);
+}
 
 /// A lightweight actor that handles bidirectional notification messages.
 ///
@@ -17,8 +73,6 @@ use tokio::sync::{mpsc, oneshot};
 pub struct Actor<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> {
     /// Channel for sending messages to external recipients
     sender: mpsc::UnboundedSender<Message<T>>,
-    /// Controller for external use
-    controller: ActorController<T>,
     /// Channel for sending shutdown signal
     shutdown_sender: Option<oneshot::Sender<()>>,
     /// Handle to the message processing thread
@@ -42,13 +96,10 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let sender_clone = sender.clone();
 
-        // Create controller
-        let controller = ActorController::new(sender.clone());
-
         // Start the message processing loop in a separate thread
         let thread_handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(Self::run_message_loop(
+            rt.block_on(Self::run(
                 receiver,
                 sender_clone,
                 handler,
@@ -58,7 +109,6 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
 
         Self {
             sender,
-            controller,
             shutdown_sender: Some(shutdown_sender),
             thread_handle: Some(thread_handle),
             _phantom: PhantomData,
@@ -82,18 +132,8 @@ impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Act
         self.send(message).await
     }
 
-    /// Get a reference to the sender channel.
-    pub fn sender(&self) -> &mpsc::UnboundedSender<Message<T>> {
-        &self.sender
-    }
-
-    /// Get a reference to the controller.
-    pub fn controller(&self) -> &ActorController<T> {
-        &self.controller
-    }
-
     /// Main message processing loop.
-    async fn run_message_loop(
+    async fn run(
         mut receiver: mpsc::UnboundedReceiver<Message<T>>,
         sender: mpsc::UnboundedSender<Message<T>>,
         mut handler: H,
@@ -163,49 +203,10 @@ impl std::fmt::Display for ActorSendError {
 
 impl std::error::Error for ActorSendError {}
 
-/// Controller for sending messages in the Actor system.
-/// This provides a concrete implementation for message sending operations.
-pub struct ActorController<T> {
-    sender: mpsc::UnboundedSender<Message<T>>,
-}
-
-impl<T: Send + Sync + 'static> ActorController<T> {
-    /// Create a new ActorController with the given sender.
-    pub fn new(sender: mpsc::UnboundedSender<Message<T>>) -> Self {
-        Self { sender }
-    }
-
-    /// Send a message to external recipients.
-    pub async fn send_message(&self, method: String, payload: T) -> Result<(), ActorSendError> {
-        let message = Message::new(method, payload);
-        self.sender
-            .send(message)
-            .map_err(|_| ActorSendError::ChannelClosed)
-    }
-}
-
-impl<T> Clone for ActorController<T> {
-    fn clone(&self) -> Self {
-        Self {
-            sender: self.sender.clone(),
-        }
-    }
-}
-
-impl<T: Send + Sync + 'static, H: MessageHandler<T> + Send + Sync + 'static> Drop for Actor<T, H> {
-    fn drop(&mut self) {
-        // Perform cleanup if shutdown hasn't been called explicitly
-        if self.shutdown_sender.is_some() || self.thread_handle.is_some() {
-            log::debug!("Actor dropped without explicit shutdown, performing cleanup");
-            self.shutdown();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::message::{Message, MessageHandler};
+    use crate::core::message::Message;
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
