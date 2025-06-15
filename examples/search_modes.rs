@@ -3,12 +3,16 @@
 //! This example shows the difference between literal and regex search modes
 //! when using RipgrepActor.
 
+use fae::actors::messages::{SearchMessage, SearchMode};
 use fae::actors::RipgrepActor;
-use fae::messages::{SearchMessage, SearchMode};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
-async fn demonstrate_search_mode(mode: SearchMode, query: &str, description: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn demonstrate_search_mode(
+    mode: SearchMode,
+    query: &str,
+    description: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔍 === {} ===", description);
     println!("Mode: {:?}", mode);
     println!("Query: '{}'", query);
@@ -26,7 +30,7 @@ async fn demonstrate_search_mode(mode: SearchMode, query: &str, description: &st
         while let Some(message) = rx.recv().await {
             if let Some(search_msg) = message.payload.as_search() {
                 match search_msg {
-                        SearchMessage::PushSearchResult { result } => {
+                    SearchMessage::PushSearchResult { result } => {
                         results_count += 1;
                         println!(
                             "  📄 {}:{}:{} | {}",
@@ -35,7 +39,7 @@ async fn demonstrate_search_mode(mode: SearchMode, query: &str, description: &st
                             result.offset,
                             result.content.trim()
                         );
-                        
+
                         // Stop after receiving 5 results for demo purposes
                         if results_count >= 5 {
                             println!("  🎯 Stopping after {} results", results_count);
@@ -52,7 +56,7 @@ async fn demonstrate_search_mode(mode: SearchMode, query: &str, description: &st
     });
 
     // Execute the search
-    match actor.search(query.to_string()).await {
+    match actor.search(query.to_string(), mode).await {
         Ok(_) => {
             println!("✅ Search executed successfully");
         }
@@ -85,43 +89,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     demonstrate_search_mode(
         SearchMode::Literal,
         "fn ",
-        "Literal Search: Find exact 'fn ' strings"
-    ).await?;
+        "Literal Search: Find exact 'fn ' strings",
+    )
+    .await?;
 
     // Example 2: Regex search for pattern matching
     demonstrate_search_mode(
         SearchMode::Regexp,
         r"fn \w+\(",
-        "Regex Search: Find function definitions with names"
-    ).await?;
+        "Regex Search: Find function definitions with names",
+    )
+    .await?;
 
     // Example 3: Literal search for special characters
     demonstrate_search_mode(
         SearchMode::Literal,
         ".*",
-        "Literal Search: Find literal '.*' (not regex)"
-    ).await?;
+        "Literal Search: Find literal '.*' (not regex)",
+    )
+    .await?;
 
     // Example 4: Regex search for complex patterns
     demonstrate_search_mode(
         SearchMode::Regexp,
         r"(pub|async)\s+fn",
-        "Regex Search: Find public or async functions"
-    ).await?;
+        "Regex Search: Find public or async functions",
+    )
+    .await?;
 
     // Example 5: Literal search for brackets
     demonstrate_search_mode(
         SearchMode::Literal,
         "[",
-        "Literal Search: Find literal '[' character"
-    ).await?;
+        "Literal Search: Find literal '[' character",
+    )
+    .await?;
 
     // Example 6: Regex search for error patterns
     demonstrate_search_mode(
         SearchMode::Regexp,
         r"(Error|Result)<",
-        "Regex Search: Find Error or Result types"
-    ).await?;
+        "Regex Search: Find Error or Result types",
+    )
+    .await?;
 
     println!("\n✨ Search mode demonstration completed!");
     println!("💡 Key differences:");

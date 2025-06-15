@@ -4,7 +4,7 @@
 //! real-time code search with ripgrep integration.
 
 use fae::actors::RipgrepActor;
-use fae::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
+use fae::actors::messages::{FaeMessage, SearchMessage, SearchMode, SearchResult};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(message) = rx.recv().await {
             if let Some(search_msg) = message.payload.as_search() {
                 match search_msg {
-                        SearchMessage::PushSearchResult { result } => {
+                    SearchMessage::PushSearchResult { result } => {
                         results_count += 1;
                         println!(
                             "📄 {}:{}:{} | {}",
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Perform a regex search for Rust function definitions with patterns
     println!("🚀 Searching for 'fn \\w+.*\\{{' (Rust function patterns)...");
 
-    match actor.search(r"fn \w+.*\{".to_string()).await {
+    match actor.search(r"fn \w+.*\{".to_string(), SearchMode::Regexp).await {
         Ok(_) => {
             println!("✅ Regex search command executed successfully");
         }
