@@ -153,6 +153,16 @@ pub enum ActorSendError {
     ChannelClosed,
 }
 
+impl std::fmt::Display for ActorSendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActorSendError::ChannelClosed => write!(f, "Actor channel is closed"),
+        }
+    }
+}
+
+impl std::error::Error for ActorSendError {}
+
 /// Controller for sending messages in the Actor system.
 /// This provides a concrete implementation for message sending operations.
 pub struct ActorController<T> {
