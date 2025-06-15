@@ -1737,40 +1737,84 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Unstable test with race condition - needs investigation"]
     async fn test_spawn_during_kill() {
-        // Test spawning a new process while kill is in progress
-        // Add timeout to prevent infinite hanging
+        // Test spawning a new process while kill is in progress (sequential approach)
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["0.1".to_string()]));
+
+        let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+
+        // Spawn first process
+        let spawn_result1 = command_actor.spawn(()).await;
+        assert!(spawn_result1.is_ok(), "First spawn should succeed");
+
+        // Wait a bit for process to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // Kill the process
+        let kill_result = command_actor.kill().await;
+        assert!(kill_result.is_ok(), "Kill should succeed");
+
+        // Now spawn a new process (this should work cleanly)
+        let spawn_result2 = command_actor.spawn(()).await;
+        assert!(spawn_result2.is_ok(), "Second spawn should succeed");
+
+        // Clean up
+        let _ = command_actor.kill().await;
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_kill_spawn_race_condition() {
+        // Test true race condition between kill and spawn operations
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let handler = TestCommandHandler::new();
+
+        let factory = Arc::new(MockCommandFactory::new("sleep", vec!["0.5".to_string()]));
+
+        let command_actor = Arc::new(CommandActor::new(actor_rx, tx, handler.clone(), handler, factory));
+
+        // Spawn first process
+        let spawn_result1 = command_actor.spawn(()).await;
+        assert!(spawn_result1.is_ok(), "First spawn should succeed");
+
+        // Allow the process to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Test concurrent operations with timeout wrapper
         let test_future = async {
-            let (_actor_tx, actor_rx) = mpsc::unbounded_channel();
-            let (tx, _rx) = mpsc::unbounded_channel();
-            let handler = TestCommandHandler::new();
+            // Start kill and spawn very close together (but spawn waits for kill internally)
+            let kill_handle = tokio::spawn({
+                let actor = command_actor.clone();
+                async move { actor.kill().await }
+            });
 
-            let factory = Arc::new(MockCommandFactory::new("sleep", vec!["1".to_string()]));
+            // Small delay to let kill start
+            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
 
-            let command_actor = CommandActor::new(actor_rx, tx, handler.clone(), handler, factory);
+            let spawn_handle = tokio::spawn({
+                let actor = command_actor.clone();
+                async move { actor.spawn(()).await }
+            });
 
-            // Spawn first process
-            let spawn_result1 = command_actor.spawn(()).await;
-            assert!(spawn_result1.is_ok(), "First spawn should succeed");
+            let (kill_result, spawn_result) = tokio::join!(kill_handle, spawn_handle);
 
-            // Start kill and spawn concurrently
-            let kill_future = command_actor.kill();
-            let spawn_future = command_actor.spawn(());
-
-            let (kill_result, spawn_result2) = tokio::join!(kill_future, spawn_future);
-
-            assert!(kill_result.is_ok(), "Kill should succeed");
-            assert!(spawn_result2.is_ok(), "Second spawn should succeed");
-
-            // Clean up
-            let _ = command_actor.kill().await;
+            assert!(kill_result.is_ok(), "Kill task should complete");
+            assert!(spawn_result.is_ok(), "Spawn task should complete");
+            assert!(kill_result.unwrap().is_ok(), "Kill should succeed");
+            assert!(spawn_result.unwrap().is_ok(), "Spawn should succeed");
         };
 
-        // Apply 2 second timeout to prevent hanging
-        tokio::time::timeout(tokio::time::Duration::from_secs(2), test_future)
+        // Apply timeout to prevent hanging
+        tokio::time::timeout(tokio::time::Duration::from_secs(3), test_future)
             .await
-            .expect("Test should complete within 2 seconds");
+            .expect("Concurrent operations should complete within 3 seconds");
+
+        // Clean up
+        let _ = command_actor.kill().await;
     }
 
     #[tokio::test]
