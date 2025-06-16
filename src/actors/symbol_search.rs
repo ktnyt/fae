@@ -20,6 +20,8 @@ pub struct SymbolSearchHandler {
     fuzzy_matcher: SkimMatcherV2,
     /// Current search parameters
     current_search: Option<SearchParams>,
+    /// Whether initial indexing has been completed
+    initial_indexing_complete: bool,
 }
 
 impl Default for SymbolSearchHandler {
@@ -35,6 +37,7 @@ impl SymbolSearchHandler {
             symbol_index: HashMap::new(),
             fuzzy_matcher: SkimMatcherV2::default(),
             current_search: None,
+            initial_indexing_complete: false,
         }
     }
 
@@ -88,6 +91,16 @@ impl SymbolSearchHandler {
         let query = &search_params.query;
         if query.is_empty() {
             log::debug!("Empty query, skipping search");
+            return;
+        }
+
+        // Wait for initial indexing to complete before performing search
+        if !self.initial_indexing_complete {
+            log::info!(
+                "Initial indexing not complete, skipping search for query: '{}' (mode: {:?})",
+                query,
+                search_params.mode
+            );
             return;
         }
 
@@ -276,6 +289,20 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                     // to avoid repeated searches during bulk indexing
                 } else {
                     log::warn!("completeSymbolIndex received unexpected payload");
+                }
+            }
+            "completeInitialIndexing" => {
+                if let FaeMessage::CompleteInitialIndexing = message.payload {
+                    log::info!("Initial symbol indexing completed, enabling search functionality");
+                    self.initial_indexing_complete = true;
+                    
+                    // If there's a pending search, execute it now
+                    if let Some(ref search_params) = self.current_search.clone() {
+                        log::debug!("Executing pending search after initial indexing completion");
+                        self.perform_search(search_params, controller).await;
+                    }
+                } else {
+                    log::warn!("completeInitialIndexing received unexpected payload");
                 }
             }
             "updateSearchParams" => {
@@ -748,6 +775,111 @@ mod tests {
         assert!(
             !handler.is_symbol_allowed_for_mode(&variable_symbol, SearchMode::Filepath),
             "Filepath mode should return false"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_waiting_for_initial_indexing() {
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        let mut actor = SymbolSearchActor::new_symbol_search_actor(actor_rx, external_tx);
+
+        // Add some symbols first
+        let push_message = Message::new(
+            "pushSymbolIndex",
+            FaeMessage::PushSymbolIndex {
+                filepath: "test.rs".to_string(),
+                line: 10,
+                column: 5,
+                content: "my_function".to_string(),
+                symbol_type: SymbolType::Function,
+            },
+        );
+        actor_tx
+            .send(push_message)
+            .expect("Failed to send push message");
+
+        // Wait for symbols to be added
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Try to search BEFORE initial indexing completion - should be skipped
+        let search_message = Message::new(
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(SearchParams {
+                query: "func".to_string(),
+                mode: SearchMode::Symbol,
+            }),
+        );
+        actor_tx
+            .send(search_message)
+            .expect("Failed to send search message");
+
+        // Wait a bit - no search results should be received yet
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Check that no search results were received
+        let mut received_results_before = false;
+        while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
+            if let Some(msg) = message {
+                if msg.method == "pushSearchResult" {
+                    received_results_before = true;
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        assert!(
+            !received_results_before,
+            "Should not receive search results before initial indexing completion"
+        );
+
+        // Now send initial indexing completion
+        let complete_initial_message = Message::new(
+            "completeInitialIndexing",
+            FaeMessage::CompleteInitialIndexing,
+        );
+        actor_tx
+            .send(complete_initial_message)
+            .expect("Failed to send complete initial indexing message");
+
+        // Wait for search to be executed
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Check that search results are now received
+        let mut received_results_after = false;
+        while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
+            if let Some(msg) = message {
+                if msg.method == "pushSearchResult" {
+                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                        if result.content.contains("my_function") {
+                            received_results_after = true;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        assert!(
+            received_results_after,
+            "Should receive search results after initial indexing completion"
+        );
+
+        // Clean up
+        actor.shutdown();
+    }
+
+    #[test]
+    fn test_initial_indexing_complete_flag() {
+        let handler = SymbolSearchHandler::new();
+        assert!(
+            !handler.initial_indexing_complete,
+            "Initial indexing should not be complete at creation"
         );
     }
 }

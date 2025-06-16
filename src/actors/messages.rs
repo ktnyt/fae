@@ -17,6 +17,7 @@ pub enum FaeMessage {
         symbol_type: SymbolType,
     },
     CompleteSymbolIndex(String), // filepath
+    CompleteInitialIndexing,     // Indicates all initial symbol indexing is complete
 
     // File change detection messages
     DetectFileCreate(String), // filepath

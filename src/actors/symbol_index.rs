@@ -149,18 +149,18 @@ impl SymbolIndexHandler {
                     continue;
                 }
                 None => {
-                    // Queue is empty - send CompleteSymbolIndex notification
+                    // Queue is empty - send CompleteInitialIndexing notification
                     log::info!(
-                        "Operation queue is empty, sending CompleteSymbolIndex notification"
+                        "Operation queue is empty, sending CompleteInitialIndexing notification"
                     );
                     if let Err(e) = controller
                         .send_message(
-                            "completeSymbolIndex".to_string(),
-                            FaeMessage::CompleteSymbolIndex("all_files".to_string()),
+                            "completeInitialIndexing".to_string(),
+                            FaeMessage::CompleteInitialIndexing,
                         )
                         .await
                     {
-                        log::warn!("Failed to send CompleteSymbolIndex message: {}", e);
+                        log::warn!("Failed to send CompleteInitialIndexing message: {}", e);
                     }
                     break;
                 }
