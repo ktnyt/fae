@@ -1,0 +1,305 @@
+//! Symbol extraction using tree-sitter
+//!
+//! This module provides functionality to extract symbols (functions, structs, etc.)
+//! from source code files using tree-sitter AST parsing.
+
+use crate::actors::types::{Symbol, SymbolType};
+use std::path::Path;
+use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
+
+/// Language-specific symbol extraction configuration
+pub struct LanguageConfig {
+    pub language: Language,
+    pub query: Query,
+}
+
+/// Symbol extractor using tree-sitter
+pub struct SymbolExtractor {
+    parser: Parser,
+    rust_config: Option<LanguageConfig>,
+}
+
+impl SymbolExtractor {
+    /// Create a new SymbolExtractor
+    pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let mut parser = Parser::new();
+
+        // Initialize Rust language support
+        let rust_config = Self::create_rust_config()?;
+
+        Ok(Self {
+            parser,
+            rust_config: Some(rust_config),
+        })
+    }
+
+    /// Create Rust language configuration with queries
+    fn create_rust_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
+        let language = tree_sitter_rust::language();
+
+        // Tree-sitter query for Rust symbols
+        let query_source = r#"
+        ; Functions
+        (function_item
+          name: (identifier) @function.name) @function.definition
+        
+        ; Structs
+        (struct_item
+          name: (type_identifier) @struct.name) @struct.definition
+        
+        ; Enums
+        (enum_item
+          name: (type_identifier) @enum.name) @enum.definition
+        
+        ; Impl blocks (methods)
+        (impl_item
+          type: (type_identifier) @impl.type
+          body: (declaration_list
+            (function_item
+              name: (identifier) @method.name) @method.definition))
+        
+        ; Constants
+        (const_item
+          name: (identifier) @constant.name) @constant.definition
+        
+        ; Static variables
+        (static_item
+          name: (identifier) @static.name) @static.definition
+        
+        ; Type aliases
+        (type_item
+          name: (type_identifier) @type.name) @type.definition
+        
+        ; Modules
+        (mod_item
+          name: (identifier) @module.name) @module.definition
+        "#;
+
+        let query = Query::new(&language, query_source)
+            .map_err(|e| format!("Failed to parse Rust query: {}", e))?;
+
+        Ok(LanguageConfig { language, query })
+    }
+
+    /// Extract symbols from a file
+    pub fn extract_symbols_from_file(
+        &mut self,
+        file_path: &Path,
+    ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
+        // Read file content
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?;
+
+        self.extract_symbols_from_content(&content, file_path.to_string_lossy().to_string())
+    }
+
+    /// Extract symbols from source code content
+    pub fn extract_symbols_from_content(
+        &mut self,
+        content: &str,
+        filepath: String,
+    ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
+        // Determine language based on file extension
+        let language_config = if filepath.ends_with(".rs") {
+            self.rust_config.as_ref()
+        } else {
+            return Ok(Vec::new()); // Unsupported language
+        };
+
+        let config = match language_config {
+            Some(config) => config,
+            None => return Ok(Vec::new()),
+        };
+
+        // Set parser language
+        self.parser
+            .set_language(&config.language)
+            .map_err(|e| format!("Failed to set parser language: {}", e))?;
+
+        // Parse the content
+        let tree = self
+            .parser
+            .parse(content, None)
+            .ok_or("Failed to parse source code")?;
+
+        // Extract symbols using queries
+        self.extract_symbols_with_query(content, &filepath, &tree, &config.query)
+    }
+
+    /// Extract symbols using tree-sitter queries
+    fn extract_symbols_with_query(
+        &self,
+        content: &str,
+        filepath: &str,
+        tree: &Tree,
+        query: &Query,
+    ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut symbols = Vec::new();
+        let mut cursor = QueryCursor::new();
+
+        // Split content into lines for line number calculation
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Execute query
+        let matches = cursor.matches(query, tree.root_node(), content.as_bytes());
+
+        for query_match in matches {
+            for capture in query_match.captures {
+                let node = capture.node;
+                let capture_name = query.capture_names()[capture.index as usize];
+
+                // Get position information
+                let start_position = node.start_position();
+                let line = start_position.row as u32 + 1; // 1-indexed
+                let column = start_position.column as u32;
+
+                // Get symbol content
+                let symbol_text = node
+                    .utf8_text(content.as_bytes())
+                    .unwrap_or("<unknown>")
+                    .to_string();
+
+                // Determine symbol type based on capture name
+                let symbol_type = match capture_name {
+                    "function.name" => SymbolType::Function,
+                    "struct.name" => SymbolType::Struct,
+                    "enum.name" => SymbolType::Enum,
+                    "method.name" => SymbolType::Method,
+                    "constant.name" => SymbolType::Constant,
+                    "static.name" => SymbolType::Variable,
+                    "type.name" => SymbolType::Type,
+                    "module.name" => SymbolType::Module,
+                    _ => continue, // Skip unknown captures
+                };
+
+                // Create symbol with context information
+                let symbol_content =
+                    self.create_symbol_content(&symbol_text, &lines, line as usize);
+
+                let symbol = Symbol::new(
+                    filepath.to_string(),
+                    line,
+                    column,
+                    symbol_content,
+                    symbol_type,
+                );
+
+                symbols.push(symbol);
+            }
+        }
+
+        Ok(symbols)
+    }
+
+    /// Create symbol content with surrounding context
+    fn create_symbol_content(
+        &self,
+        symbol_name: &str,
+        lines: &[&str],
+        line_index: usize,
+    ) -> String {
+        // Get the line content (0-indexed for array access)
+        let line_content = if line_index > 0 && line_index <= lines.len() {
+            lines[line_index - 1].trim()
+        } else {
+            symbol_name
+        };
+
+        // Return the line content or just the symbol name if line is empty
+        if line_content.is_empty() {
+            symbol_name.to_string()
+        } else {
+            line_content.to_string()
+        }
+    }
+}
+
+impl Default for SymbolExtractor {
+    fn default() -> Self {
+        Self::new().expect("Failed to create default SymbolExtractor")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_symbol_extractor_creation() {
+        let extractor = SymbolExtractor::new();
+        assert!(extractor.is_ok());
+    }
+
+    #[test]
+    fn test_rust_symbol_extraction() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let rust_code = r#"
+pub fn hello_world() {
+    println!("Hello, world!");
+}
+
+pub struct User {
+    name: String,
+    age: u32,
+}
+
+pub enum Status {
+    Active,
+    Inactive,
+}
+
+const MAX_SIZE: usize = 100;
+
+impl User {
+    pub fn new(name: String, age: u32) -> Self {
+        Self { name, age }
+    }
+}
+"#;
+
+        let symbols = extractor
+            .extract_symbols_from_content(rust_code, "test.rs".to_string())
+            .expect("Failed to extract symbols");
+
+        assert!(!symbols.is_empty(), "Should extract some symbols");
+
+        // Check that we found the expected symbols
+        let symbol_names: Vec<String> = symbols.iter().map(|s| s.content.clone()).collect();
+
+        println!("Extracted symbols: {:?}", symbol_names);
+
+        // We should find function, struct, enum, and constant symbols
+        let has_function = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Function);
+        let has_struct = symbols.iter().any(|s| s.symbol_type == SymbolType::Struct);
+        let has_enum = symbols.iter().any(|s| s.symbol_type == SymbolType::Enum);
+
+        assert!(has_function, "Should find function symbols");
+        assert!(has_struct, "Should find struct symbols");
+        assert!(has_enum, "Should find enum symbols");
+    }
+
+    #[test]
+    fn test_unsupported_language() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let python_code = r#"
+def hello():
+    print("Hello")
+
+class MyClass:
+    pass
+"#;
+
+        let symbols = extractor
+            .extract_symbols_from_content(python_code, "test.py".to_string())
+            .expect("Should succeed even for unsupported languages");
+
+        assert!(
+            symbols.is_empty(),
+            "Should return empty for unsupported languages"
+        );
+    }
+}

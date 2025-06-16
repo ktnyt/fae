@@ -12,6 +12,8 @@ log = "0.4"
 regex = "1.10"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
+tree-sitter = "0.22"  # AST解析
+tree-sitter-rust = "0.21"  # Rust言語サポート
 walkdir = "2.4"
 
 [dev-dependencies]
