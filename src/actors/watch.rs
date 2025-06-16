@@ -303,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn test_watch_actor_creation() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let (actor_tx, actor_rx) = tokio_mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (_actor_tx, actor_rx) = tokio_mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, _external_rx) = tokio_mpsc::unbounded_channel::<Message<FaeMessage>>();
 
         let result = WatchActor::new_watch_actor(actor_rx, external_tx, temp_dir.path());

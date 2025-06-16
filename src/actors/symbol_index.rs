@@ -18,7 +18,6 @@ use tokio::task::AbortHandle;
 /// Symbol index generation handler that extracts and broadcasts symbols
 pub struct SymbolIndexHandler {
     search_path: String,
-    symbol_extractor: SymbolExtractor,
     /// Track files currently being processed to handle race conditions
     processing_files: Arc<Mutex<HashSet<String>>>,
     /// Track ongoing processing tasks for potential cancellation
@@ -28,11 +27,8 @@ pub struct SymbolIndexHandler {
 impl SymbolIndexHandler {
     /// Create a new SymbolIndexHandler
     pub fn new(search_path: String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let symbol_extractor = SymbolExtractor::new()?;
-
         Ok(Self {
             search_path,
-            symbol_extractor,
             processing_files: Arc::new(Mutex::new(HashSet::new())),
             processing_tasks: Arc::new(Mutex::new(Vec::new())),
         })
@@ -435,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_symbol_index_actor_creation() {
-        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (_actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, _external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
         let result = SymbolIndexActor::new_symbol_index_actor(actor_rx, external_tx, "./src");

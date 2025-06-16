@@ -22,7 +22,7 @@ pub struct SymbolExtractor {
 impl SymbolExtractor {
     /// Create a new SymbolExtractor
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let mut parser = Parser::new();
+        let parser = Parser::new();
 
         // Initialize Rust language support
         let rust_config = Self::create_rust_config()?;

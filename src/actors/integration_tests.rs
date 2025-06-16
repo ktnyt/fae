@@ -667,7 +667,7 @@ pub fn init_race_function2() {
             .expect("Failed to create file2");
         
         // Start initialization and immediately update files
-        tokio::join!(
+        let _ = tokio::join!(
             harness.start(), // This triggers initialization
             async {
                 // Small delay then update files during initialization
