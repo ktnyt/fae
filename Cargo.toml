@@ -6,9 +6,11 @@ edition = "2021"
 [dependencies]
 # Core dependencies actually used
 async-trait = "0.1"
+dirs = "5.0"          # ホームディレクトリ検索
 fuzzy-matcher = "0.3"  # ファジー検索
 ignore = "0.4"        # .gitignore対応
 log = "0.4"
+notify = "6.1"        # ファイルシステム監視
 regex = "1.10"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
@@ -19,6 +21,7 @@ walkdir = "2.4"
 [dev-dependencies]
 # For tests and examples only
 env_logger = "0.10"
+tempfile = "3.8"      # 一時ディレクトリ/ファイル作成
 
 [[example]]
 name = "search_comparison"
