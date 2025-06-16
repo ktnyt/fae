@@ -1,24 +1,21 @@
-//! Symbol index actor for maintaining symbol database
+//! Symbol index generation actor
 //!
-//! This actor manages a symbol index for the entire codebase, tracking symbols
-//! across all supported source files and maintaining the index as files change.
+//! This actor is responsible for generating symbol index data by extracting symbols
+//! from source files and broadcasting them as messages. It does not maintain any
+//! internal index state - that responsibility belongs to SymbolSearchActor.
 
 use crate::actors::messages::FaeMessage;
 use crate::actors::symbol_extractor::SymbolExtractor;
-use crate::actors::types::Symbol;
 use crate::core::{Actor, ActorController, Message, MessageHandler};
 use async_trait::async_trait;
 use ignore::WalkBuilder;
-use std::collections::HashMap;
 use std::path::Path;
 use tokio::sync::mpsc;
 
-/// Symbol index handler that manages the symbol database
+/// Symbol index generation handler that extracts and broadcasts symbols
 pub struct SymbolIndexHandler {
     search_path: String,
     symbol_extractor: SymbolExtractor,
-    /// In-memory symbol index: filepath -> symbols
-    symbol_index: HashMap<String, Vec<Symbol>>,
 }
 
 impl SymbolIndexHandler {
@@ -29,13 +26,12 @@ impl SymbolIndexHandler {
         Ok(Self {
             search_path,
             symbol_extractor,
-            symbol_index: HashMap::new(),
         })
     }
 
-    /// Initialize symbol index by scanning all supported files
+    /// Initialize symbol generation by scanning all supported files
     async fn initialize_index(&mut self, controller: &ActorController<FaeMessage>) {
-        log::info!("Initializing symbol index for path: {}", self.search_path);
+        log::info!("Starting symbol generation for path: {}", self.search_path);
 
         let search_path = self.search_path.clone();
         let controller_clone = controller.clone();
@@ -49,20 +45,20 @@ impl SymbolIndexHandler {
         match result {
             Ok(Ok(file_count)) => {
                 log::info!(
-                    "Symbol index initialization completed: {} files processed",
+                    "Symbol generation completed: {} files processed",
                     file_count
                 );
             }
             Ok(Err(e)) => {
-                log::error!("Symbol index initialization failed: {}", e);
+                log::error!("Symbol generation failed: {}", e);
             }
             Err(e) => {
-                log::error!("Symbol index initialization task panicked: {}", e);
+                log::error!("Symbol generation task panicked: {}", e);
             }
         }
     }
 
-    /// Scan directory and index all supported files
+    /// Scan directory and broadcast symbols from all supported files
     fn scan_and_index_files(
         search_path: &str,
         controller: ActorController<FaeMessage>,
@@ -109,7 +105,7 @@ impl SymbolIndexHandler {
             // Extract symbols from the file
             match extractor.extract_symbols_from_file(path) {
                 Ok(symbols) => {
-                    // Send each symbol to the index
+                    // Broadcast each symbol
                     for symbol in symbols {
                         let push_message = FaeMessage::PushSymbolIndex {
                             filepath: symbol.filepath.clone(),
@@ -177,7 +173,7 @@ impl SymbolIndexHandler {
             Ok(symbols) => {
                 log::debug!("Extracted {} symbols from {}", symbols.len(), filepath);
 
-                // Send each symbol to the index
+                // Broadcast each symbol
                 for symbol in symbols {
                     let push_message = FaeMessage::PushSymbolIndex {
                         filepath: symbol.filepath.clone(),
@@ -215,28 +211,6 @@ impl SymbolIndexHandler {
             .await;
     }
 
-    /// Update internal symbol index
-    fn update_symbol_index(&mut self, filepath: &str, symbol: Symbol) {
-        self.symbol_index
-            .entry(filepath.to_string())
-            .or_insert_with(Vec::new)
-            .push(symbol);
-    }
-
-    /// Clear symbols for a specific file
-    fn clear_file_symbols(&mut self, filepath: &str) {
-        self.symbol_index.remove(filepath);
-    }
-
-    /// Get total symbol count across all files
-    pub fn total_symbol_count(&self) -> usize {
-        self.symbol_index.values().map(|v| v.len()).sum()
-    }
-
-    /// Get file count in index
-    pub fn indexed_file_count(&self) -> usize {
-        self.symbol_index.len()
-    }
 }
 
 #[async_trait]
@@ -248,7 +222,7 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
     ) {
         match message.method.as_str() {
             "initialize" => {
-                log::info!("Initializing symbol index");
+                log::info!("Starting symbol generation");
                 self.initialize_index(controller).await;
             }
             "detectFileCreate" | "detectFileUpdate" => {
@@ -267,35 +241,6 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
                     log::warn!("detectFileDelete received non-filepath payload");
                 }
             }
-            "clearSymbolIndex" => {
-                if let FaeMessage::ClearSymbolIndex(filepath) = message.payload {
-                    log::debug!("Clearing symbol index for: {}", filepath);
-                    self.clear_file_symbols(&filepath);
-                } else {
-                    log::warn!("clearSymbolIndex received non-filepath payload");
-                }
-            }
-            "pushSymbolIndex" => {
-                if let FaeMessage::PushSymbolIndex {
-                    filepath,
-                    line,
-                    column,
-                    content,
-                    symbol_type,
-                } = message.payload
-                {
-                    let symbol = Symbol::new(filepath.clone(), line, column, content, symbol_type);
-                    log::debug!(
-                        "Adding symbol to index: {} ({}:{})",
-                        symbol.content,
-                        filepath,
-                        line
-                    );
-                    self.update_symbol_index(&filepath, symbol);
-                } else {
-                    log::warn!("pushSymbolIndex received non-symbol payload");
-                }
-            }
             _ => {
                 log::debug!("Unknown message method: {}", message.method);
             }
@@ -303,11 +248,11 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
     }
 }
 
-/// Symbol index actor for managing symbol database
+/// Symbol index generation actor that extracts and broadcasts symbols
 pub type SymbolIndexActor = Actor<FaeMessage, SymbolIndexHandler>;
 
 impl SymbolIndexActor {
-    /// Create a new SymbolIndexActor
+    /// Create a new SymbolIndexActor for symbol generation
     pub fn new_symbol_index_actor(
         message_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         sender: mpsc::UnboundedSender<Message<FaeMessage>>,
