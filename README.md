@@ -32,6 +32,27 @@ Lightweight and magical code discovery tool with real-time search capabilities
 
 ## Installation
 
+### Quick Development Setup (Recommended)
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/ktnyt/fae.git
+cd fae
+
+# 2. Install mise (if not already installed)
+# macOS: brew install mise
+# Other: https://mise.jdx.dev/getting-started.html
+
+# 3. Set up complete development environment
+mise install    # Installs Rust + cargo tools
+mise run setup  # Builds project + runs tests
+
+# 4. Start development workflow (optional)
+mise run dev    # Starts file watching with auto-format + coverage
+```
+
+### Manual Installation
+
 ```bash
 # Development installation with Rust
 git clone https://github.com/ktnyt/fae.git
@@ -45,9 +66,16 @@ cargo install --path .
 ### CLI Commands (All Features Implemented)
 
 ```bash
-# Build and test
-cargo build --release
-cargo test
+# Development commands (with mise)
+mise run setup      # Complete environment setup
+mise run dev        # Start file watching workflow  
+mise run test       # Run tests with coverage
+mise run clean      # Clean build artifacts
+
+# Or use make directly
+make help           # Show all available commands
+make watch-dev      # Watch files + auto-format + coverage
+make test-coverage  # Generate coverage report
 
 # Basic usage
 fae "search_query"           # Content search (default)
