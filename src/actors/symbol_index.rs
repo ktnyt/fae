@@ -152,6 +152,16 @@ impl SymbolIndexHandler {
                         }
                     }
                     file_count += 1;
+                    
+                    // Send completion notification for this file
+                    let complete_message = FaeMessage::CompleteSymbolIndex(file_path_str.clone());
+                    if let Err(e) = tokio::runtime::Handle::current().block_on(async {
+                        controller
+                            .send_message("completeSymbolIndex".to_string(), complete_message)
+                            .await
+                    }) {
+                        log::warn!("Failed to send completeSymbolIndex message: {}", e);
+                    }
                 }
                 Err(e) => {
                     log::warn!("Failed to extract symbols from {}: {}", file_path_str, e);
@@ -299,6 +309,14 @@ impl SymbolIndexHandler {
                 }
 
                 log::debug!("Successfully processed symbols for {}", filepath);
+                
+                // Send completion notification
+                let complete_message = FaeMessage::CompleteSymbolIndex(filepath.to_string());
+                if let Err(e) = controller
+                    .send_message("completeSymbolIndex".to_string(), complete_message)
+                    .await {
+                    log::warn!("Failed to send completeSymbolIndex message: {}", e);
+                }
             }
             Err(e) => {
                 log::warn!("Failed to extract symbols from {}: {}", filepath, e);
@@ -351,6 +369,12 @@ impl SymbolIndexHandler {
                 "clearSymbolIndex".to_string(),
                 FaeMessage::ClearSymbolIndex(filepath.to_string()),
             )
+            .await;
+        
+        // Send completion notification for deletion
+        let complete_message = FaeMessage::CompleteSymbolIndex(filepath.to_string());
+        let _ = controller
+            .send_message("completeSymbolIndex".to_string(), complete_message)
             .await;
     }
 
@@ -462,12 +486,14 @@ mod tests {
         // Check that we received symbol index messages
         let mut clear_count = 0;
         let mut push_count = 0;
+        let mut complete_count = 0;
 
         while let Ok(message) = timeout(Duration::from_millis(100), external_rx.recv()).await {
             if let Some(msg) = message {
                 match msg.method.as_str() {
                     "clearSymbolIndex" => clear_count += 1,
                     "pushSymbolIndex" => push_count += 1,
+                    "completeSymbolIndex" => complete_count += 1,
                     _ => {}
                 }
             } else {
@@ -476,13 +502,14 @@ mod tests {
         }
 
         println!(
-            "Initialization results: {} clear, {} push messages",
-            clear_count, push_count
+            "Initialization results: {} clear, {} push, {} complete messages",
+            clear_count, push_count, complete_count
         );
 
         // Should have processed some Rust files in src/
         assert!(clear_count > 0, "Should have cleared some file indices");
         assert!(push_count > 0, "Should have pushed some symbols");
+        assert!(complete_count > 0, "Should have completed indexing for some files");
 
         // Clean up
         actor.shutdown();
@@ -511,6 +538,7 @@ mod tests {
         // Check that we received symbol index messages
         let mut received_clear = false;
         let mut received_push = false;
+        let mut received_complete = false;
 
         while let Ok(message) = timeout(Duration::from_millis(100), external_rx.recv()).await {
             if let Some(msg) = message {
@@ -529,6 +557,13 @@ mod tests {
                             }
                         }
                     }
+                    "completeSymbolIndex" => {
+                        if let FaeMessage::CompleteSymbolIndex(filepath) = msg.payload {
+                            if filepath.contains("types.rs") {
+                                received_complete = true;
+                            }
+                        }
+                    }
                     _ => {}
                 }
             } else {
@@ -543,6 +578,10 @@ mod tests {
         assert!(
             received_push,
             "Should have received pushSymbolIndex for types.rs"
+        );
+        assert!(
+            received_complete,
+            "Should have received completeSymbolIndex for types.rs"
         );
 
         // Clean up

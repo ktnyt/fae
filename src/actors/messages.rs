@@ -15,6 +15,7 @@ pub enum FaeMessage {
         content: String,
         symbol_type: SymbolType,
     },
+    CompleteSymbolIndex(String), // filepath
 
     // File change detection messages
     DetectFileCreate(String), // filepath

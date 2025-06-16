@@ -178,6 +178,7 @@ impl User {
         let mut detect_create_count = 0;
         let mut clear_index_count = 0;
         let mut push_index_count = 0;
+        let mut complete_index_count = 0;
         
         for message in &messages {
             match &message.payload {
@@ -197,6 +198,12 @@ impl User {
                         println!("Symbol indexed: {}", content);
                     }
                 }
+                FaeMessage::CompleteSymbolIndex(path) => {
+                    if path.contains("test.rs") {
+                        complete_index_count += 1;
+                        println!("Index completed for: {}", path);
+                    }
+                }
                 _ => {}
             }
         }
@@ -205,12 +212,15 @@ impl User {
         println!("  DetectFileCreate events: {}", detect_create_count);
         println!("  ClearSymbolIndex events: {}", clear_index_count);
         println!("  PushSymbolIndex events: {}", push_index_count);
+        println!("  CompleteSymbolIndex events: {}", complete_index_count);
         
         // Verify the integration worked
         assert!(detect_create_count > 0 || clear_index_count > 0, 
                "Should detect file creation or have initial indexing");
         assert!(push_index_count > 0, 
                "Should index symbols from the created file");
+        assert!(complete_index_count > 0, 
+               "Should complete indexing for the created file");
         
         harness.shutdown();
     }
@@ -584,6 +594,7 @@ pub struct RaceTestStruct{} {{
         let mut update_events = 0;
         let mut clear_events = 0;
         let mut push_events = 0;
+        let mut complete_events = 0;
         let mut processed_versions = std::collections::HashSet::new();
         
         for message in &messages {
@@ -613,6 +624,11 @@ pub struct RaceTestStruct{} {{
                         }
                     }
                 }
+                FaeMessage::CompleteSymbolIndex(path) => {
+                    if path.contains("race_test.rs") {
+                        complete_events += 1;
+                    }
+                }
                 _ => {}
             }
         }
@@ -621,6 +637,7 @@ pub struct RaceTestStruct{} {{
         println!("  File update events: {}", update_events);
         println!("  Clear symbol events: {}", clear_events);
         println!("  Push symbol events: {}", push_events);
+        println!("  Complete events: {}", complete_events);
         println!("  Processed versions: {:?}", processed_versions);
         
         // Verify race condition handling
