@@ -1,5 +1,6 @@
 use crate::actors::types::{SearchParams, SearchResult, SymbolType};
 
+#[derive(Clone)]
 pub enum FaeMessage {
     UpdateSearchParams(SearchParams),
     ClearResults,
@@ -19,4 +20,10 @@ pub enum FaeMessage {
     DetectFileCreate(String), // filepath
     DetectFileUpdate(String), // filepath
     DetectFileDelete(String), // filepath
+
+    // Symbol query messages (for testing)
+    QuerySymbols {
+        pattern: String,
+        limit: Option<u32>,
+    },
 }

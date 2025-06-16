@@ -10,6 +10,9 @@ pub mod symbol_index;
 pub mod types;
 pub mod watch;
 
+#[cfg(test)]
+pub mod integration_tests;
+
 pub use ag::{create_ag_command_factory, AgActor, AgHandler};
 pub use filepath::{FilepathSearchActor, FilepathSearchHandler};
 pub use native::{NativeSearchActor, NativeSearchHandler};

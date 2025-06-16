@@ -6,11 +6,13 @@ pub enum SearchMode {
     Symbol,   // Symbol/function name search mode
 }
 
+#[derive(Clone)]
 pub struct SearchParams {
     pub query: String,
     pub mode: SearchMode,
 }
 
+#[derive(Clone)]
 pub struct SearchResult {
     pub filename: String,
     pub line: u32,
