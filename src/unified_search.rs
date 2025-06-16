@@ -315,30 +315,36 @@ impl UnifiedSearchSystem {
                             }
                         }
                         "completeSymbolIndex" => {
-                            // Forward completion message
+                            // Forward completion message for individual files
                             if let Err(e) = self.shared_sender.send(message.clone()) {
                                 log::warn!(
                                     "Failed to forward complete symbol index message: {}",
                                     e
                                 );
                             }
+                        }
+                        "completeInitialIndexing" => {
+                            // Forward initial indexing completion message
+                            if let Err(e) = self.shared_sender.send(message.clone()) {
+                                log::warn!(
+                                    "Failed to forward initial indexing completion message: {}",
+                                    e
+                                );
+                            }
 
-                            // Check if this is the final completion (all files processed)
-                            if let FaeMessage::CompleteSymbolIndex(ref filepath) = message.payload {
-                                if filepath == "all_files" && self.pending_search_params.is_some() {
-                                    // This is the signal that all files have been processed
-                                    if let Some(search_params) = self.pending_search_params.take() {
-                                        log::info!("Sending delayed search parameters after all symbol indexing completion");
-                                        let search_message = Message::new(
-                                            "updateSearchParams",
-                                            FaeMessage::UpdateSearchParams(search_params),
+                            // Send delayed search parameters after initial indexing completion
+                            if self.pending_search_params.is_some() {
+                                if let Some(search_params) = self.pending_search_params.take() {
+                                    log::info!("Sending delayed search parameters after initial indexing completion");
+                                    let search_message = Message::new(
+                                        "updateSearchParams",
+                                        FaeMessage::UpdateSearchParams(search_params),
+                                    );
+                                    if let Err(e) = self.shared_sender.send(search_message) {
+                                        log::error!(
+                                            "Failed to send delayed search parameters: {}",
+                                            e
                                         );
-                                        if let Err(e) = self.shared_sender.send(search_message) {
-                                            log::error!(
-                                                "Failed to send delayed search parameters: {}",
-                                                e
-                                            );
-                                        }
                                     }
                                 }
                             }
