@@ -157,6 +157,17 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
     ) {
         log::warn!("Ripgrep stderr: {}", line);
     }
+
+    async fn on_process_completed(
+        &mut self,
+        controller: &CommandController<FaeMessage, SearchParams>,
+    ) {
+        log::info!("Ripgrep process completed");
+        // Send completion notification
+        let _ = controller
+            .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+            .await;
+    }
 }
 
 /// Ripgrep actor for text search

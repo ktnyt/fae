@@ -33,6 +33,9 @@ pub trait CommandHandler<T: Send + Sync + 'static, Args: Send + 'static>:
 
     /// Handle stderr output from spawned commands
     async fn on_stderr(&mut self, line: String, controller: &CommandController<T, Args>);
+
+    /// Handle process completion notification
+    async fn on_process_completed(&mut self, controller: &CommandController<T, Args>);
 }
 
 /// A running process with cancellation support
@@ -44,6 +47,7 @@ pub struct RunningProcess {
 pub enum CommandOutput {
     Stdout(String),
     Stderr(String),
+    ProcessCompleted,
 }
 
 /// Controller for managing commands within a CommandActor
@@ -97,6 +101,14 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
         let output_sender_stderr = self.output_sender.clone();
         let token_stdout = cancellation_token.clone();
         let token_stderr = cancellation_token.clone();
+        
+        // Create completion notification sender
+        let completion_output_sender = self.output_sender.clone();
+
+        // Spawn task to monitor both stdout and stderr completion
+        let completion_token = cancellation_token.clone();
+        let (stdout_completion_tx, mut stdout_completion_rx) = mpsc::unbounded_channel();
+        let (stderr_completion_tx, mut stderr_completion_rx) = mpsc::unbounded_channel();
 
         // Spawn stdout reading task
         tokio::spawn(async move {
@@ -118,10 +130,14 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
                             }
                             Ok(None) => {
                                 log::debug!("EOF reached on stdout");
+                                // Notify stdout completion
+                                let _ = stdout_completion_tx.send(());
                                 break;
                             }
                             Err(e) => {
                                 log::error!("Error reading stdout: {}", e);
+                                // Notify stdout completion on error
+                                let _ = stdout_completion_tx.send(());
                                 break;
                             }
                         }
@@ -150,14 +166,51 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
                             }
                             Ok(None) => {
                                 log::debug!("EOF reached on stderr");
+                                // Notify stderr completion
+                                let _ = stderr_completion_tx.send(());
                                 break;
                             }
                             Err(e) => {
                                 log::error!("Error reading stderr: {}", e);
+                                // Notify stderr completion on error
+                                let _ = stderr_completion_tx.send(());
                                 break;
                             }
                         }
                     }
+                }
+            }
+        });
+
+        // Spawn completion monitoring task
+        tokio::spawn(async move {
+            let mut stdout_done = false;
+            let mut stderr_done = false;
+            
+            loop {
+                tokio::select! {
+                    _ = completion_token.cancelled() => {
+                        log::debug!("Process completion monitoring cancelled");
+                        break;
+                    }
+                    _ = stdout_completion_rx.recv() => {
+                        stdout_done = true;
+                        log::debug!("Stdout processing completed");
+                    }
+                    _ = stderr_completion_rx.recv() => {
+                        stderr_done = true;
+                        log::debug!("Stderr processing completed");
+                    }
+                }
+                
+                // When both stdout and stderr are done, send processCompleted
+                if stdout_done && stderr_done {
+                    log::info!("Process completed (both stdout and stderr finished)");
+                    // Send process completion notification through output channel
+                    if let Err(e) = completion_output_sender.send(CommandOutput::ProcessCompleted) {
+                        log::error!("Failed to send ProcessCompleted message: {}", e);
+                    }
+                    break;
                 }
             }
         });
@@ -285,6 +338,10 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandActor<T, Args> {
                         }
                         Some(CommandOutput::Stderr(line)) => {
                             handler.on_stderr(line, &controller).await;
+                        }
+                        Some(CommandOutput::ProcessCompleted) => {
+                            log::debug!("Processing command completion notification");
+                            handler.on_process_completed(&controller).await;
                         }
                         None => {
                             log::debug!("Output receiver channel closed");
@@ -508,6 +565,10 @@ mod tests {
         async fn on_stderr(&mut self, line: String, _controller: &CommandController<String, ()>) {
             self.stderr_lines.lock().unwrap().push(line);
         }
+
+        async fn on_process_completed(&mut self, _controller: &CommandController<String, ()>) {
+            // Test handler doesn't need to do anything special on process completion
+        }
     }
 
     fn create_simple_command(_args: ()) -> Command {
@@ -620,6 +681,10 @@ mod tests {
 
         async fn on_stderr(&mut self, line: String, _controller: &CommandController<String, ()>) {
             self.stderr_lines.lock().unwrap().push(line);
+        }
+
+        async fn on_process_completed(&mut self, _controller: &CommandController<String, ()>) {
+            // Test handler doesn't need to do anything special on process completion
         }
     }
 
@@ -810,6 +875,7 @@ mod tests {
 
         async fn on_stdout(&mut self, _line: String, _controller: &CommandController<String, ()>) {}
         async fn on_stderr(&mut self, _line: String, _controller: &CommandController<String, ()>) {}
+        async fn on_process_completed(&mut self, _controller: &CommandController<String, ()>) {}
     }
 
     #[tokio::test]
@@ -1022,6 +1088,10 @@ mod tests {
                     println!("Stderr: {}", line);
                     stderr_received = true;
                 }
+                Ok(Some(CommandOutput::ProcessCompleted)) => {
+                    println!("Process completed");
+                    break;
+                }
                 Ok(None) => break,
                 Err(_) => break, // Timeout
             }
@@ -1181,6 +1251,10 @@ mod tests {
                 }
                 Ok(Some(CommandOutput::Stderr(_))) => {
                     // Stderr is also fine
+                }
+                Ok(Some(CommandOutput::ProcessCompleted)) => {
+                    println!("Process completed");
+                    break;
                 }
                 Ok(None) => break,
                 Err(_) => break, // Timeout

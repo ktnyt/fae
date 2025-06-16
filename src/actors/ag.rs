@@ -156,6 +156,17 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
     ) {
         log::warn!("Ag stderr: {}", line);
     }
+
+    async fn on_process_completed(
+        &mut self,
+        controller: &CommandController<FaeMessage, SearchParams>,
+    ) {
+        log::info!("Ag process completed");
+        // Send completion notification
+        let _ = controller
+            .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+            .await;
+    }
 }
 
 /// Ag actor for text search
