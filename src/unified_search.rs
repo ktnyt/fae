@@ -4,12 +4,13 @@
 //! multiple search actors through a broadcaster pattern.
 
 use crate::actors::messages::FaeMessage;
-use crate::actors::types::{SearchMode, SearchParams};
+use crate::actors::types::{SearchMode, SearchParams, SearchResult};
 use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
     SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
-use crate::core::{Broadcaster, Message};
+use crate::core::{ActorController, Broadcaster, Message, MessageHandler};
+use async_trait::async_trait;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
@@ -28,6 +29,10 @@ pub struct UnifiedSearchSystem {
     content_search_actor: Option<ContentSearchActor>,
     result_handler_actor: Option<ResultHandlerActor>,
     watch_actor: Option<WatchActor>,
+
+    // Store current search results for external access
+    current_results: Vec<SearchResult>,
+    result_sender: Option<mpsc::UnboundedSender<Vec<SearchResult>>>,
 }
 
 /// Enum for different content search actors
@@ -156,6 +161,8 @@ impl UnifiedSearchSystem {
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
             watch_actor,
+            current_results: Vec::new(),
+            result_sender: None,
         })
     }
 
@@ -287,6 +294,26 @@ impl UnifiedSearchSystem {
         self.watch_files
     }
 
+    /// Set result sender for streaming results to external consumers (e.g., TUI)
+    pub fn set_result_sender(&mut self, sender: mpsc::UnboundedSender<Vec<SearchResult>>) {
+        self.result_sender = Some(sender);
+    }
+
+    /// Get current search results
+    pub fn get_current_results(&self) -> &[SearchResult] {
+        &self.current_results
+    }
+
+    /// Send message to the unified search system (Actor interface)
+    pub async fn send_message(
+        &self,
+        message: FaeMessage,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let msg = Message::new("external", message);
+        self.shared_sender.send(msg)?;
+        Ok(())
+    }
+
     /// Shutdown the unified search system
     pub fn shutdown(&mut self) {
         log::info!("Shutting down unified search system");
@@ -314,6 +341,66 @@ impl UnifiedSearchSystem {
 
         // Shutdown broadcaster
         self.broadcaster.shutdown();
+    }
+}
+
+#[async_trait]
+impl MessageHandler<FaeMessage> for UnifiedSearchSystem {
+    async fn on_message(&mut self, message: Message<FaeMessage>, controller: &ActorController<FaeMessage>) {
+        match &message.payload {
+            FaeMessage::UpdateSearchParams(search_params) => {
+                log::info!("Received search request: {:?}", search_params);
+                
+                // Forward to all actors via broadcaster
+                let search_message = Message::new("updateSearchParams", message.payload);
+                if let Err(e) = self.shared_sender.send(search_message) {
+                    log::error!("Failed to forward search params: {}", e);
+                }
+            }
+            FaeMessage::PushSearchResult(result) => {
+                // Collect search results
+                self.current_results.push(result.clone());
+                
+                // Send to external result consumer if available
+                if let Some(ref sender) = self.result_sender {
+                    if let Err(e) = sender.send(self.current_results.clone()) {
+                        log::error!("Failed to send results to external consumer: {}", e);
+                    }
+                }
+            }
+            FaeMessage::SearchFinished { result_count } => {
+                log::info!("Search completed with {} results", result_count);
+                
+                // Send final results to external consumer
+                if let Some(ref sender) = self.result_sender {
+                    if let Err(e) = sender.send(self.current_results.clone()) {
+                        log::error!("Failed to send final results to external consumer: {}", e);
+                    }
+                }
+                
+                // Forward completion signal to external consumers
+                let _completion_msg = Message::new("searchFinished", FaeMessage::SearchFinished { result_count: *result_count });
+                if let Err(e) = controller.send_message("searchFinished".to_string(), FaeMessage::SearchFinished { result_count: *result_count }).await {
+                    log::error!("Failed to send completion signal: {}", e);
+                }
+            }
+            FaeMessage::ClearResults => {
+                self.current_results.clear();
+                
+                // Forward to all actors
+                let clear_message = Message::new("clearResults", message.payload);
+                if let Err(e) = self.shared_sender.send(clear_message) {
+                    log::error!("Failed to forward clear results: {}", e);
+                }
+            }
+            _ => {
+                // Forward other messages to internal actors
+                let forward_message = Message::new(&message.method, message.payload);
+                if let Err(e) = self.shared_sender.send(forward_message) {
+                    log::error!("Failed to forward message: {}", e);
+                }
+            }
+        }
     }
 }
 

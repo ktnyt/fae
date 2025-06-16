@@ -20,6 +20,11 @@ tree-sitter = "0.22"  # AST解析
 tree-sitter-rust = "0.21"  # Rust言語サポート
 walkdir = "2.4"
 
+# TUI dependencies
+ratatui = "0.26"      # Terminal UI framework
+crossterm = "0.27"    # Cross-platform terminal functionality
+arboard = "3.3"       # Clipboard access
+
 [dev-dependencies]
 # For tests and examples only
 tempfile = "3.8"      # 一時ディレクトリ/ファイル作成

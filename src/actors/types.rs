@@ -7,7 +7,7 @@ pub enum SearchMode {
     Variable, // Variable and constant search mode
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SearchParams {
     pub query: String,
     pub mode: SearchMode,

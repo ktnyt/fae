@@ -8,6 +8,7 @@
 //!   fae /[query]      - Regex search (fallback: rg → ag → native)
 
 use fae::cli::create_search_params;
+use fae::tui::TuiApp;
 use fae::unified_search::UnifiedSearchSystem;
 use std::env;
 
@@ -31,20 +32,12 @@ impl Default for FaeConfig {
 }
 
 /// Parse command line arguments
-fn parse_args() -> Result<FaeConfig, String> {
+fn parse_args() -> Result<Option<FaeConfig>, String> {
     let args: Vec<String> = env::args().collect();
 
+    // If no query provided, launch TUI mode
     if args.len() < 2 {
-        return Err(format!(
-            "Usage: {} [query]\n\n\
-            Search modes:\n\
-              [query]    - Literal search\n\
-              #[query]   - Symbol search\n\
-              $[query]   - Variable search\n\
-              @[query]   - Filepath search\n\
-              /[query]   - Regex search",
-            args[0]
-        ));
+        return Ok(None);
     }
 
     let mut config = FaeConfig {
@@ -71,7 +64,7 @@ fn parse_args() -> Result<FaeConfig, String> {
         }
     }
 
-    Ok(config)
+    Ok(Some(config))
 }
 
 #[tokio::main]
@@ -81,7 +74,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Parse command line arguments
     let config = match parse_args() {
-        Ok(config) => config,
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            // Launch TUI mode
+            let mut app = TuiApp::new(".").await?;
+            return app.run().await;
+        }
         Err(err) => {
             eprintln!("{}", err);
             std::process::exit(1);
