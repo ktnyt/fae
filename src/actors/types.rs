@@ -35,6 +35,7 @@ pub enum SymbolType {
     Module,
     Type,
     Field,
+    Parameter,
 }
 
 impl SymbolType {
@@ -52,6 +53,7 @@ impl SymbolType {
             SymbolType::Module => "mod",
             SymbolType::Type => "type",
             SymbolType::Field => "field",
+            SymbolType::Parameter => "param",
         }
     }
 }

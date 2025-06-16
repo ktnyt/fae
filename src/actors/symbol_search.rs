@@ -214,17 +214,17 @@ impl SymbolSearchHandler {
 
         match mode {
             SearchMode::Symbol => {
-                // Symbol mode excludes variables, constants, and fields
+                // Symbol mode excludes variables, constants, fields, and parameters
                 !matches!(
                     symbol.symbol_type,
-                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field
+                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field | SymbolType::Parameter
                 )
             }
             SearchMode::Variable => {
-                // Variable mode includes variables, constants, and fields
+                // Variable mode includes variables, constants, fields, and parameters
                 matches!(
                     symbol.symbol_type,
-                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field
+                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field | SymbolType::Parameter
                 )
             }
             _ => false, // Other modes are not handled here

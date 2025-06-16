@@ -73,6 +73,28 @@ impl SymbolExtractor {
         ; Modules
         (mod_item
           name: (identifier) @module.name) @module.definition
+        
+        ; Struct fields
+        (field_declaration
+          name: (field_identifier) @field.name) @field.definition
+        
+        ; Let bindings (local variables)
+        (let_declaration
+          pattern: (identifier) @variable.name) @variable.definition
+        
+        ; Function parameters
+        (function_item
+          parameters: (parameters
+            (parameter
+              pattern: (identifier) @parameter.name)))
+        
+        ; Method parameters
+        (impl_item
+          body: (declaration_list
+            (function_item
+              parameters: (parameters
+                (parameter
+                  pattern: (identifier) @parameter.name)))))
         "#;
 
         let query = Query::new(&language, query_source)
@@ -169,6 +191,9 @@ impl SymbolExtractor {
                     "static.name" => SymbolType::Variable,
                     "type.name" => SymbolType::Type,
                     "module.name" => SymbolType::Module,
+                    "field.name" => SymbolType::Field,
+                    "variable.name" => SymbolType::Variable,
+                    "parameter.name" => SymbolType::Parameter,
                     _ => continue, // Skip unknown captures
                 };
 
@@ -236,7 +261,8 @@ mod tests {
 
         let rust_code = r#"
 pub fn hello_world() {
-    println!("Hello, world!");
+    let message = "Hello, world!";
+    println!("{}", message);
 }
 
 pub struct User {
@@ -253,7 +279,14 @@ const MAX_SIZE: usize = 100;
 
 impl User {
     pub fn new(name: String, age: u32) -> Self {
-        Self { name, age }
+        let user = Self { name, age };
+        user
+    }
+    
+    pub fn greet(&self, greeting: String) {
+        let mut full_greeting = greeting;
+        full_greeting.push_str(&self.name);
+        println!("{}", full_greeting);
     }
 }
 "#;
@@ -269,16 +302,22 @@ impl User {
 
         println!("Extracted symbols: {:?}", symbol_names);
 
-        // We should find function, struct, enum, and constant symbols
+        // We should find function, struct, enum, field, variable, and parameter symbols
         let has_function = symbols
             .iter()
             .any(|s| s.symbol_type == SymbolType::Function);
         let has_struct = symbols.iter().any(|s| s.symbol_type == SymbolType::Struct);
         let has_enum = symbols.iter().any(|s| s.symbol_type == SymbolType::Enum);
+        let has_field = symbols.iter().any(|s| s.symbol_type == SymbolType::Field);
+        let has_variable = symbols.iter().any(|s| s.symbol_type == SymbolType::Variable);
+        let has_parameter = symbols.iter().any(|s| s.symbol_type == SymbolType::Parameter);
 
         assert!(has_function, "Should find function symbols");
         assert!(has_struct, "Should find struct symbols");
         assert!(has_enum, "Should find enum symbols");
+        assert!(has_field, "Should find field symbols");
+        assert!(has_variable, "Should find variable symbols");
+        assert!(has_parameter, "Should find parameter symbols");
     }
 
     #[test]
