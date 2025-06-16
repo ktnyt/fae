@@ -5,7 +5,7 @@
 
 use fae::actors::messages::FaeMessage;
 use fae::actors::types::{SearchMode, SearchParams};
-use fae::actors::{AgActor, RipgrepActor};
+use fae::actors::{AgActor, NativeSearchActor, RipgrepActor};
 use fae::core::Message;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -31,8 +31,8 @@ async fn demonstrate_search_actor<T>(
         mode,
     };
     let search_message = Message::new(
-        "updateSearchQuery",
-        FaeMessage::UpdateSearchQuery(search_query),
+        "updateSearchParams",
+        FaeMessage::UpdateSearchParams(search_query),
     );
 
     if let Err(e) = actor_tx.send(search_message) {
@@ -108,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query = "Command";
     let mode = SearchMode::Literal;
 
-    // Check if tools are available
+    // Check if external tools are available
     let rg_available = tokio::process::Command::new("rg")
         .arg("--version")
         .output()
@@ -124,8 +124,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(false);
 
     println!("🔧 Tool availability:");
-    println!("  ripgrep (rg): {}", if rg_available { "✅" } else { "❌" });
-    println!("  ag:           {}", if ag_available { "✅" } else { "❌" });
+    println!(
+        "  ripgrep (rg):     {}",
+        if rg_available { "✅" } else { "❌" }
+    );
+    println!(
+        "  ag:               {}",
+        if ag_available { "✅" } else { "❌" }
+    );
+    println!("  native (Rust):    ✅ (always available)");
     println!();
 
     // Test RipgrepActor
@@ -154,12 +161,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    // Test NativeSearchActor (always available)
+    {
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        let actor = NativeSearchActor::new_native_search_actor(actor_rx, external_tx, search_path);
+
+        demonstrate_search_actor("Native", actor, actor_tx, external_rx, query, mode).await;
+    }
+
     // Summary
     if !rg_available && !ag_available {
-        println!("❌ No search tools available!");
-        println!("💡 Install ripgrep: cargo install ripgrep");
-        println!("💡 Install ag: brew install the_silver_searcher (macOS)");
-        println!("                apt-get install silversearcher-ag (Ubuntu)");
+        println!("ℹ️  Only native search is available (which is always sufficient!)");
+        println!("💡 For faster search on large codebases, consider installing:");
+        println!("   ripgrep: cargo install ripgrep");
+        println!("   ag: brew install the_silver_searcher (macOS)");
+        println!("       apt-get install silversearcher-ag (Ubuntu)");
     } else {
         println!("🎉 Demo completed successfully!");
     }

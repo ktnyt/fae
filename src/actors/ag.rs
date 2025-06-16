@@ -72,8 +72,8 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
         controller: &CommandController<FaeMessage, SearchParams>,
     ) {
         match message.method.as_str() {
-            "updateSearchQuery" => {
-                if let FaeMessage::UpdateSearchQuery(query) = message.payload {
+            "updateSearchParams" => {
+                if let FaeMessage::UpdateSearchParams(query) = message.payload {
                     log::info!(
                         "Starting ag search: {} (mode: {:?})",
                         query.query,
@@ -86,7 +86,7 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                         log::error!("Failed to spawn ag command: {}", e);
                     }
                 } else {
-                    log::warn!("updateSearchQuery received non-SearchQuery payload");
+                    log::warn!("updateSearchParams received non-SearchQuery payload");
                 }
             }
             _ => {
@@ -215,8 +215,8 @@ mod tests {
             mode: SearchMode::Literal,
         };
         let search_message = Message::new(
-            "updateSearchQuery",
-            FaeMessage::UpdateSearchQuery(search_query),
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(search_query),
         );
 
         actor_tx

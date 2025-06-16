@@ -111,8 +111,8 @@ async fn run_search_test(
         mode,
     };
     let search_message = Message::new(
-        "updateSearchQuery",
-        FaeMessage::UpdateSearchQuery(search_query),
+        "updateSearchParams",
+        FaeMessage::UpdateSearchParams(search_query),
     );
 
     if let Err(e) = actor_tx.send(search_message) {
