@@ -246,7 +246,7 @@ impl MessageHandler<FaeMessage> for WatchHandler {
                 log::info!("File system watcher stopped");
             }
             _ => {
-                log::debug!(
+                log::trace!(
                     "Unknown message method for WatchHandler: {}",
                     message.method
                 );

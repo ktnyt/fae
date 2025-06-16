@@ -222,7 +222,7 @@ impl MessageHandler<FaeMessage> for FilepathSearchHandler {
                 }
             }
             _ => {
-                log::debug!("Unknown message method: {}", message.method);
+                log::trace!("Unknown message method: {}", message.method);
             }
         }
     }

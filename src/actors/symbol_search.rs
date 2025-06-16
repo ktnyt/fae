@@ -44,13 +44,13 @@ impl SymbolSearchHandler {
     /// Clear all symbols for a specific file
     fn clear_file_symbols(&mut self, filepath: &str) {
         self.symbol_index.remove(filepath);
-        log::debug!("Cleared symbols for file: {}", filepath);
+        log::trace!("Cleared symbols for file: {}", filepath);
     }
 
     /// Add a symbol to the index
     fn add_symbol(&mut self, symbol: Symbol) {
         let filepath = symbol.filepath.clone();
-        log::debug!(
+        log::trace!(
             "Adding symbol '{}' (type: {:?}) to index for file: {}",
             symbol.content,
             symbol.symbol_type,
@@ -120,7 +120,7 @@ impl SymbolSearchHandler {
 
         // Search through all symbols with filtering based on search mode
         for (filepath, symbols) in &self.symbol_index {
-            log::debug!("Checking {} symbols in file: {}", symbols.len(), filepath);
+            log::trace!("Checking {} symbols in file: {}", symbols.len(), filepath);
 
             for symbol in symbols {
                 total_symbols_checked += 1;
@@ -139,7 +139,7 @@ impl SymbolSearchHandler {
                 );
 
                 if let Some(score) = self.fuzzy_matcher.fuzzy_match(&symbol.content, query) {
-                    log::debug!(
+                    log::trace!(
                         "Found match: '{}' with score: {} (type: {:?})",
                         symbol.content,
                         score,
@@ -177,7 +177,7 @@ impl SymbolSearchHandler {
                 content: format!("[{}] {}", symbol.symbol_type.display_name(), symbol.content),
             };
 
-            log::debug!(
+            log::trace!(
                 "Sending result {}/{}: '{}' (score: {}, type: {:?})",
                 index + 1,
                 results_to_send,
@@ -217,7 +217,7 @@ impl SymbolSearchHandler {
         {
             log::error!("Failed to send completeSearch message: {}", e);
         } else {
-            log::debug!("Successfully sent completeSearch notification");
+            log::trace!("Successfully sent completeSearch notification");
         }
     }
 
@@ -284,7 +284,7 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
             }
             "completeSymbolIndex" => {
                 if let FaeMessage::CompleteSymbolIndex(filepath) = message.payload {
-                    log::debug!("Symbol indexing completed for: {}", filepath);
+                    log::trace!("Symbol indexing completed for: {}", filepath);
                     // Note: Search will be triggered by updateSearchParams, not here
                     // to avoid repeated searches during bulk indexing
                 } else {
@@ -298,7 +298,7 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                     
                     // If there's a pending search, execute it now
                     if let Some(ref search_params) = self.current_search.clone() {
-                        log::debug!("Executing pending search after initial indexing completion");
+                        log::trace!("Executing pending search after initial indexing completion");
                         self.perform_search(search_params, controller).await;
                     }
                 } else {
@@ -307,7 +307,7 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
             }
             "updateSearchParams" => {
                 if let FaeMessage::UpdateSearchParams(search_params) = message.payload {
-                    log::debug!(
+                    log::trace!(
                         "Updated search params: query='{}', mode={:?}",
                         search_params.query,
                         search_params.mode
@@ -320,7 +320,7 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                 }
             }
             _ => {
-                log::debug!("Unknown message method: {}", message.method);
+                log::trace!("Unknown message method: {}", message.method);
             }
         }
     }

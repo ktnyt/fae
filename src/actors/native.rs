@@ -237,7 +237,7 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
                 }
             }
             _ => {
-                log::debug!("Unknown message method: {}", message.method);
+                log::trace!("Unknown message method: {}", message.method);
             }
         }
     }

@@ -132,7 +132,7 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                     .await;
             }
             _ => {
-                log::debug!("Unknown message method: {}", message.method);
+                log::trace!("Unknown message method: {}", message.method);
             }
         }
     }
