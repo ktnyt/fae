@@ -22,11 +22,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Testing
 ```bash
-# Run all tests with timeout (recommended)
-timeout 30s cargo test --lib -- --test-threads=1
+# Run all tests (RECOMMENDED - full execution)
+cargo test --lib -- --test-threads=1
 
-# Run all tests (may hang on some long-running tests)
-cargo test
+# Quick test run with timeout (for rapid development cycles)
+timeout 20s cargo test --lib -- --test-threads=1
+
+# IMPORTANT: Full test suite requires ~60 seconds
+# Integration tests with file watching, Actor coordination, and async processing
+# need sufficient time to complete properly
 
 # Run with time reporting (nightly only)
 # RUST_TEST_TIME_UNIT=500,2000 cargo +nightly test --lib -- --test-threads=1 --ensure-time -Z unstable-options
@@ -46,6 +50,12 @@ cargo bench
 cargo install cargo-watch
 cargo watch -x "test --lib -- --test-threads=1"
 ```
+
+**Test Timeout Guidelines:**
+- **Unit Tests**: 10-20 seconds sufficient
+- **Integration Tests**: 60+ seconds required (file system operations, Actor coordination)
+- **Full Test Suite**: 60+ seconds (avoid timeout for complete validation)
+- **CI/Development**: Use timeouts only for rapid iteration cycles
 
 ### Code Quality
 ```bash
@@ -207,7 +217,7 @@ Format: `{issue-number}/{type}/{description}`
 
 ### Before Committing
 ```bash
-timeout 30s cargo test --lib -- --test-threads=1 # All tests must pass
+cargo test --lib -- --test-threads=1 # All tests must pass (no timeout for reliability)
 cargo clippy         # No linting issues
 cargo fmt            # Code must be formatted
 cargo build --release # Release build must succeed
@@ -221,7 +231,42 @@ cargo build --release # Release build must succeed
 - **`src/index_manager.rs`**: File exclusion logic and discovery
 - **`tests/`**: Comprehensive test suite (92+ tests) with security and real-world scenarios
 
-## Current Status (2025-06-13)
+## 重要な学習と記憶 (Lessons Learned)
+
+### テストタイムアウトの重要性 (2025-06-16)
+**問題**: 30秒のtimeoutでテスト実行すると、統合テストが途中で中断される
+
+**原因**:
+- 統合テスト（WatchActor + SymbolIndexActor）は複雑な非同期処理を含む
+- ファイルシステム監視、Actor間協調、複数ファイル操作は時間がかかる
+- 実際の実行時間: 全81テストで54.46秒
+
+**解決策**:
+- **開発時**: timeoutなしで実行 (`cargo test --lib -- --test-threads=1`)
+- **品質保証**: 必ず完全実行でテスト結果を検証
+- **素早い確認**: 短いtimeout（20秒）は単体テストのみ
+
+**重要な気づき**:
+```bash
+# ❌ 危険: 統合テストが途中で止まる可能性
+timeout 30s cargo test --lib -- --test-threads=1
+
+# ✅ 安全: 全テストが確実に完了
+cargo test --lib -- --test-threads=1
+```
+
+**アーキテクチャへの影響**:
+- 競合状態防止機能のテストは特に時間がかかる
+- 複数ファイルの並行更新テストは十分な実行時間が必要
+- Actor間のメッセージ協調テストは非同期待機を含む
+
+### 競合状態防止の実装成果 (2025-06-16)
+- **処理中ファイル追跡**: `Arc<Mutex<HashSet<String>>>`による安全な状態管理
+- **優雅な中断処理**: 進行中処理の適切な停止と新規処理の開始
+- **包括的テストカバレッジ**: 高速連続更新と初期化中断の両方をテスト
+- **警告ゼロ達成**: クリーンなコードベース（81テスト、5警告→0警告）
+
+## Current Status (2025-06-16)
 
 ### Completed Features ✅
 - **Phase 1-7**: Complete TUI implementation with async iterator + message engine
