@@ -23,7 +23,7 @@ impl FilepathSearchHandler {
         Self { search_path }
     }
 
-    /// Perform filepath discovery and fuzzy matching
+    /// Perform filepath discovery and fuzzy matching with streaming results
     async fn perform_search(&self, params: SearchParams, controller: &ActorController<FaeMessage>) {
         log::info!(
             "Starting filepath search: {} (mode: {:?}) in {}",
@@ -32,29 +32,21 @@ impl FilepathSearchHandler {
             self.search_path
         );
 
-        // Clone params for the blocking task
+        // Clone params and controller for the streaming task
         let query = params.query.clone();
         let mode = params.mode;
         let search_path = self.search_path.clone();
+        let controller_clone = controller.clone();
 
-        // Perform search synchronously in a blocking task
-        let result =
-            tokio::task::spawn_blocking(move || Self::search_filepaths(&search_path, &query, mode))
-                .await;
+        // Perform streaming search in a blocking task
+        let result = tokio::task::spawn_blocking(move || {
+            Self::search_filepaths_streaming(&search_path, &query, mode, controller_clone)
+        })
+        .await;
 
         match result {
-            Ok(Ok(results)) => {
-                log::info!("Filepath search found {} results", results.len());
-                for result in results {
-                    let message = FaeMessage::PushSearchResult(result);
-                    if let Err(e) = controller
-                        .send_message("pushSearchResult".to_string(), message)
-                        .await
-                    {
-                        log::warn!("Failed to send search result: {}", e);
-                        break;
-                    }
-                }
+            Ok(Ok(result_count)) => {
+                log::info!("Filepath search completed with {} results", result_count);
             }
             Ok(Err(e)) => {
                 log::error!("Filepath search failed: {}", e);
@@ -65,7 +57,86 @@ impl FilepathSearchHandler {
         }
     }
 
-    /// Search filepaths using fuzzy matching (blocking operation)
+    /// Search filepaths using fuzzy matching with streaming results (blocking operation)
+    fn search_filepaths_streaming(
+        search_path: &str,
+        query: &str,
+        mode: SearchMode,
+        controller: ActorController<FaeMessage>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        let mut result_count = 0;
+
+        // Only handle Filepath mode
+        if mode != SearchMode::Filepath {
+            return Ok(result_count);
+        }
+
+        let matcher = SkimMatcherV2::default();
+        let mut scored_results = Vec::new();
+
+        // Walk through files and directories using ignore crate
+        let walker = WalkBuilder::new(search_path)
+            .hidden(false) // Show hidden files by default
+            .git_ignore(true) // Respect .gitignore
+            .git_global(true) // Respect global .gitignore
+            .git_exclude(true) // Respect .git/info/exclude
+            .ignore(true) // Respect .ignore files
+            .parents(true) // Check parent directories for ignore files
+            .build();
+
+        // First pass: collect and score all matches
+        for entry in walker.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let path_str = path.to_string_lossy();
+
+            // Skip the search root itself
+            if path_str == search_path {
+                continue;
+            }
+
+            // Perform fuzzy matching against the relative path
+            let relative_path = if let Ok(rel_path) = path.strip_prefix(search_path) {
+                rel_path.to_string_lossy().to_string()
+            } else {
+                path_str.to_string()
+            };
+
+            if let Some((score, indices)) = matcher.fuzzy_indices(&relative_path, query) {
+                // Create a search result for the matched filepath
+                let search_result = SearchResult {
+                    filename: path_str.to_string(),
+                    line: 1,              // Line 1 for filepaths
+                    column: score as u32, // Use score as offset for sorting
+                    content: Self::format_match_content(&relative_path, &indices, path.is_dir()),
+                };
+                scored_results.push(search_result);
+            }
+        }
+
+        // Sort by fuzzy matching score (higher is better)
+        scored_results.sort_by(|a, b| b.column.cmp(&a.column));
+
+        // Stream results in order of relevance
+        for result in scored_results {
+            let message = FaeMessage::PushSearchResult(result);
+            
+            // Use blocking send since we're in a blocking context
+            let send_result = tokio::runtime::Handle::current().block_on(async {
+                controller.send_message("pushSearchResult".to_string(), message).await
+            });
+
+            if let Err(e) = send_result {
+                log::warn!("Failed to send search result: {}", e);
+                break;
+            }
+            
+            result_count += 1;
+        }
+
+        Ok(result_count)
+    }
+
+    /// Legacy search function for backward compatibility
     fn search_filepaths(
         search_path: &str,
         query: &str,
