@@ -2,6 +2,8 @@
 pub enum SearchMode {
     Literal,
     Regexp,
+    Filepath, // File path/name search mode
+    Symbol,   // Symbol/function name search mode
 }
 
 pub struct SearchParams {

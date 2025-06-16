@@ -21,6 +21,10 @@ pub fn create_ripgrep_command_factory(search_path: String) -> impl CommandFactor
             SearchMode::Regexp => {
                 // Default behavior, no additional flags needed
             }
+            SearchMode::Filepath | SearchMode::Symbol => {
+                // These modes are not supported by ripgrep
+                // Command will not be executed due to early return in handler
+            }
         }
 
         // Common flags for structured output
@@ -36,6 +40,12 @@ pub fn create_ripgrep_command_factory(search_path: String) -> impl CommandFactor
 
 /// Ripgrep actor handler
 pub struct RipgrepHandler;
+
+impl Default for RipgrepHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl RipgrepHandler {
     pub fn new() -> Self {
@@ -83,6 +93,21 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
                     let _ = controller
                         .send_message("clearResults".to_string(), FaeMessage::ClearResults)
                         .await;
+
+                    // Skip search for modes not supported by ripgrep
+                    match query.mode {
+                        SearchMode::Filepath | SearchMode::Symbol => {
+                            log::debug!(
+                                "Ripgrep skipping search for unsupported mode: {:?}",
+                                query.mode
+                            );
+                            return;
+                        }
+                        SearchMode::Literal | SearchMode::Regexp => {
+                            // Continue with supported modes
+                        }
+                    }
+
                     if let Err(e) = controller.spawn(query).await {
                         log::error!("Failed to spawn ripgrep command: {}", e);
                     }
@@ -233,7 +258,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Create RipgrepActor  
+        // Create RipgrepActor
         let mut actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, "./test");
 
         // Test 1: Invalid payload type - send wrong message type
@@ -241,7 +266,7 @@ mod tests {
         actor_tx.send(invalid_message).expect("Should send message");
 
         // Test 2: Unknown method
-        let unknown_message = Message::new("unknownMethod", FaeMessage::ClearResults);  
+        let unknown_message = Message::new("unknownMethod", FaeMessage::ClearResults);
         actor_tx.send(unknown_message).expect("Should send message");
 
         // Wait a bit for message processing
@@ -249,10 +274,9 @@ mod tests {
 
         // No result messages should be received for invalid operations
         let mut result_count = 0;
-        while let Ok(message) = tokio::time::timeout(
-            std::time::Duration::from_millis(50), 
-            external_rx.recv()
-        ).await {
+        while let Ok(message) =
+            tokio::time::timeout(std::time::Duration::from_millis(50), external_rx.recv()).await
+        {
             if let Some(_msg) = message {
                 result_count += 1;
             } else {
@@ -261,7 +285,10 @@ mod tests {
         }
 
         // Should receive no search results for invalid operations
-        assert_eq!(result_count, 0, "Invalid operations should not produce search results");
+        assert_eq!(
+            result_count, 0,
+            "Invalid operations should not produce search results"
+        );
 
         // Clean up
         actor.shutdown();
@@ -318,6 +345,65 @@ mod tests {
         assert!(
             result_count > 0,
             "Should find at least one match for 'CommandActor'"
+        );
+
+        // Clean up
+        actor.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_ripgrep_skips_unsupported_modes() {
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        // Create RipgrepActor
+        let mut actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, "./src");
+
+        // Test Filepath mode - should be skipped
+        let filepath_query = SearchParams {
+            query: "test".to_string(),
+            mode: SearchMode::Filepath,
+        };
+        let filepath_message = Message::new(
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(filepath_query),
+        );
+        actor_tx
+            .send(filepath_message)
+            .expect("Should send message");
+
+        // Test Symbol mode - should be skipped
+        let symbol_query = SearchParams {
+            query: "function".to_string(),
+            mode: SearchMode::Symbol,
+        };
+        let symbol_message = Message::new(
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(symbol_query),
+        );
+        actor_tx.send(symbol_message).expect("Should send message");
+
+        // Wait for message processing
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Check that no search results are produced for unsupported modes
+        let mut result_count = 0;
+        while let Ok(message) =
+            tokio::time::timeout(std::time::Duration::from_millis(50), external_rx.recv()).await
+        {
+            if let Some(msg) = message {
+                if msg.method == "pushSearchResult" {
+                    result_count += 1;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Should receive no search results for unsupported modes
+        assert_eq!(
+            result_count, 0,
+            "Ripgrep should skip Filepath and Symbol modes"
         );
 
         // Clean up
