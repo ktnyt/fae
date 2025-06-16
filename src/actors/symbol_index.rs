@@ -56,10 +56,7 @@ impl SymbolIndexHandler {
 
         match result {
             Ok(Ok(file_count)) => {
-                log::info!(
-                    "Initial queue populated with {} files",
-                    file_count
-                );
+                log::info!("Initial queue populated with {} files", file_count);
                 // Start processing queue
                 self.process_next_from_queue(controller).await;
             }
@@ -90,7 +87,7 @@ impl SymbolIndexHandler {
             .build();
 
         let mut queue = operation_queue.lock().unwrap();
-        
+
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
 
@@ -153,7 +150,9 @@ impl SymbolIndexHandler {
                 }
                 None => {
                     // Queue is empty - send CompleteSymbolIndex notification
-                    log::info!("Operation queue is empty, sending CompleteSymbolIndex notification");
+                    log::info!(
+                        "Operation queue is empty, sending CompleteSymbolIndex notification"
+                    );
                     if let Err(e) = controller
                         .send_message(
                             "completeSymbolIndex".to_string(),
@@ -172,20 +171,24 @@ impl SymbolIndexHandler {
     /// Add operation to queue if not already present
     fn add_operation_to_queue(&self, operation: FileOperation) {
         let mut queue = self.operation_queue.lock().unwrap();
-        
+
         // Check if operation already exists for this file
         let filepath = match &operation {
-            FileOperation::Create(path) | FileOperation::Update(path) | FileOperation::Delete(path) => path.clone(),
+            FileOperation::Create(path)
+            | FileOperation::Update(path)
+            | FileOperation::Delete(path) => path.clone(),
         };
-        
+
         // Remove any existing operations for this file
         queue.retain(|op| {
             let existing_path = match op {
-                FileOperation::Create(path) | FileOperation::Update(path) | FileOperation::Delete(path) => path,
+                FileOperation::Create(path)
+                | FileOperation::Update(path)
+                | FileOperation::Delete(path) => path,
             };
             existing_path != &filepath
         });
-        
+
         // Add new operation
         queue.push_back(operation);
         log::debug!("Added operation to queue for file: {}", filepath);

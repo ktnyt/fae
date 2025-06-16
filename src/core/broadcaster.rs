@@ -9,7 +9,6 @@ use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 
-
 pub struct Multiplexer<T: Clone + Send + 'static> {
     receivers: Vec<mpsc::UnboundedReceiver<Message<T>>>,
     senders: Vec<mpsc::UnboundedSender<Message<T>>>,
@@ -20,7 +19,7 @@ pub struct Multiplexer<T: Clone + Send + 'static> {
 impl<T: Clone + Send + 'static> Multiplexer<T> {
     pub fn new(senders: Vec<mpsc::UnboundedSender<Message<T>>>) -> Self {
         let (shutdown_sender, _shutdown_receiver) = oneshot::channel();
-        Self { 
+        Self {
             receivers: Vec::new(),
             senders,
             shutdown_sender: Some(shutdown_sender),
@@ -28,17 +27,19 @@ impl<T: Clone + Send + 'static> Multiplexer<T> {
         }
     }
 
-    pub fn register(&mut self, target: mpsc::UnboundedReceiver<Message<T>>) -> mpsc::UnboundedReceiver<Message<T>> {
+    pub fn register(
+        &mut self,
+        target: mpsc::UnboundedReceiver<Message<T>>,
+    ) -> mpsc::UnboundedReceiver<Message<T>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.receivers.push(target);
         self.senders.push(sender);
         receiver
     }
 
-
     pub fn run(&mut self) -> Vec<JoinHandle<()>> {
         let mut handles = Vec::new();
-        
+
         // Move shutdown_receiver out of self for use in the spawned task
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         self.shutdown_sender = Some(shutdown_sender);
@@ -349,8 +350,12 @@ mod tests {
             number: 2,
         };
 
-        input_tx1.send(Message::new("method1", test_message1.clone())).unwrap();
-        input_tx2.send(Message::new("method2", test_message2.clone())).unwrap();
+        input_tx1
+            .send(Message::new("method1", test_message1.clone()))
+            .unwrap();
+        input_tx2
+            .send(Message::new("method2", test_message2.clone()))
+            .unwrap();
 
         sleep(Duration::from_millis(20)).await;
 

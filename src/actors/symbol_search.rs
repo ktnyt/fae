@@ -49,16 +49,22 @@ impl SymbolSearchHandler {
         let filepath = symbol.filepath.clone();
         log::debug!(
             "Adding symbol '{}' (type: {:?}) to index for file: {}",
-            symbol.content, symbol.symbol_type, filepath
+            symbol.content,
+            symbol.symbol_type,
+            filepath
         );
-        
+
         self.symbol_index
             .entry(filepath.clone())
             .or_default()
             .push(symbol);
-        
+
         let (file_count, symbol_count) = self.get_index_stats();
-        log::trace!("Index now contains {} files with {} total symbols", file_count, symbol_count);
+        log::trace!(
+            "Index now contains {} files with {} total symbols",
+            file_count,
+            symbol_count
+        );
     }
 
     /// Perform fuzzy search on symbols
@@ -89,7 +95,10 @@ impl SymbolSearchHandler {
         let (file_count, symbol_count) = self.get_index_stats();
         log::info!(
             "Starting symbol search for query: '{}' (mode: {:?}) - Index: {} files, {} symbols",
-            query, search_params.mode, file_count, symbol_count
+            query,
+            search_params.mode,
+            file_count,
+            symbol_count
         );
 
         let mut matches = Vec::new();
@@ -99,25 +108,29 @@ impl SymbolSearchHandler {
         // Search through all symbols with filtering based on search mode
         for (filepath, symbols) in &self.symbol_index {
             log::debug!("Checking {} symbols in file: {}", symbols.len(), filepath);
-            
+
             for symbol in symbols {
                 total_symbols_checked += 1;
-                
+
                 // Filter symbols based on search mode
                 if !self.is_symbol_allowed_for_mode(symbol, search_params.mode) {
                     continue;
                 }
-                
+
                 filtered_symbols += 1;
                 log::trace!(
                     "Checking symbol: '{}' (type: {:?}) against query: '{}'",
-                    symbol.content, symbol.symbol_type, query
+                    symbol.content,
+                    symbol.symbol_type,
+                    query
                 );
 
                 if let Some(score) = self.fuzzy_matcher.fuzzy_match(&symbol.content, query) {
                     log::debug!(
                         "Found match: '{}' with score: {} (type: {:?})",
-                        symbol.content, score, symbol.symbol_type
+                        symbol.content,
+                        score,
+                        symbol.symbol_type
                     );
                     matches.push((score, symbol));
                 }
@@ -126,7 +139,9 @@ impl SymbolSearchHandler {
 
         log::info!(
             "Symbol search analysis: {} total symbols, {} after filtering, {} matches",
-            total_symbols_checked, filtered_symbols, matches.len()
+            total_symbols_checked,
+            filtered_symbols,
+            matches.len()
         );
 
         // Sort by score (higher is better)
@@ -135,8 +150,12 @@ impl SymbolSearchHandler {
         // Send results (limit to reasonable number)
         let limit = 50; // Configurable limit
         let results_to_send = matches.len().min(limit);
-        log::info!("Sending {} search results (limit: {})", results_to_send, limit);
-        
+        log::info!(
+            "Sending {} search results (limit: {})",
+            results_to_send,
+            limit
+        );
+
         for (index, (score, symbol)) in matches.into_iter().take(limit).enumerate() {
             let search_result = SearchResult {
                 filename: symbol.filepath.clone(),
@@ -147,7 +166,11 @@ impl SymbolSearchHandler {
 
             log::debug!(
                 "Sending result {}/{}: '{}' (score: {}, type: {:?})",
-                index + 1, results_to_send, symbol.content, score, symbol.symbol_type
+                index + 1,
+                results_to_send,
+                symbol.content,
+                score,
+                symbol.symbol_type
             );
 
             if let Err(e) = controller
@@ -168,7 +191,11 @@ impl SymbolSearchHandler {
             );
         }
 
-        log::info!("Completed symbol search for query: '{}' - sent {} results", query, results_to_send);
+        log::info!(
+            "Completed symbol search for query: '{}' - sent {} results",
+            query,
+            results_to_send
+        );
 
         // Send completion notification
         if let Err(e) = controller

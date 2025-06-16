@@ -19,10 +19,10 @@ pub struct UnifiedSearchSystem {
     broadcaster: Broadcaster<FaeMessage>,
     shared_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
     result_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
-    
+
     // Store search parameters for delayed execution during symbol indexing
     pending_search_params: Option<SearchParams>,
-    
+
     // Keep actor instances to manage their lifecycle
     symbol_index_actor: Option<SymbolIndexActor>,
     symbol_search_actor: Option<SymbolSearchActor>,
@@ -53,16 +53,22 @@ impl UnifiedSearchSystem {
     pub async fn new(search_path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Create individual result channels for each actor to avoid competition
         let (result_tx, result_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (symbol_index_result_tx, symbol_index_result_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (symbol_search_result_tx, symbol_search_result_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (filepath_result_tx, filepath_result_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (content_result_tx, content_result_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (symbol_index_result_tx, symbol_index_result_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (symbol_search_result_tx, symbol_search_result_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (filepath_result_tx, filepath_result_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (content_result_tx, content_result_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
 
         // Create actor channels
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (filepath_search_tx, filepath_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (content_search_tx, content_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (filepath_search_tx, filepath_search_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (content_search_tx, content_search_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
 
         // Create actors with individual result channels
         let symbol_index_actor = SymbolIndexActor::new_symbol_index_actor(
@@ -86,7 +92,8 @@ impl UnifiedSearchSystem {
             content_search_rx,
             content_result_tx.clone(),
             search_path,
-        ).await;
+        )
+        .await;
 
         // Create broadcaster with all actor senders
         let actor_senders = vec![
@@ -194,10 +201,13 @@ impl UnifiedSearchSystem {
         );
 
         // Initialize symbol indexing if needed for symbol/variable search
-        if matches!(search_params.mode, SearchMode::Symbol | SearchMode::Variable) {
+        if matches!(
+            search_params.mode,
+            SearchMode::Symbol | SearchMode::Variable
+        ) {
             let init_message = Message::new("initialize", FaeMessage::ClearResults);
             self.shared_sender.send(init_message)?;
-            
+
             // For symbol search, delay sending search params until indexing is complete
             // The search parameters will be sent when we receive the final completeSymbolIndex
             // Store the search params for later use
@@ -228,7 +238,12 @@ impl UnifiedSearchSystem {
         while result_count < max_results && !search_completed {
             // Use a longer timeout initially for symbol indexing, reasonable timeout for results
             let current_timeout = if search_started { 3000 } else { timeout_ms };
-            match timeout(Duration::from_millis(current_timeout), self.result_receiver.recv()).await {
+            match timeout(
+                Duration::from_millis(current_timeout),
+                self.result_receiver.recv(),
+            )
+            .await
+            {
                 Ok(Some(message)) => {
                     log::debug!("Received message in collect_results: {}", message.method);
                     match message.method.as_str() {
@@ -236,7 +251,11 @@ impl UnifiedSearchSystem {
                             if let FaeMessage::PushSearchResult(result) = message.payload {
                                 search_started = true;
                                 result_count += 1;
-                                log::debug!("Received search result #{}: {}", result_count, result.content);
+                                log::debug!(
+                                    "Received search result #{}: {}",
+                                    result_count,
+                                    result.content
+                                );
                                 println!(
                                     "{}:{}:{}: {}",
                                     result.filename, result.line, result.column, result.content
@@ -247,22 +266,34 @@ impl UnifiedSearchSystem {
                             log::info!("Search completed notification received, {} results collected so far", result_count);
                             // Process remaining messages for a reasonable time before marking as completed
                             let mut remaining_messages = 0;
-                            let end_time = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
-                            
+                            let end_time = tokio::time::Instant::now()
+                                + tokio::time::Duration::from_millis(500);
+
                             while tokio::time::Instant::now() < end_time {
                                 match tokio::time::timeout(
-                                    tokio::time::Duration::from_millis(50), 
-                                    self.result_receiver.recv()
-                                ).await {
+                                    tokio::time::Duration::from_millis(50),
+                                    self.result_receiver.recv(),
+                                )
+                                .await
+                                {
                                     Ok(Some(msg)) => {
                                         if msg.method == "pushSearchResult" {
-                                            if let FaeMessage::PushSearchResult(result) = msg.payload {
+                                            if let FaeMessage::PushSearchResult(result) =
+                                                msg.payload
+                                            {
                                                 result_count += 1;
                                                 remaining_messages += 1;
-                                                log::debug!("Received remaining search result #{}: {}", result_count, result.content);
+                                                log::debug!(
+                                                    "Received remaining search result #{}: {}",
+                                                    result_count,
+                                                    result.content
+                                                );
                                                 println!(
                                                     "{}:{}:{}: {}",
-                                                    result.filename, result.line, result.column, result.content
+                                                    result.filename,
+                                                    result.line,
+                                                    result.column,
+                                                    result.content
                                                 );
                                             }
                                         }
@@ -270,8 +301,11 @@ impl UnifiedSearchSystem {
                                     _ => break, // No more messages or timeout
                                 }
                             }
-                            
-                            log::info!("Processed {} additional results after completion notification", remaining_messages);
+
+                            log::info!(
+                                "Processed {} additional results after completion notification",
+                                remaining_messages
+                            );
                             search_completed = true;
                         }
                         "clearSymbolIndex" | "pushSymbolIndex" => {
@@ -281,11 +315,14 @@ impl UnifiedSearchSystem {
                             }
                         }
                         "completeSymbolIndex" => {
-                            // Forward completion message 
+                            // Forward completion message
                             if let Err(e) = self.shared_sender.send(message.clone()) {
-                                log::warn!("Failed to forward complete symbol index message: {}", e);
+                                log::warn!(
+                                    "Failed to forward complete symbol index message: {}",
+                                    e
+                                );
                             }
-                            
+
                             // Check if this is the final completion (all files processed)
                             if let FaeMessage::CompleteSymbolIndex(ref filepath) = message.payload {
                                 if filepath == "all_files" && self.pending_search_params.is_some() {
@@ -297,7 +334,10 @@ impl UnifiedSearchSystem {
                                             FaeMessage::UpdateSearchParams(search_params),
                                         );
                                         if let Err(e) = self.shared_sender.send(search_message) {
-                                            log::error!("Failed to send delayed search parameters: {}", e);
+                                            log::error!(
+                                                "Failed to send delayed search parameters: {}",
+                                                e
+                                            );
                                         }
                                     }
                                 }
@@ -364,7 +404,10 @@ mod tests {
     #[tokio::test]
     async fn test_unified_search_system_creation() {
         let result = UnifiedSearchSystem::new("./src").await;
-        assert!(result.is_ok(), "Should create unified search system successfully");
+        assert!(
+            result.is_ok(),
+            "Should create unified search system successfully"
+        );
     }
 
     #[tokio::test]
