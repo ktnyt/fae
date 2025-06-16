@@ -6,32 +6,14 @@
 
 use crate::actors::messages::FaeMessage;
 use crate::actors::types::{SearchMode, SearchParams, SearchResult};
-use crate::core::{CommandActor, CommandController, CommandFactory, CommandHandler, Message};
+use crate::core::{Actor, ActorController, Message, MessageHandler};
 use async_trait::async_trait;
 use ignore::WalkBuilder;
 use regex::Regex;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::sync::Arc;
-use tokio::process::Command;
 use tokio::sync::mpsc;
-
-/// Create native search command factory
-///
-/// Since we don't use external commands, this factory creates a dummy command
-/// that will never be executed. The actual search is performed in the handler.
-pub fn create_native_search_command_factory(
-    _search_path: String,
-) -> impl CommandFactory<SearchParams> {
-    move |_args: SearchParams| -> Command {
-        // Create a dummy command that will never be executed
-        // The native search logic is handled in the CommandHandler
-        let mut cmd = Command::new("echo");
-        cmd.arg("native_search_dummy");
-        cmd
-    }
-}
 
 /// Native search actor handler
 pub struct NativeSearchHandler {
@@ -44,11 +26,7 @@ impl NativeSearchHandler {
     }
 
     /// Perform file discovery and content search
-    async fn perform_search(
-        &self,
-        params: SearchParams,
-        controller: &CommandController<FaeMessage, SearchParams>,
-    ) {
+    async fn perform_search(&self, params: SearchParams, controller: &ActorController<FaeMessage>) {
         log::info!(
             "Starting native search: {} (mode: {:?}) in {}",
             params.query,
@@ -199,55 +177,12 @@ impl NativeSearchHandler {
         false
     }
 
-    /// Check if a file should be ignored based on common patterns
-    /// Note: This method is kept for backward compatibility and testing.
-    /// The ignore crate is now used for actual filtering in search_files.
-    #[allow(dead_code)]
-    fn should_ignore_file(path: &Path) -> bool {
-        // Skip hidden files
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| name.starts_with('.'))
-            .unwrap_or(false)
-        {
-            return true;
-        }
-
-        // Skip common directories that should be ignored
-        let ignore_patterns = [
-            ".git",
-            "target",
-            "node_modules",
-            "build",
-            "dist",
-            ".cache",
-            "tmp",
-        ];
-
-        // Check if any component of the path matches ignore patterns
-        for component in path.components() {
-            if let std::path::Component::Normal(name) = component {
-                if let Some(name_str) = name.to_str() {
-                    for pattern in &ignore_patterns {
-                        if name_str == *pattern {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-}
-
 #[async_trait]
-impl CommandHandler<FaeMessage, SearchParams> for NativeSearchHandler {
+impl MessageHandler<FaeMessage> for NativeSearchHandler {
     async fn on_message(
         &mut self,
         message: Message<FaeMessage>,
-        controller: &CommandController<FaeMessage, SearchParams>,
+        controller: &ActorController<FaeMessage>,
     ) {
         match message.method.as_str() {
             "updateSearchParams" => {
@@ -286,28 +221,10 @@ impl CommandHandler<FaeMessage, SearchParams> for NativeSearchHandler {
             }
         }
     }
-
-    async fn on_stdout(
-        &mut self,
-        line: String,
-        _controller: &CommandController<FaeMessage, SearchParams>,
-    ) {
-        // Native search doesn't use stdout from external commands
-        log::debug!("Native search received unexpected stdout: {}", line);
-    }
-
-    async fn on_stderr(
-        &mut self,
-        line: String,
-        _controller: &CommandController<FaeMessage, SearchParams>,
-    ) {
-        // Native search doesn't use stderr from external commands
-        log::debug!("Native search received unexpected stderr: {}", line);
-    }
 }
 
 /// Native search actor for text search
-pub type NativeSearchActor = CommandActor<FaeMessage, SearchParams>;
+pub type NativeSearchActor = Actor<FaeMessage, NativeSearchHandler>;
 
 impl NativeSearchActor {
     /// Create a new NativeSearchActor
@@ -317,12 +234,9 @@ impl NativeSearchActor {
         search_path: impl Into<String>,
     ) -> Self {
         let search_path_str = search_path.into();
-        let command_factory = Arc::new(create_native_search_command_factory(
-            search_path_str.clone(),
-        ));
         let handler = NativeSearchHandler::new(search_path_str);
 
-        Self::new(message_receiver, sender, command_factory, handler)
+        Self::new(message_receiver, sender, handler)
     }
 }
 
@@ -357,20 +271,6 @@ mod tests {
         assert!(!NativeSearchHandler::should_ignore_file(Path::new(
             "src/main.rs"
         )));
-    }
-
-    #[tokio::test]
-    async fn test_native_search_command_factory() {
-        let factory = create_native_search_command_factory("./src".to_string());
-
-        let query = SearchParams {
-            query: "test".to_string(),
-            mode: SearchMode::Literal,
-        };
-
-        let cmd = factory(query);
-        let program = cmd.as_std().get_program();
-        assert_eq!(program, "echo"); // Dummy command
     }
 
     #[tokio::test]
@@ -550,56 +450,6 @@ mod tests {
         let result =
             NativeSearchHandler::search_files("./src", "[invalid_regex", SearchMode::Regexp);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_command_factory_regex_mode() {
-        let factory = create_native_search_command_factory("./src".to_string());
-
-        let query = SearchParams {
-            query: "test.*pattern".to_string(),
-            mode: SearchMode::Regexp,
-        };
-
-        let cmd = factory(query);
-        let program = cmd.as_std().get_program();
-        assert_eq!(program, "echo"); // Should still be dummy command
-    }
-
-    #[tokio::test]
-    async fn test_native_handler_stdout_stderr() {
-        // Test that native handler properly handles unexpected stdout/stderr
-        // Since we can't easily create a CommandController for testing,
-        // this test primarily validates that the methods exist and don't panic
-        let _handler = NativeSearchHandler::new("./test".to_string());
-
-        // Use actor setup to get real controller access during actual operation
-        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-
-        let mut actor = NativeSearchActor::new_native_search_actor(actor_rx, external_tx, "./test");
-
-        // Send a dummy search to trigger any setup, then clean up immediately
-        let search_message = Message::new(
-            "updateSearchParams",
-            FaeMessage::UpdateSearchParams(SearchParams {
-                query: "test".to_string(),
-                mode: SearchMode::Literal,
-            }),
-        );
-        actor_tx.send(search_message).expect("Should send message");
-
-        // Wait a tiny bit then clean up
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-        // Drain any results
-        while let Ok(_) =
-            tokio::time::timeout(std::time::Duration::from_millis(5), external_rx.recv()).await
-        {
-        }
-
-        // Clean up
-        actor.shutdown();
     }
 
     #[tokio::test]
