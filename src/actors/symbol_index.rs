@@ -130,7 +130,10 @@ impl SymbolIndexHandler {
                         };
 
                         if !still_processing {
-                            log::info!("Processing of {} was interrupted during initialization", file_path_str);
+                            log::info!(
+                                "Processing of {} was interrupted during initialization",
+                                file_path_str
+                            );
                             break;
                         }
 
@@ -152,7 +155,7 @@ impl SymbolIndexHandler {
                         }
                     }
                     file_count += 1;
-                    
+
                     // Send completion notification for this file
                     let complete_message = FaeMessage::CompleteSymbolIndex(file_path_str.clone());
                     if let Err(e) = tokio::runtime::Handle::current().block_on(async {
@@ -210,7 +213,10 @@ impl SymbolIndexHandler {
         };
 
         if is_processing {
-            log::info!("File {} is currently being processed, interrupting previous processing", filepath);
+            log::info!(
+                "File {} is currently being processed, interrupting previous processing",
+                filepath
+            );
             self.interrupt_file_processing(filepath).await;
         }
 
@@ -233,14 +239,15 @@ impl SymbolIndexHandler {
         let path_clone = path.to_path_buf();
         let controller_clone = controller.clone();
         let processing_files_clone = self.processing_files.clone();
-        
+
         let handle = tokio::spawn(async move {
             Self::process_file_symbols(
                 &filepath_clone,
                 &path_clone,
                 controller_clone,
                 processing_files_clone,
-            ).await
+            )
+            .await
         });
 
         // Store the abort handle
@@ -288,7 +295,10 @@ impl SymbolIndexHandler {
                     };
 
                     if !still_processing {
-                        log::info!("Processing of {} was interrupted, stopping symbol broadcast", filepath);
+                        log::info!(
+                            "Processing of {} was interrupted, stopping symbol broadcast",
+                            filepath
+                        );
                         return;
                     }
 
@@ -302,19 +312,21 @@ impl SymbolIndexHandler {
 
                     if let Err(e) = controller
                         .send_message("pushSymbolIndex".to_string(), push_message)
-                        .await {
+                        .await
+                    {
                         log::warn!("Failed to send pushSymbolIndex message: {}", e);
                         break;
                     }
                 }
 
                 log::debug!("Successfully processed symbols for {}", filepath);
-                
+
                 // Send completion notification
                 let complete_message = FaeMessage::CompleteSymbolIndex(filepath.to_string());
                 if let Err(e) = controller
                     .send_message("completeSymbolIndex".to_string(), complete_message)
-                    .await {
+                    .await
+                {
                     log::warn!("Failed to send completeSymbolIndex message: {}", e);
                 }
             }
@@ -333,7 +345,7 @@ impl SymbolIndexHandler {
     /// Interrupt processing for a specific file
     async fn interrupt_file_processing(&mut self, filepath: &str) {
         log::debug!("Interrupting processing for file: {}", filepath);
-        
+
         // Remove from processing set to signal interruption
         {
             let mut processing_files = self.processing_files.lock().unwrap();
@@ -370,14 +382,13 @@ impl SymbolIndexHandler {
                 FaeMessage::ClearSymbolIndex(filepath.to_string()),
             )
             .await;
-        
+
         // Send completion notification for deletion
         let complete_message = FaeMessage::CompleteSymbolIndex(filepath.to_string());
         let _ = controller
             .send_message("completeSymbolIndex".to_string(), complete_message)
             .await;
     }
-
 }
 
 #[async_trait]
@@ -509,7 +520,10 @@ mod tests {
         // Should have processed some Rust files in src/
         assert!(clear_count > 0, "Should have cleared some file indices");
         assert!(push_count > 0, "Should have pushed some symbols");
-        assert!(complete_count > 0, "Should have completed indexing for some files");
+        assert!(
+            complete_count > 0,
+            "Should have completed indexing for some files"
+        );
 
         // Clean up
         actor.shutdown();

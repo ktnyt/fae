@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 use tokio::sync::mpsc as tokio_mpsc;
-use tokio::time::sleep;
 
 /// File system watcher handler
 pub struct WatchHandler {
@@ -277,7 +276,7 @@ mod tests {
     use std::fs;
     use std::time::Duration;
     use tempfile::TempDir;
-    use tokio::time::timeout;
+    use tokio::time::{sleep, timeout};
 
     #[test]
     fn test_is_supported_file_type() {
