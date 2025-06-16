@@ -309,8 +309,12 @@ impl User {
         let has_struct = symbols.iter().any(|s| s.symbol_type == SymbolType::Struct);
         let has_enum = symbols.iter().any(|s| s.symbol_type == SymbolType::Enum);
         let has_field = symbols.iter().any(|s| s.symbol_type == SymbolType::Field);
-        let has_variable = symbols.iter().any(|s| s.symbol_type == SymbolType::Variable);
-        let has_parameter = symbols.iter().any(|s| s.symbol_type == SymbolType::Parameter);
+        let has_variable = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Variable);
+        let has_parameter = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Parameter);
 
         assert!(has_function, "Should find function symbols");
         assert!(has_struct, "Should find struct symbols");

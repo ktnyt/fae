@@ -101,13 +101,7 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
                                 "Ripgrep skipping search for unsupported mode: {:?}",
                                 query.mode
                             );
-                            // Send completion notification for skipped modes
-                            let _ = controller
-                                .send_message(
-                                    "completeSearch".to_string(),
-                                    FaeMessage::CompleteSearch,
-                                )
-                                .await;
+                            // Don't send completion notification for skipped modes
                             return;
                         }
                         SearchMode::Literal | SearchMode::Regexp => {

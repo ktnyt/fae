@@ -206,7 +206,6 @@ impl UnifiedSearchSystem {
         }
 
         // Send search parameters to all actors - SymbolSearchHandler will handle waiting internally
-        let search_mode = search_params.mode;
         let search_message = Message::new(
             "updateSearchParams",
             FaeMessage::UpdateSearchParams(search_params),
@@ -214,7 +213,7 @@ impl UnifiedSearchSystem {
         self.shared_sender.send(search_message)?;
 
         // Collect results
-        self.collect_results(max_results, timeout_ms, search_mode).await
+        self.collect_results(max_results, timeout_ms).await
     }
 
     /// Collect search results from all actors
@@ -222,7 +221,6 @@ impl UnifiedSearchSystem {
         &mut self,
         max_results: usize,
         timeout_ms: u64,
-        search_mode: SearchMode,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut result_count = 0;
         let mut search_completed = false;
@@ -244,11 +242,7 @@ impl UnifiedSearchSystem {
                             if let FaeMessage::PushSearchResult(result) = message.payload {
                                 search_started = true;
                                 result_count += 1;
-                                log::info!(
-                                    "Result #{}: {}",
-                                    result_count,
-                                    result.content
-                                );
+                                log::info!("Result #{}: {}", result_count, result.content);
                                 println!(
                                     "{}:{}:{}: {}",
                                     result.filename, result.line, result.column, result.content
@@ -256,13 +250,6 @@ impl UnifiedSearchSystem {
                             }
                         }
                         "completeSearch" => {
-                            // For symbol/variable search, ignore completeSearch from other actors
-                            // and wait for symbol search to complete via completeInitialIndexing
-                            if matches!(search_mode, SearchMode::Symbol | SearchMode::Variable) {
-                                log::trace!("Ignoring completeSearch for symbol/variable search mode - waiting for symbol search completion");
-                                continue;
-                            }
-
                             log::info!("Search completed notification received, {} results collected so far", result_count);
                             // Process remaining messages for a reasonable time before marking as completed
                             let mut remaining_messages = 0;
@@ -330,11 +317,6 @@ impl UnifiedSearchSystem {
                                     "Failed to forward initial indexing completion message: {}",
                                     e
                                 );
-                            }
-                            
-                            // For symbol/variable search, wait for symbol search to complete after indexing
-                            if matches!(search_mode, SearchMode::Symbol | SearchMode::Variable) {
-                                log::info!("Initial indexing completed for symbol/variable search - waiting for symbol search results");
                             }
                         }
                         _ => {

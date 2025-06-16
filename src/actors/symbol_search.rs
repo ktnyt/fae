@@ -230,14 +230,20 @@ impl SymbolSearchHandler {
                 // Symbol mode excludes variables, constants, fields, and parameters
                 !matches!(
                     symbol.symbol_type,
-                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field | SymbolType::Parameter
+                    SymbolType::Variable
+                        | SymbolType::Constant
+                        | SymbolType::Field
+                        | SymbolType::Parameter
                 )
             }
             SearchMode::Variable => {
                 // Variable mode includes variables, constants, fields, and parameters
                 matches!(
                     symbol.symbol_type,
-                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field | SymbolType::Parameter
+                    SymbolType::Variable
+                        | SymbolType::Constant
+                        | SymbolType::Field
+                        | SymbolType::Parameter
                 )
             }
             _ => false, // Other modes are not handled here
@@ -295,7 +301,7 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                 if let FaeMessage::CompleteInitialIndexing = message.payload {
                     log::info!("Initial symbol indexing completed, enabling search functionality");
                     self.initial_indexing_complete = true;
-                    
+
                     // If there's a pending search, execute it now
                     if let Some(ref search_params) = self.current_search.clone() {
                         log::trace!("Executing pending search after initial indexing completion");
