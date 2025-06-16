@@ -61,7 +61,10 @@ impl SymbolSearchHandler {
         controller: &ActorController<FaeMessage>,
     ) {
         // Only perform search for Symbol or Variable mode
-        if !matches!(search_params.mode, SearchMode::Symbol | SearchMode::Variable) {
+        if !matches!(
+            search_params.mode,
+            SearchMode::Symbol | SearchMode::Variable
+        ) {
             log::debug!(
                 "Ignoring search for non-symbol/variable mode: {:?}",
                 search_params.mode
@@ -125,7 +128,7 @@ impl SymbolSearchHandler {
         }
 
         log::debug!("Completed symbol search for query: '{}'", query);
-        
+
         // Send completion notification
         let _ = controller
             .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
@@ -135,15 +138,21 @@ impl SymbolSearchHandler {
     /// Check if a symbol is allowed for the given search mode
     fn is_symbol_allowed_for_mode(&self, symbol: &Symbol, mode: SearchMode) -> bool {
         use crate::actors::types::SymbolType;
-        
+
         match mode {
             SearchMode::Symbol => {
                 // Symbol mode excludes variables, constants, and fields
-                !matches!(symbol.symbol_type, SymbolType::Variable | SymbolType::Constant | SymbolType::Field)
+                !matches!(
+                    symbol.symbol_type,
+                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field
+                )
             }
             SearchMode::Variable => {
                 // Variable mode includes variables, constants, and fields
-                matches!(symbol.symbol_type, SymbolType::Variable | SymbolType::Constant | SymbolType::Field)
+                matches!(
+                    symbol.symbol_type,
+                    SymbolType::Variable | SymbolType::Constant | SymbolType::Field
+                )
             }
             _ => false, // Other modes are not handled here
         }

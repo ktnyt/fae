@@ -9,7 +9,10 @@
 
 use fae::actors::messages::FaeMessage;
 use fae::actors::types::{SearchMode, SearchParams};
-use fae::actors::{AgActor, FilepathSearchActor, NativeSearchActor, RipgrepActor, SymbolIndexActor, SymbolSearchActor};
+use fae::actors::{
+    AgActor, FilepathSearchActor, NativeSearchActor, RipgrepActor, SymbolIndexActor,
+    SymbolSearchActor,
+};
 use fae::cli::create_search_params;
 use fae::core::Message;
 use std::env;
@@ -39,7 +42,7 @@ impl Default for FaeConfig {
 /// Parse command line arguments
 fn parse_args() -> Result<FaeConfig, String> {
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         return Err(format!(
             "Usage: {} [query]\n\n\
@@ -52,10 +55,12 @@ fn parse_args() -> Result<FaeConfig, String> {
             args[0]
         ));
     }
-    
-    let mut config = FaeConfig::default();
-    config.query = args[1].clone();
-    
+
+    let mut config = FaeConfig {
+        query: args[1].clone(),
+        ..Default::default()
+    };
+
     // Parse additional arguments if needed (future extension)
     for i in 2..args.len() {
         match args[i].as_str() {
@@ -74,7 +79,7 @@ fn parse_args() -> Result<FaeConfig, String> {
             _ => {}
         }
     }
-    
+
     Ok(config)
 }
 
@@ -88,6 +93,59 @@ async fn is_tool_available(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Enum for different content search actors
+pub enum ContentSearchActor {
+    Ripgrep(RipgrepActor),
+    Ag(AgActor),
+    Native(NativeSearchActor),
+}
+
+impl ContentSearchActor {
+    /// Shutdown the actor
+    pub fn shutdown(&mut self) {
+        match self {
+            ContentSearchActor::Ripgrep(actor) => actor.shutdown(),
+            ContentSearchActor::Ag(actor) => actor.shutdown(),
+            ContentSearchActor::Native(actor) => actor.shutdown(),
+        }
+    }
+}
+
+/// Create content search actor with fallback strategy (rg → ag → native)
+async fn create_content_search_actor(
+    message_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+    sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+    search_path: &str,
+) -> ContentSearchActor {
+    // Try ripgrep first
+    if is_tool_available("rg").await {
+        log::info!("Using ripgrep for content search");
+        return ContentSearchActor::Ripgrep(RipgrepActor::new_ripgrep_actor(
+            message_receiver,
+            sender,
+            search_path,
+        ));
+    }
+
+    // Fallback to ag
+    if is_tool_available("ag").await {
+        log::info!("Using ag for content search");
+        return ContentSearchActor::Ag(AgActor::new_ag_actor(
+            message_receiver,
+            sender,
+            search_path,
+        ));
+    }
+
+    // Final fallback to native search
+    log::info!("Using native search for content search");
+    ContentSearchActor::Native(NativeSearchActor::new_native_search_actor(
+        message_receiver,
+        sender,
+        search_path,
+    ))
+}
+
 /// Execute content search with fallback (rg → ag → native)
 async fn execute_content_search(
     search_params: SearchParams,
@@ -95,27 +153,22 @@ async fn execute_content_search(
     max_results: usize,
     timeout_ms: u64,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    // Try ripgrep first
-    if is_tool_available("rg").await {
-        log::info!("Using ripgrep for content search");
-        if let Ok(count) = execute_ripgrep_search(&search_params, search_path, max_results, timeout_ms).await {
-            return Ok(count);
-        }
-        log::warn!("Ripgrep search failed, falling back to ag");
-    }
-    
-    // Fallback to ag
-    if is_tool_available("ag").await {
-        log::info!("Using ag for content search");
-        if let Ok(count) = execute_ag_search(&search_params, search_path, max_results, timeout_ms).await {
-            return Ok(count);
-        }
-        log::warn!("Ag search failed, falling back to native");
-    }
-    
-    // Final fallback to native search
-    log::info!("Using native search");
-    execute_native_search(&search_params, search_path, max_results, timeout_ms).await
+    let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+    let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+    // Create appropriate actor based on availability
+    let mut actor = create_content_search_actor(actor_rx, external_tx, search_path).await;
+
+    let search_message = Message::new(
+        "updateSearchParams",
+        FaeMessage::UpdateSearchParams(search_params),
+    );
+    actor_tx.send(search_message)?;
+
+    let result_count = collect_search_results(&mut external_rx, max_results, timeout_ms).await;
+    actor.shutdown();
+
+    Ok(result_count)
 }
 
 /// Execute symbol/variable search
@@ -125,43 +178,47 @@ async fn execute_symbol_search(
     max_results: usize,
     timeout_ms: u64,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    log::info!("Executing symbol/variable search with mode: {:?}", search_params.mode);
-    
+    log::info!(
+        "Executing symbol/variable search with mode: {:?}",
+        search_params.mode
+    );
+
     // Set up message channels
     let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
     let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
     let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    
+
     // Create actors
-    let mut symbol_index_actor = SymbolIndexActor::new_symbol_index_actor(
-        symbol_index_rx,
-        external_tx.clone(),
-        search_path,
-    ).map_err(|e| -> Box<dyn std::error::Error> { Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) })?;
-    
-    let mut symbol_search_actor = SymbolSearchActor::new_symbol_search_actor(
-        symbol_search_rx,
-        external_tx.clone(),
-    );
-    
+    let mut symbol_index_actor =
+        SymbolIndexActor::new_symbol_index_actor(symbol_index_rx, external_tx.clone(), search_path)
+            .map_err(|e| -> Box<dyn std::error::Error> {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
+
+    let mut symbol_search_actor =
+        SymbolSearchActor::new_symbol_search_actor(symbol_search_rx, external_tx.clone());
+
     // Start symbol indexing
     let init_message = Message::new("initialize", FaeMessage::ClearResults);
     symbol_index_tx.send(init_message)?;
-    
+
     // Wait for initial indexing to complete
     tokio::time::sleep(Duration::from_millis(2000)).await;
-    
+
     // Send search query
     let search_message = Message::new(
         "updateSearchParams",
         FaeMessage::UpdateSearchParams(search_params),
     );
     symbol_search_tx.send(search_message)?;
-    
+
     // Collect results and forward symbol index messages
     let mut result_count = 0;
     let mut search_completed = false;
-    
+
     while result_count < max_results && !search_completed {
         match timeout(Duration::from_millis(timeout_ms), external_rx.recv()).await {
             Ok(Some(message)) => {
@@ -171,10 +228,7 @@ async fn execute_symbol_search(
                             result_count += 1;
                             println!(
                                 "{}:{}:{}: {}",
-                                result.filename,
-                                result.line,
-                                result.column,
-                                result.content
+                                result.filename, result.line, result.column, result.content
                             );
                         }
                     }
@@ -185,7 +239,10 @@ async fn execute_symbol_search(
                     "clearSymbolIndex" | "pushSymbolIndex" => {
                         // Forward symbol index messages to SymbolSearchActor
                         if let Err(e) = symbol_search_tx.send(message) {
-                            log::warn!("Failed to forward symbol index message to search actor: {}", e);
+                            log::warn!(
+                                "Failed to forward symbol index message to search actor: {}",
+                                e
+                            );
                         }
                     }
                     "completeSymbolIndex" => {
@@ -211,83 +268,11 @@ async fn execute_symbol_search(
             }
         }
     }
-    
+
     // Clean up
     symbol_index_actor.shutdown();
     symbol_search_actor.shutdown();
-    
-    Ok(result_count)
-}
 
-/// Execute ripgrep search
-async fn execute_ripgrep_search(
-    search_params: &SearchParams,
-    search_path: &str,
-    max_results: usize,
-    timeout_ms: u64,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    
-    let mut actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, search_path);
-    
-    let search_message = Message::new(
-        "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_params.clone()),
-    );
-    actor_tx.send(search_message)?;
-    
-    let result_count = collect_search_results(&mut external_rx, max_results, timeout_ms).await;
-    actor.shutdown();
-    
-    Ok(result_count)
-}
-
-/// Execute ag search
-async fn execute_ag_search(
-    search_params: &SearchParams,
-    search_path: &str,
-    max_results: usize,
-    timeout_ms: u64,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    
-    let mut actor = AgActor::new_ag_actor(actor_rx, external_tx, search_path);
-    
-    let search_message = Message::new(
-        "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_params.clone()),
-    );
-    actor_tx.send(search_message)?;
-    
-    let result_count = collect_search_results(&mut external_rx, max_results, timeout_ms).await;
-    actor.shutdown();
-    
-    Ok(result_count)
-}
-
-/// Execute native search
-async fn execute_native_search(
-    search_params: &SearchParams,
-    search_path: &str,
-    max_results: usize,
-    timeout_ms: u64,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    
-    let mut actor = NativeSearchActor::new_native_search_actor(actor_rx, external_tx, search_path);
-    
-    let search_message = Message::new(
-        "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_params.clone()),
-    );
-    actor_tx.send(search_message)?;
-    
-    let result_count = collect_search_results(&mut external_rx, max_results, timeout_ms).await;
-    actor.shutdown();
-    
     Ok(result_count)
 }
 
@@ -299,7 +284,7 @@ async fn collect_search_results(
 ) -> usize {
     let mut result_count = 0;
     let mut search_completed = false;
-    
+
     while result_count < max_results && !search_completed {
         match timeout(Duration::from_millis(timeout_ms), external_rx.recv()).await {
             Ok(Some(message)) => {
@@ -309,10 +294,7 @@ async fn collect_search_results(
                             result_count += 1;
                             println!(
                                 "{}:{}:{}: {}",
-                                result.filename,
-                                result.line,
-                                result.column,
-                                result.content
+                                result.filename, result.line, result.column, result.content
                             );
                         }
                     }
@@ -334,7 +316,7 @@ async fn collect_search_results(
             }
         }
     }
-    
+
     result_count
 }
 
@@ -342,7 +324,7 @@ async fn collect_search_results(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     env_logger::init();
-    
+
     // Parse command line arguments
     let config = match parse_args() {
         Ok(config) => config,
@@ -351,12 +333,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
-    
+
     // Parse query and determine search mode
     let search_params = create_search_params(&config.query);
-    
-    log::info!("Starting search: '{}' (mode: {:?})", search_params.query, search_params.mode);
-    
+
+    log::info!(
+        "Starting search: '{}' (mode: {:?})",
+        search_params.query,
+        search_params.mode
+    );
+
     // Execute search based on mode
     let result_count = match search_params.mode {
         SearchMode::Symbol | SearchMode::Variable => {
@@ -365,7 +351,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &config.search_path,
                 config.max_results,
                 config.timeout_ms,
-            ).await?
+            )
+            .await?
         }
         SearchMode::Filepath => {
             execute_filepath_search(
@@ -373,7 +360,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &config.search_path,
                 config.max_results,
                 config.timeout_ms,
-            ).await?
+            )
+            .await?
         }
         SearchMode::Literal | SearchMode::Regexp => {
             execute_content_search(
@@ -381,17 +369,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &config.search_path,
                 config.max_results,
                 config.timeout_ms,
-            ).await?
+            )
+            .await?
         }
     };
-    
+
     if result_count == 0 {
         eprintln!("No results found.");
         std::process::exit(1);
     } else {
         log::info!("Search completed with {} results", result_count);
     }
-    
+
     Ok(())
 }
 
@@ -403,20 +392,21 @@ async fn execute_filepath_search(
     timeout_ms: u64,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     log::info!("Executing filepath search");
-    
+
     let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
     let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-    
-    let mut actor = FilepathSearchActor::new_filepath_search_actor(actor_rx, external_tx, search_path);
-    
+
+    let mut actor =
+        FilepathSearchActor::new_filepath_search_actor(actor_rx, external_tx, search_path);
+
     let search_message = Message::new(
         "updateSearchParams",
         FaeMessage::UpdateSearchParams(search_params),
     );
     actor_tx.send(search_message)?;
-    
+
     let result_count = collect_search_results(&mut external_rx, max_results, timeout_ms).await;
     actor.shutdown();
-    
+
     Ok(result_count)
 }

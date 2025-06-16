@@ -207,7 +207,10 @@ impl WatchHandler {
                 file_path
             };
 
-            matches!(gitignore.matched(relative_path, file_path.is_dir()), ignore::Match::Ignore(_))
+            matches!(
+                gitignore.matched(relative_path, file_path.is_dir()),
+                ignore::Match::Ignore(_)
+            )
         } else {
             // Fallback ignore patterns
             let path_str = file_path.to_string_lossy();

@@ -216,6 +216,13 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
                                 "Native search skipping search for unsupported mode: {:?}",
                                 query.mode
                             );
+                            // Send completion notification for skipped modes
+                            let _ = controller
+                                .send_message(
+                                    "completeSearch".to_string(),
+                                    FaeMessage::CompleteSearch,
+                                )
+                                .await;
                             return;
                         }
                         SearchMode::Literal | SearchMode::Regexp => {

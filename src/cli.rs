@@ -14,23 +14,23 @@ use crate::actors::types::{SearchMode, SearchParams};
 /// ```
 /// use fae::cli::parse_query_with_mode;
 /// use fae::actors::types::SearchMode;
-/// 
+///
 /// let (mode, query) = parse_query_with_mode("hello");
 /// assert_eq!(mode, SearchMode::Literal);
 /// assert_eq!(query, "hello");
-/// 
+///
 /// let (mode, query) = parse_query_with_mode("#my_function");
 /// assert_eq!(mode, SearchMode::Symbol);
 /// assert_eq!(query, "my_function");
-/// 
+///
 /// let (mode, query) = parse_query_with_mode("$my_variable");
 /// assert_eq!(mode, SearchMode::Variable);
 /// assert_eq!(query, "my_variable");
-/// 
+///
 /// let (mode, query) = parse_query_with_mode("@main.rs");
 /// assert_eq!(mode, SearchMode::Filepath);
 /// assert_eq!(query, "main.rs");
-/// 
+///
 /// let (mode, query) = parse_query_with_mode("/fn \\w+");
 /// assert_eq!(mode, SearchMode::Regexp);
 /// assert_eq!(query, "fn \\w+");
@@ -76,7 +76,7 @@ mod tests {
         let (mode, query) = parse_query_with_mode("#my_function");
         assert_eq!(mode, SearchMode::Symbol);
         assert_eq!(query, "my_function");
-        
+
         // Test empty symbol query
         let (mode, query) = parse_query_with_mode("#");
         assert_eq!(mode, SearchMode::Symbol);
@@ -88,7 +88,7 @@ mod tests {
         let (mode, query) = parse_query_with_mode("$my_variable");
         assert_eq!(mode, SearchMode::Variable);
         assert_eq!(query, "my_variable");
-        
+
         let (mode, query) = parse_query_with_mode("$MY_CONSTANT");
         assert_eq!(mode, SearchMode::Variable);
         assert_eq!(query, "MY_CONSTANT");
@@ -99,7 +99,7 @@ mod tests {
         let (mode, query) = parse_query_with_mode("@main.rs");
         assert_eq!(mode, SearchMode::Filepath);
         assert_eq!(query, "main.rs");
-        
+
         let (mode, query) = parse_query_with_mode("@src/lib.rs");
         assert_eq!(mode, SearchMode::Filepath);
         assert_eq!(query, "src/lib.rs");
@@ -110,7 +110,7 @@ mod tests {
         let (mode, query) = parse_query_with_mode("/fn \\w+");
         assert_eq!(mode, SearchMode::Regexp);
         assert_eq!(query, "fn \\w+");
-        
+
         let (mode, query) = parse_query_with_mode("/[A-Z]+_[A-Z]+");
         assert_eq!(mode, SearchMode::Regexp);
         assert_eq!(query, "[A-Z]+_[A-Z]+");
@@ -122,12 +122,12 @@ mod tests {
         let (mode, query) = parse_query_with_mode("##nested_symbol");
         assert_eq!(mode, SearchMode::Symbol);
         assert_eq!(query, "#nested_symbol");
-        
+
         // Mixed prefixes
         let (mode, query) = parse_query_with_mode("#$mixed");
         assert_eq!(mode, SearchMode::Symbol);
         assert_eq!(query, "$mixed");
-        
+
         // Prefix-like content but literal
         let (mode, query) = parse_query_with_mode("email@domain.com");
         assert_eq!(mode, SearchMode::Literal);
@@ -139,11 +139,11 @@ mod tests {
         let params = create_search_params("hello");
         assert_eq!(params.mode, SearchMode::Literal);
         assert_eq!(params.query, "hello");
-        
+
         let params = create_search_params("#function_name");
         assert_eq!(params.mode, SearchMode::Symbol);
         assert_eq!(params.query, "function_name");
-        
+
         let params = create_search_params("$variable_name");
         assert_eq!(params.mode, SearchMode::Variable);
         assert_eq!(params.query, "variable_name");

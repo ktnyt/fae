@@ -102,7 +102,10 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                             );
                             // Send completion notification for skipped modes
                             let _ = controller
-                                .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                                .send_message(
+                                    "completeSearch".to_string(),
+                                    FaeMessage::CompleteSearch,
+                                )
                                 .await;
                             return;
                         }
