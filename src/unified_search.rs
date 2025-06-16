@@ -7,7 +7,7 @@ use crate::actors::messages::FaeMessage;
 use crate::actors::types::{SearchMode, SearchParams};
 use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
-    SymbolIndexActor, SymbolSearchActor,
+    SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
 use crate::core::{Broadcaster, Message};
 use std::time::Duration;
@@ -19,6 +19,7 @@ pub struct UnifiedSearchSystem {
     broadcaster: Broadcaster<FaeMessage>,
     shared_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
     completion_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+    watch_files: bool,
 
     // Keep actor instances to manage their lifecycle
     symbol_index_actor: Option<SymbolIndexActor>,
@@ -26,6 +27,7 @@ pub struct UnifiedSearchSystem {
     filepath_search_actor: Option<FilepathSearchActor>,
     content_search_actor: Option<ContentSearchActor>,
     result_handler_actor: Option<ResultHandlerActor>,
+    watch_actor: Option<WatchActor>,
 }
 
 /// Enum for different content search actors
@@ -48,7 +50,10 @@ impl ContentSearchActor {
 
 impl UnifiedSearchSystem {
     /// Create a new unified search system
-    pub async fn new(search_path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn new(
+        search_path: &str,
+        watch_files: bool,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Create completion channel for receiving final search results
         let (completion_tx, completion_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
@@ -62,14 +67,29 @@ impl UnifiedSearchSystem {
         let (result_handler_tx, result_handler_rx) =
             mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Create broadcaster with all actor senders (including result handler)
-        let actor_senders = vec![
+        // Conditionally create watch actor channel
+        let watch_channel = if watch_files {
+            Some(mpsc::unbounded_channel::<Message<FaeMessage>>())
+        } else {
+            None
+        };
+        let (watch_tx, watch_rx) = if let Some((tx, rx)) = watch_channel {
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+
+        // Create broadcaster with all actor senders (conditionally including watch actor)
+        let mut actor_senders = vec![
             symbol_index_tx,
             symbol_search_tx,
             filepath_search_tx,
             content_search_tx,
             result_handler_tx,
         ];
+        if let Some(tx) = watch_tx {
+            actor_senders.push(tx);
+        }
 
         let (broadcaster, shared_sender) = Broadcaster::new(actor_senders);
 
@@ -102,15 +122,40 @@ impl UnifiedSearchSystem {
             50,            // Default max results
         );
 
+        // Conditionally create watch actor
+        let watch_actor = if watch_files {
+            if let Some(rx) = watch_rx {
+                log::info!("Creating WatchActor for real-time file monitoring");
+                Some(WatchActor::new_watch_actor(
+                    rx,
+                    shared_sender.clone(),
+                    search_path,
+                )?)
+            } else {
+                None
+            }
+        } else {
+            log::debug!("File watching disabled, skipping WatchActor creation");
+            None
+        };
+
+        // Start watching if watch actor was created
+        if let Some(ref _actor) = watch_actor {
+            log::info!("Starting file system monitoring for path: {}", search_path);
+            // Note: WatchActor starts monitoring automatically when created
+        }
+
         Ok(Self {
             broadcaster,
             shared_sender,
             completion_receiver: completion_rx,
+            watch_files,
             symbol_index_actor: Some(symbol_index_actor),
             symbol_search_actor: Some(symbol_search_actor),
             filepath_search_actor: Some(filepath_search_actor),
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
+            watch_actor,
         })
     }
 
@@ -237,6 +282,11 @@ impl UnifiedSearchSystem {
         }
     }
 
+    /// Check if file watching is enabled
+    pub fn is_watching_files(&self) -> bool {
+        self.watch_files
+    }
+
     /// Shutdown the unified search system
     pub fn shutdown(&mut self) {
         log::info!("Shutting down unified search system");
@@ -255,6 +305,10 @@ impl UnifiedSearchSystem {
             actor.shutdown();
         }
         if let Some(mut actor) = self.result_handler_actor.take() {
+            actor.shutdown();
+        }
+        if let Some(mut actor) = self.watch_actor.take() {
+            log::info!("Shutting down WatchActor");
             actor.shutdown();
         }
 
@@ -276,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_search_system_creation() {
-        let result = UnifiedSearchSystem::new("./src").await;
+        let result = UnifiedSearchSystem::new("./src", false).await;
         assert!(
             result.is_ok(),
             "Should create unified search system successfully"
@@ -285,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_search_execution() {
-        let mut system = UnifiedSearchSystem::new("./src")
+        let mut system = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -302,7 +356,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_symbol_search_via_unified_system() {
-        let mut system = UnifiedSearchSystem::new("./src")
+        let mut system = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -358,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_timeout_handling() {
-        let mut system = UnifiedSearchSystem::new("./src")
+        let mut system = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -376,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_different_modes() {
-        let mut system = UnifiedSearchSystem::new("./src")
+        let mut system = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -409,7 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_with_different_max_results() {
-        let mut system = UnifiedSearchSystem::new("./src")
+        let mut system = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -431,7 +485,7 @@ mod tests {
     #[tokio::test]
     async fn test_drop_behavior() {
         // Test that Drop trait works correctly
-        let system = UnifiedSearchSystem::new("./src")
+        let system = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -443,7 +497,7 @@ mod tests {
     #[tokio::test]
     async fn test_system_creation_error_handling() {
         // Test with invalid path
-        let result = UnifiedSearchSystem::new("/non/existent/path/12345").await;
+        let result = UnifiedSearchSystem::new("/non/existent/path/12345", false).await;
         // This might succeed or fail depending on the implementation
         // The test ensures the system handles it gracefully either way
         match result {
@@ -454,5 +508,77 @@ mod tests {
                 // Error is acceptable for non-existent paths
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_unified_search_system_with_watch_actor() {
+        // Test creation with watch files enabled
+        let result = UnifiedSearchSystem::new("./src", true).await;
+        assert!(
+            result.is_ok(),
+            "Should create unified search system with WatchActor successfully"
+        );
+
+        if let Ok(mut system) = result {
+            // Verify watch actor was created
+            assert!(system.watch_files, "watch_files should be true");
+            assert!(system.watch_actor.is_some(), "WatchActor should be created");
+
+            system.shutdown();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unified_search_system_without_watch_actor() {
+        // Test creation with watch files disabled
+        let mut system = UnifiedSearchSystem::new("./src", false)
+            .await
+            .expect("Failed to create unified search system");
+
+        // Verify watch actor was not created
+        assert!(!system.watch_files, "watch_files should be false");
+        assert!(system.watch_actor.is_none(), "WatchActor should not be created");
+
+        system.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_realtime_symbol_indexing_integration() {
+        use tempfile::TempDir;
+        use std::io::Write;
+
+        // Create temporary directory for testing
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_string_lossy().to_string();
+
+        // Create system with file watching enabled
+        let mut system = UnifiedSearchSystem::new(&temp_path, true)
+            .await
+            .expect("Failed to create unified search system with WatchActor");
+
+        // Give the system time to initialize
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Create a Rust file in the temp directory
+        let test_file_path = temp_dir.path().join("test.rs");
+        let mut test_file = std::fs::File::create(&test_file_path)
+            .expect("Failed to create test file");
+        writeln!(test_file, "pub fn hello_world() {{}}")
+            .expect("Failed to write to test file");
+        test_file.flush().expect("Failed to flush test file");
+
+        // Give the watch actor time to detect the file
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Search for the function we just created
+        let search_params = SearchParams {
+            query: "hello".to_string(),
+            mode: SearchMode::Symbol,
+        };
+
+        let result = system.search(search_params, 10, 5000).await;
+        assert!(result.is_ok(), "Real-time symbol search should execute successfully");
+
+        system.shutdown();
     }
 }

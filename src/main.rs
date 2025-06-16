@@ -97,8 +97,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         search_params.mode
     );
 
-    // Create unified search system
-    let mut search_system = UnifiedSearchSystem::new(&config.search_path).await?;
+    // Create unified search system (CLI mode doesn't need file watching)
+    let mut search_system = UnifiedSearchSystem::new(&config.search_path, false).await?;
 
     // Execute search through unified system
     let result_count = search_system
