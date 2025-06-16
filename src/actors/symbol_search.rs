@@ -22,6 +22,12 @@ pub struct SymbolSearchHandler {
     current_search: Option<SearchParams>,
 }
 
+impl Default for SymbolSearchHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolSearchHandler {
     /// Create a new SymbolSearchHandler
     pub fn new() -> Self {
@@ -43,7 +49,7 @@ impl SymbolSearchHandler {
         let filepath = symbol.filepath.clone();
         self.symbol_index
             .entry(filepath.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(symbol);
         log::trace!("Added symbol to index for file: {}", filepath);
     }
@@ -54,10 +60,10 @@ impl SymbolSearchHandler {
         search_params: &SearchParams,
         controller: &ActorController<FaeMessage>,
     ) {
-        // Only perform search for Symbol mode
-        if search_params.mode != SearchMode::Symbol {
+        // Only perform search for Symbol or Variable mode
+        if !matches!(search_params.mode, SearchMode::Symbol | SearchMode::Variable) {
             log::debug!(
-                "Ignoring search for non-symbol mode: {:?}",
+                "Ignoring search for non-symbol/variable mode: {:?}",
                 search_params.mode
             );
             return;
@@ -73,9 +79,14 @@ impl SymbolSearchHandler {
 
         let mut matches = Vec::new();
 
-        // Search through all symbols
+        // Search through all symbols with filtering based on search mode
         for symbols in self.symbol_index.values() {
             for symbol in symbols {
+                // Filter symbols based on search mode
+                if !self.is_symbol_allowed_for_mode(symbol, search_params.mode) {
+                    continue;
+                }
+
                 if let Some(score) = self.fuzzy_matcher.fuzzy_match(&symbol.content, query) {
                     matches.push((score, symbol));
                 }
@@ -114,6 +125,23 @@ impl SymbolSearchHandler {
         }
 
         log::debug!("Completed symbol search for query: '{}'", query);
+    }
+
+    /// Check if a symbol is allowed for the given search mode
+    fn is_symbol_allowed_for_mode(&self, symbol: &Symbol, mode: SearchMode) -> bool {
+        use crate::actors::types::SymbolType;
+        
+        match mode {
+            SearchMode::Symbol => {
+                // Symbol mode excludes variables, constants, and fields
+                !matches!(symbol.symbol_type, SymbolType::Variable | SymbolType::Constant | SymbolType::Field)
+            }
+            SearchMode::Variable => {
+                // Variable mode includes variables, constants, and fields
+                matches!(symbol.symbol_type, SymbolType::Variable | SymbolType::Constant | SymbolType::Field)
+            }
+            _ => false, // Other modes are not handled here
+        }
     }
 
     /// Get statistics about the current index
@@ -401,5 +429,241 @@ mod tests {
 
         // Clean up
         actor.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_variable_search_filtering() {
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        let mut actor = SymbolSearchActor::new_symbol_search_actor(actor_rx, external_tx);
+
+        // Add various symbol types
+        let symbols = vec![
+            (SymbolType::Function, "my_function"),
+            (SymbolType::Variable, "my_variable"),
+            (SymbolType::Constant, "MY_CONSTANT"),
+            (SymbolType::Struct, "MyStruct"),
+            (SymbolType::Variable, "another_var"),
+            (SymbolType::Method, "my_method"),
+            (SymbolType::Field, "my_field"),
+        ];
+
+        for (symbol_type, content) in symbols {
+            let push_message = Message::new(
+                "pushSymbolIndex",
+                FaeMessage::PushSymbolIndex {
+                    filepath: "test.rs".to_string(),
+                    line: 10,
+                    column: 5,
+                    content: content.to_string(),
+                    symbol_type,
+                },
+            );
+            actor_tx
+                .send(push_message)
+                .expect("Failed to send push message");
+        }
+
+        // Wait for symbols to be added
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Test Symbol search (should exclude variables and constants)
+        let search_message = Message::new(
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(SearchParams {
+                query: "my".to_string(),
+                mode: SearchMode::Symbol,
+            }),
+        );
+        actor_tx
+            .send(search_message)
+            .expect("Failed to send search message");
+
+        // Wait for search results
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Collect Symbol search results
+        let mut symbol_results = Vec::new();
+        while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
+            if let Some(msg) = message {
+                if msg.method == "pushSearchResult" {
+                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                        symbol_results.push(result.content.clone());
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        println!("Symbol search results: {:?}", symbol_results);
+
+        // Verify Symbol search excludes variables and constants
+        assert!(
+            symbol_results.iter().any(|r| r.contains("my_function")),
+            "Symbol search should include functions"
+        );
+        assert!(
+            symbol_results.iter().any(|r| r.contains("MyStruct")),
+            "Symbol search should include structs"
+        );
+        assert!(
+            symbol_results.iter().any(|r| r.contains("my_method")),
+            "Symbol search should include methods"
+        );
+        assert!(
+            !symbol_results.iter().any(|r| r.contains("my_variable")),
+            "Symbol search should exclude variables"
+        );
+        assert!(
+            !symbol_results.iter().any(|r| r.contains("MY_CONSTANT")),
+            "Symbol search should exclude constants"
+        );
+        assert!(
+            !symbol_results.iter().any(|r| r.contains("my_field")),
+            "Symbol search should exclude fields"
+        );
+
+        // Test Variable search (should only include variables, constants, and fields)
+        let variable_search_message = Message::new(
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(SearchParams {
+                query: "my".to_string(),
+                mode: SearchMode::Variable,
+            }),
+        );
+        actor_tx
+            .send(variable_search_message)
+            .expect("Failed to send variable search message");
+
+        // Wait for search results
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Collect Variable search results
+        let mut variable_results = Vec::new();
+        while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
+            if let Some(msg) = message {
+                if msg.method == "pushSearchResult" {
+                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                        variable_results.push(result.content.clone());
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
+        println!("Variable search results: {:?}", variable_results);
+
+        // Verify Variable search only includes variables, constants, and fields
+        assert!(
+            variable_results.iter().any(|r| r.contains("my_variable")),
+            "Variable search should include variables"
+        );
+        assert!(
+            variable_results.iter().any(|r| r.contains("MY_CONSTANT")),
+            "Variable search should include constants"
+        );
+        assert!(
+            variable_results.iter().any(|r| r.contains("my_field")),
+            "Variable search should include fields"
+        );
+        assert!(
+            !variable_results.iter().any(|r| r.contains("my_function")),
+            "Variable search should exclude functions"
+        );
+        assert!(
+            !variable_results.iter().any(|r| r.contains("MyStruct")),
+            "Variable search should exclude structs"
+        );
+        assert!(
+            !variable_results.iter().any(|r| r.contains("my_method")),
+            "Variable search should exclude methods"
+        );
+
+        // Clean up
+        actor.shutdown();
+    }
+
+    #[test]
+    fn test_symbol_filtering_logic() {
+        let handler = SymbolSearchHandler::new();
+
+        // Test Symbol mode filtering
+        let function_symbol = Symbol::new(
+            "test.rs".to_string(),
+            10,
+            5,
+            "test_function".to_string(),
+            SymbolType::Function,
+        );
+        let variable_symbol = Symbol::new(
+            "test.rs".to_string(),
+            20,
+            5,
+            "test_variable".to_string(),
+            SymbolType::Variable,
+        );
+        let constant_symbol = Symbol::new(
+            "test.rs".to_string(),
+            30,
+            5,
+            "TEST_CONSTANT".to_string(),
+            SymbolType::Constant,
+        );
+        let field_symbol = Symbol::new(
+            "test.rs".to_string(),
+            40,
+            5,
+            "test_field".to_string(),
+            SymbolType::Field,
+        );
+
+        // Symbol mode should include functions but exclude variables/constants/fields
+        assert!(
+            handler.is_symbol_allowed_for_mode(&function_symbol, SearchMode::Symbol),
+            "Symbol mode should allow functions"
+        );
+        assert!(
+            !handler.is_symbol_allowed_for_mode(&variable_symbol, SearchMode::Symbol),
+            "Symbol mode should exclude variables"
+        );
+        assert!(
+            !handler.is_symbol_allowed_for_mode(&constant_symbol, SearchMode::Symbol),
+            "Symbol mode should exclude constants"
+        );
+        assert!(
+            !handler.is_symbol_allowed_for_mode(&field_symbol, SearchMode::Symbol),
+            "Symbol mode should exclude fields"
+        );
+
+        // Variable mode should exclude functions but include variables/constants/fields
+        assert!(
+            !handler.is_symbol_allowed_for_mode(&function_symbol, SearchMode::Variable),
+            "Variable mode should exclude functions"
+        );
+        assert!(
+            handler.is_symbol_allowed_for_mode(&variable_symbol, SearchMode::Variable),
+            "Variable mode should allow variables"
+        );
+        assert!(
+            handler.is_symbol_allowed_for_mode(&constant_symbol, SearchMode::Variable),
+            "Variable mode should allow constants"
+        );
+        assert!(
+            handler.is_symbol_allowed_for_mode(&field_symbol, SearchMode::Variable),
+            "Variable mode should allow fields"
+        );
+
+        // Other modes should return false
+        assert!(
+            !handler.is_symbol_allowed_for_mode(&function_symbol, SearchMode::Literal),
+            "Literal mode should return false"
+        );
+        assert!(
+            !handler.is_symbol_allowed_for_mode(&variable_symbol, SearchMode::Filepath),
+            "Filepath mode should return false"
+        );
     }
 }

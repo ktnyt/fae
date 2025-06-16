@@ -263,7 +263,7 @@ impl SymbolIndexHandler {
     /// Process file symbols in an abortable way
     async fn process_file_symbols(
         filepath: &str,
-        path: &std::path::PathBuf,
+        path: &std::path::Path,
         controller: ActorController<FaeMessage>,
         processing_files: Arc<Mutex<HashSet<String>>>,
     ) {

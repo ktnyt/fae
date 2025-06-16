@@ -87,7 +87,7 @@ impl NativeSearchHandler {
                 // For regex search, use the query as-is
                 Regex::new(query)?
             }
-            SearchMode::Filepath | SearchMode::Symbol => {
+            SearchMode::Filepath | SearchMode::Symbol | SearchMode::Variable => {
                 // These modes are not supported by native search
                 // This code path should not be reached due to early return in handler
                 return Ok(results);
@@ -199,7 +199,7 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
 
                     // Skip search for modes not supported by native search
                     match query.mode {
-                        SearchMode::Filepath | SearchMode::Symbol => {
+                        SearchMode::Filepath | SearchMode::Symbol | SearchMode::Variable => {
                             log::debug!(
                                 "Native search skipping search for unsupported mode: {:?}",
                                 query.mode

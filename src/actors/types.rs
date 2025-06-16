@@ -3,7 +3,8 @@ pub enum SearchMode {
     Literal,
     Regexp,
     Filepath, // File path/name search mode
-    Symbol,   // Symbol/function name search mode
+    Symbol,   // Symbol/function name search mode (excluding variables/constants)
+    Variable, // Variable and constant search mode
 }
 
 #[derive(Clone)]

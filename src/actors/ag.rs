@@ -21,7 +21,7 @@ pub fn create_ag_command_factory(search_path: String) -> impl CommandFactory<Sea
             SearchMode::Regexp => {
                 // Default behavior, no additional flags needed
             }
-            SearchMode::Filepath | SearchMode::Symbol => {
+            SearchMode::Filepath | SearchMode::Symbol | SearchMode::Variable => {
                 // These modes are not supported by ag
                 // Command will not be executed due to early return in handler
             }
@@ -95,7 +95,7 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
 
                     // Skip search for modes not supported by ag
                     match query.mode {
-                        SearchMode::Filepath | SearchMode::Symbol => {
+                        SearchMode::Filepath | SearchMode::Symbol | SearchMode::Variable => {
                             log::debug!(
                                 "Ag skipping search for unsupported mode: {:?}",
                                 query.mode

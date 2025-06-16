@@ -21,7 +21,7 @@ pub fn create_ripgrep_command_factory(search_path: String) -> impl CommandFactor
             SearchMode::Regexp => {
                 // Default behavior, no additional flags needed
             }
-            SearchMode::Filepath | SearchMode::Symbol => {
+            SearchMode::Filepath | SearchMode::Symbol | SearchMode::Variable => {
                 // These modes are not supported by ripgrep
                 // Command will not be executed due to early return in handler
             }
@@ -96,7 +96,7 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
 
                     // Skip search for modes not supported by ripgrep
                     match query.mode {
-                        SearchMode::Filepath | SearchMode::Symbol => {
+                        SearchMode::Filepath | SearchMode::Symbol | SearchMode::Variable => {
                             log::debug!(
                                 "Ripgrep skipping search for unsupported mode: {:?}",
                                 query.mode
