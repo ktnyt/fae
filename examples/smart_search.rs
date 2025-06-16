@@ -94,7 +94,7 @@ async fn search_with_tool(
     let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
     // Create the appropriate actor based on tool selection
-    let mut actor: Box<dyn std::any::Any + Send> = match tool {
+    let actor: Box<dyn std::any::Any + Send> = match tool {
         SearchTool::Ripgrep => {
             let actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, search_path);
             Box::new(actor)

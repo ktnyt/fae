@@ -3,65 +3,18 @@ name = "fae"
 version = "0.1.0"
 edition = "2021"
 
-# [[bin]]
-# name = "fae-service"
-# path = "src/main.rs"
-
-
 [dependencies]
-# TUI
-ratatui = "0.24"
-crossterm = "0.27"
-
-# Tree-sitter (minimal set)
-tree-sitter = "0.20"
-tree-sitter-typescript = "0.20"
-tree-sitter-javascript = "0.20"
-tree-sitter-python = "0.20"
-tree-sitter-rust = "0.20"
-
-# 検索・ファイル操作
-fuzzy-matcher = "0.3"
-ignore = "0.4"        # .gitignore対応
-lru = "0.12"          # キャッシュ
-walkdir = "2.4"       # ディレクトリ再帰探索
-
-# クリップボード
-arboard = "3.2"
-
-# CLI（設定用）
-clap = { version = "4.4", features = ["derive"] }
-
-# 非同期・並列処理
-tokio = { version = "1.0", features = ["full"] }
-tokio-stream = "0.1"
-futures-util = "0.3"
-rayon = "1.8"
-
-# ログ
+# Core dependencies actually used
+async-trait = "0.1"
 log = "0.4"
-env_logger = "0.10"
-
-# ファイル監視
-notify = "6.1"
-
-# エラーハンドリング・正規表現
-anyhow = "1.0"
 regex = "1.10"
-thiserror = "1.0"       # エラー型定義
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"      # メッセージシリアライゼーション
-chrono = { version = "0.4", features = ["serde"] }  # 時刻処理
-async-trait = "0.1"     # 非同期トレイト
-tokio-util = "0.7"      # CancellationToken
-
-# プロセス管理（Unix系のみ）
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
+walkdir = "2.4"
 
 [dev-dependencies]
-tempfile = "3.8"      # テスト用
-tokio-test = "0.4"    # 非同期テスト用
+# For tests and examples only
+env_logger = "0.10"
 
 [[example]]
 name = "search_comparison"
