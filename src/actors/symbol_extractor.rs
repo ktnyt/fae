@@ -345,4 +345,151 @@ class MyClass:
             "Should return empty for unsupported languages"
         );
     }
+
+    #[test]
+    fn test_default_trait() {
+        let extractor = SymbolExtractor::default();
+        assert!(extractor.rust_config.is_some(), "Default extractor should have Rust config");
+    }
+
+    #[test]
+    fn test_extract_symbols_from_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        // Create a temporary Rust file
+        let mut temp_file = NamedTempFile::with_suffix(".rs").expect("Failed to create temp file");
+        let rust_code = r#"
+pub fn test_function() {
+    println!("test");
+}
+
+pub struct TestStruct {
+    field: String,
+}
+"#;
+        temp_file.write_all(rust_code.as_bytes()).expect("Failed to write to temp file");
+        temp_file.flush().expect("Failed to flush temp file");
+
+        let symbols = extractor
+            .extract_symbols_from_file(temp_file.path())
+            .expect("Failed to extract symbols from file");
+
+        assert!(!symbols.is_empty(), "Should extract symbols from file");
+        
+        let has_function = symbols.iter().any(|s| s.symbol_type == SymbolType::Function);
+        let has_struct = symbols.iter().any(|s| s.symbol_type == SymbolType::Struct);
+        
+        assert!(has_function, "Should find function symbols in file");
+        assert!(has_struct, "Should find struct symbols in file");
+    }
+
+    #[test]
+    fn test_extract_symbols_from_nonexistent_file() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let result = extractor.extract_symbols_from_file(Path::new("/non/existent/file.rs"));
+        assert!(result.is_err(), "Should return error for non-existent file");
+    }
+
+    #[test]
+    fn test_create_symbol_content_edge_cases() {
+        let extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        // Test with empty lines
+        let lines = vec!["", "fn test()", ""];
+        let content = extractor.create_symbol_content("test", &lines, 2);
+        assert_eq!(content, "fn test()", "Should return line content");
+
+        // Test with whitespace only
+        let lines = vec!["   ", "  fn test()  ", ""];
+        let content = extractor.create_symbol_content("test", &lines, 2);
+        assert_eq!(content, "fn test()", "Should trim whitespace");
+
+        // Test with out of bounds line index
+        let lines = vec!["fn test()"];
+        let content = extractor.create_symbol_content("test", &lines, 10);
+        assert_eq!(content, "test", "Should return symbol name for out of bounds");
+
+        // Test with zero line index
+        let lines = vec!["fn test()"];
+        let content = extractor.create_symbol_content("test", &lines, 0);
+        assert_eq!(content, "test", "Should return symbol name for zero index");
+
+        // Test with empty line content
+        let lines = vec![""];
+        let content = extractor.create_symbol_content("test", &lines, 1);
+        assert_eq!(content, "test", "Should return symbol name for empty line");
+    }
+
+    #[test]
+    fn test_symbol_types_mapping() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        // Test code with various symbol types
+        let rust_code = r#"
+pub fn my_function() {}
+pub struct MyStruct {}
+pub enum MyEnum { A, B }
+pub const MY_CONST: i32 = 42;
+pub static MY_STATIC: i32 = 42;
+pub type MyType = String;
+pub mod my_module {}
+
+impl MyStruct {
+    pub fn my_method(&self) {}
+}
+
+pub struct FieldStruct {
+    pub my_field: String,
+}
+"#;
+
+        let symbols = extractor
+            .extract_symbols_from_content(rust_code, "test.rs".to_string())
+            .expect("Failed to extract symbols");
+
+        // Check that we have the expected symbol types
+        let symbol_types: std::collections::HashSet<SymbolType> = 
+            symbols.iter().map(|s| s.symbol_type).collect();
+
+        assert!(symbol_types.contains(&SymbolType::Function), "Should have function symbols");
+        assert!(symbol_types.contains(&SymbolType::Struct), "Should have struct symbols");
+        assert!(symbol_types.contains(&SymbolType::Enum), "Should have enum symbols");
+        assert!(symbol_types.contains(&SymbolType::Constant), "Should have constant symbols");
+        assert!(symbol_types.contains(&SymbolType::Variable), "Should have static variable symbols");
+        assert!(symbol_types.contains(&SymbolType::Type), "Should have type symbols");
+        assert!(symbol_types.contains(&SymbolType::Module), "Should have module symbols");
+        assert!(symbol_types.contains(&SymbolType::Method), "Should have method symbols");
+        assert!(symbol_types.contains(&SymbolType::Field), "Should have field symbols");
+    }
+
+    #[test]
+    fn test_empty_content() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let symbols = extractor
+            .extract_symbols_from_content("", "test.rs".to_string())
+            .expect("Should handle empty content");
+
+        assert!(symbols.is_empty(), "Should return empty for empty content");
+    }
+
+    #[test]
+    fn test_invalid_rust_syntax() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let invalid_rust = r#"
+pub fn incomplete_function(
+    // missing closing parenthesis and body
+"#;
+
+        // The extractor should handle invalid syntax gracefully
+        let result = extractor.extract_symbols_from_content(invalid_rust, "test.rs".to_string());
+        
+        // Tree-sitter is robust and can parse partial/invalid syntax
+        assert!(result.is_ok(), "Should handle invalid syntax gracefully");
+    }
 }

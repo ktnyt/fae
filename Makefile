@@ -40,6 +40,11 @@ test-coverage:
 	@echo "Coverage report generated in coverage/lcov.info"
 
 
+# Show test coverage summary
+test-coverage-summary:
+	mise exec -- cargo llvm-cov --lib --package fae --lcov --summary-only
+	@echo "Coverage report generated in coverage/lcov.info"
+
 # Clean build artifacts
 clean:
 	cargo clean

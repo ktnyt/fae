@@ -507,6 +507,18 @@ mod tests {
         // Wait for symbols to be added
         tokio::time::sleep(Duration::from_millis(50)).await;
 
+        // Complete initial indexing
+        let complete_message = Message::new(
+            "completeInitialIndexing",
+            FaeMessage::CompleteInitialIndexing,
+        );
+        actor_tx
+            .send(complete_message)
+            .expect("Failed to send complete message");
+
+        // Wait for completion to be processed
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
         // Perform search
         let search_message = Message::new(
             "updateSearchParams",
@@ -583,6 +595,18 @@ mod tests {
         }
 
         // Wait for symbols to be added
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Complete initial indexing
+        let complete_message = Message::new(
+            "completeInitialIndexing",
+            FaeMessage::CompleteInitialIndexing,
+        );
+        actor_tx
+            .send(complete_message)
+            .expect("Failed to send complete message");
+
+        // Wait for completion to be processed
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Test Symbol search (should exclude variables and constants)

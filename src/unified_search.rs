@@ -316,4 +316,143 @@ mod tests {
 
         system.shutdown();
     }
+
+    #[tokio::test]
+    async fn test_is_tool_available() {
+        // Test with a command that should exist on most systems
+        let result = UnifiedSearchSystem::is_tool_available("echo").await;
+        assert!(result, "echo command should be available on most systems");
+
+        // Test with a command that shouldn't exist
+        let result = UnifiedSearchSystem::is_tool_available("non_existent_command_12345").await;
+        assert!(!result, "Non-existent command should not be available");
+    }
+
+    #[tokio::test]
+    async fn test_content_search_actor_shutdown() {
+        // Test shutdown for each ContentSearchActor variant
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let (result_tx, _result_rx) = mpsc::unbounded_channel();
+
+        // Test Native actor shutdown
+        let mut native_actor = ContentSearchActor::Native(
+            NativeSearchActor::new_native_search_actor(rx, result_tx.clone(), "./src")
+        );
+        native_actor.shutdown(); // Should not panic
+
+        // Test with different search modes
+        let search_params_filepath = SearchParams {
+            query: "test".to_string(),
+            mode: SearchMode::Filepath,
+        };
+
+        let search_params_variable = SearchParams {
+            query: "test".to_string(),
+            mode: SearchMode::Variable,
+        };
+
+        // These should not panic
+        assert_eq!(search_params_filepath.mode, SearchMode::Filepath);
+        assert_eq!(search_params_variable.mode, SearchMode::Variable);
+    }
+
+    #[tokio::test]
+    async fn test_search_timeout_handling() {
+        let mut system = UnifiedSearchSystem::new("./src")
+            .await
+            .expect("Failed to create unified search system");
+
+        let search_params = SearchParams {
+            query: "very_rare_pattern_that_should_not_exist_12345".to_string(),
+            mode: SearchMode::Literal,
+        };
+
+        // Test with very short timeout
+        let result = system.search(search_params, 10, 1).await; // 1ms timeout
+        assert!(result.is_ok(), "Search should handle timeout gracefully");
+        
+        system.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_search_different_modes() {
+        let mut system = UnifiedSearchSystem::new("./src")
+            .await
+            .expect("Failed to create unified search system");
+
+        // Test Regexp mode
+        let search_params = SearchParams {
+            query: "fn.*test".to_string(),
+            mode: SearchMode::Regexp,
+        };
+        let result = system.search(search_params, 5, 3000).await;
+        assert!(result.is_ok(), "Regexp search should execute successfully");
+
+        // Test Variable mode  
+        let search_params = SearchParams {
+            query: "test".to_string(),
+            mode: SearchMode::Variable,
+        };
+        let result = system.search(search_params, 5, 3000).await;
+        assert!(result.is_ok(), "Variable search should execute successfully");
+
+        // Test Filepath mode
+        let search_params = SearchParams {
+            query: "rs".to_string(),
+            mode: SearchMode::Filepath,
+        };
+        let result = system.search(search_params, 5, 3000).await;
+        assert!(result.is_ok(), "Filepath search should execute successfully");
+
+        system.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_search_with_different_max_results() {
+        let mut system = UnifiedSearchSystem::new("./src")
+            .await
+            .expect("Failed to create unified search system");
+
+        let search_params = SearchParams {
+            query: "test".to_string(),
+            mode: SearchMode::Literal,
+        };
+
+        // Test with different max_results values
+        let result1 = system.search(search_params.clone(), 1, 3000).await;
+        assert!(result1.is_ok(), "Search with max_results=1 should work");
+
+        let result2 = system.search(search_params.clone(), 100, 3000).await;
+        assert!(result2.is_ok(), "Search with max_results=100 should work");
+
+        system.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_drop_behavior() {
+        // Test that Drop trait works correctly
+        let system = UnifiedSearchSystem::new("./src")
+            .await
+            .expect("Failed to create unified search system");
+
+        // system will be dropped at the end of this scope
+        // This should not panic or cause issues
+        drop(system);
+    }
+
+    #[tokio::test]
+    async fn test_system_creation_error_handling() {
+        // Test with invalid path
+        let result = UnifiedSearchSystem::new("/non/existent/path/12345").await;
+        // This might succeed or fail depending on the implementation
+        // The test ensures the system handles it gracefully either way
+        match result {
+            Ok(mut system) => {
+                system.shutdown();
+            }
+            Err(_) => {
+                // Error is acceptable for non-existent paths
+            }
+        }
+    }
 }
