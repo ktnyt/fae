@@ -8,6 +8,7 @@ use crate::actors::messages::FaeMessage;
 use crate::actors::types::{SearchMode, SearchParams, SearchResult};
 use crate::core::{CommandActor, CommandController, CommandFactory, CommandHandler, Message};
 use async_trait::async_trait;
+use ignore::WalkBuilder;
 use regex::Regex;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -15,7 +16,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use walkdir::WalkDir;
 
 /// Create native search command factory
 ///
@@ -111,17 +111,21 @@ impl NativeSearchHandler {
             }
         };
 
-        // Walk through files in the search path
-        for entry in WalkDir::new(search_path).into_iter().filter_map(|e| e.ok()) {
+        // Walk through files using ignore crate for proper .gitignore support
+        let walker = WalkBuilder::new(search_path)
+            .hidden(false) // Show hidden files by default
+            .git_ignore(true) // Respect .gitignore
+            .git_global(true) // Respect global .gitignore
+            .git_exclude(true) // Respect .git/info/exclude
+            .ignore(true) // Respect .ignore files
+            .parents(true) // Check parent directories for ignore files
+            .build();
+
+        for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
 
             // Skip directories and binary files
             if !path.is_file() || Self::is_binary_file(path) {
-                continue;
-            }
-
-            // Skip hidden files and common ignore patterns
-            if Self::should_ignore_file(path) {
                 continue;
             }
 
@@ -191,6 +195,9 @@ impl NativeSearchHandler {
     }
 
     /// Check if a file should be ignored based on common patterns
+    /// Note: This method is kept for backward compatibility and testing.
+    /// The ignore crate is now used for actual filtering in search_files.
+    #[allow(dead_code)]
     fn should_ignore_file(path: &Path) -> bool {
         // Skip hidden files
         if path
@@ -562,6 +569,39 @@ mod tests {
 
         // Clean up
         actor.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_search_files_with_ignore_integration() {
+        // Test that ignore crate integration works properly
+        let results = NativeSearchHandler::search_files("./src", "NativeSearchHandler", SearchMode::Literal)
+            .expect("Search should succeed");
+
+        println!("Found {} results with ignore integration", results.len());
+        assert!(
+            results.len() > 0,
+            "Should find matches for 'NativeSearchHandler' with ignore crate"
+        );
+
+        // Verify that results don't include files that should be ignored
+        // (e.g., no results from target/ directory if it exists)
+        for result in &results {
+            assert!(!result.filename.contains("/target/"), 
+                "Should not include files from target directory: {}", result.filename);
+            assert!(!result.filename.contains("/.git/"), 
+                "Should not include files from .git directory: {}", result.filename);
+        }
+
+        // Show some example results
+        for result in results.iter().take(3) {
+            println!(
+                "  {}:{}:{} - {}",
+                result.filename,
+                result.line,
+                result.offset,
+                result.content.trim()
+            );
+        }
     }
 
     #[tokio::test]
