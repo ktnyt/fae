@@ -6,8 +6,8 @@
 use crate::actors::messages::FaeMessage;
 use crate::actors::types::{SearchMode, SearchParams};
 use crate::actors::{
-    AgActor, FilepathSearchActor, NativeSearchActor, RipgrepActor, SymbolIndexActor,
-    SymbolSearchActor,
+    AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
+    SymbolIndexActor, SymbolSearchActor,
 };
 use crate::core::{Broadcaster, Message};
 use std::time::Duration;
@@ -18,13 +18,14 @@ use tokio::time::timeout;
 pub struct UnifiedSearchSystem {
     broadcaster: Broadcaster<FaeMessage>,
     shared_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-    result_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+    completion_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
 
     // Keep actor instances to manage their lifecycle
     symbol_index_actor: Option<SymbolIndexActor>,
     symbol_search_actor: Option<SymbolSearchActor>,
     filepath_search_actor: Option<FilepathSearchActor>,
     content_search_actor: Option<ContentSearchActor>,
+    result_handler_actor: Option<ResultHandlerActor>,
 }
 
 /// Enum for different content search actors
@@ -48,16 +49,8 @@ impl ContentSearchActor {
 impl UnifiedSearchSystem {
     /// Create a new unified search system
     pub async fn new(search_path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        // Create individual result channels for each actor to avoid competition
-        let (result_tx, result_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (symbol_index_result_tx, symbol_index_result_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (symbol_search_result_tx, symbol_search_result_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (filepath_result_tx, filepath_result_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (content_result_tx, content_result_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        // Create completion channel for receiving final search results
+        let (completion_tx, completion_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
         // Create actor channels
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
@@ -66,76 +59,59 @@ impl UnifiedSearchSystem {
             mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (content_search_tx, content_search_rx) =
             mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (result_handler_tx, result_handler_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Create actors with individual result channels
-        let symbol_index_actor = SymbolIndexActor::new_symbol_index_actor(
-            symbol_index_rx,
-            symbol_index_result_tx.clone(),
-            search_path,
-        )?;
-
-        let symbol_search_actor = SymbolSearchActor::new_symbol_search_actor(
-            symbol_search_rx,
-            symbol_search_result_tx.clone(),
-        );
-
-        let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
-            filepath_search_rx,
-            filepath_result_tx.clone(),
-            search_path,
-        );
-
-        let content_search_actor = Self::create_content_search_actor(
-            content_search_rx,
-            content_result_tx.clone(),
-            search_path,
-        )
-        .await;
-
-        // Create broadcaster with all actor senders
+        // Create broadcaster with all actor senders (including result handler)
         let actor_senders = vec![
             symbol_index_tx,
             symbol_search_tx,
             filepath_search_tx,
             content_search_tx,
+            result_handler_tx,
         ];
 
         let (broadcaster, shared_sender) = Broadcaster::new(actor_senders);
 
-        // Start result distribution tasks for each actor's result channel
-        let result_distributor_tx = result_tx.clone();
-        Self::start_result_distribution(symbol_index_result_rx, result_distributor_tx.clone());
-        Self::start_result_distribution(symbol_search_result_rx, result_distributor_tx.clone());
-        Self::start_result_distribution(filepath_result_rx, result_distributor_tx.clone());
-        Self::start_result_distribution(content_result_rx, result_distributor_tx.clone());
+        // Create all actors using the shared sender (via Broadcaster)
+        let symbol_index_actor = SymbolIndexActor::new_symbol_index_actor(
+            symbol_index_rx,
+            shared_sender.clone(),
+            search_path,
+        )?;
+
+        let symbol_search_actor =
+            SymbolSearchActor::new_symbol_search_actor(symbol_search_rx, shared_sender.clone());
+
+        let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
+            filepath_search_rx,
+            shared_sender.clone(),
+            search_path,
+        );
+
+        let content_search_actor = Self::create_content_search_actor(
+            content_search_rx,
+            shared_sender.clone(),
+            search_path,
+        )
+        .await;
+
+        let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
+            result_handler_rx,
+            completion_tx, // ResultHandler sends completion to UnifiedSearchSystem
+            50,            // Default max results
+        );
 
         Ok(Self {
             broadcaster,
             shared_sender,
-            result_receiver: result_rx,
+            completion_receiver: completion_rx,
             symbol_index_actor: Some(symbol_index_actor),
             symbol_search_actor: Some(symbol_search_actor),
             filepath_search_actor: Some(filepath_search_actor),
             content_search_actor: Some(content_search_actor),
+            result_handler_actor: Some(result_handler_actor),
         })
-    }
-
-    /// Start result distribution from an individual actor's result channel to the unified channel
-    fn start_result_distribution(
-        mut actor_result_rx: mpsc::UnboundedReceiver<Message<FaeMessage>>,
-        unified_result_tx: mpsc::UnboundedSender<Message<FaeMessage>>,
-    ) {
-        tokio::spawn(async move {
-            log::trace!("Result distribution task started");
-            while let Some(message) = actor_result_rx.recv().await {
-                log::trace!("Distribution task forwarding message: {}", message.method);
-                if let Err(e) = unified_result_tx.send(message) {
-                    log::warn!("Failed to distribute result message: {}", e);
-                    break;
-                }
-            }
-            log::trace!("Result distribution task terminated");
-        });
     }
 
     /// Create content search actor with fallback strategy (rg → ag → native)
@@ -196,6 +172,11 @@ impl UnifiedSearchSystem {
             search_params.mode
         );
 
+        // Update result handler's max results (send a configuration message)
+        let config_message =
+            Message::new("setMaxResults", FaeMessage::SetMaxResults { max_results });
+        self.shared_sender.send(config_message)?;
+
         // Initialize symbol indexing if needed for symbol/variable search
         if matches!(
             search_params.mode,
@@ -205,142 +186,55 @@ impl UnifiedSearchSystem {
             self.shared_sender.send(init_message)?;
         }
 
-        // Send search parameters to all actors - SymbolSearchHandler will handle waiting internally
+        // Send search parameters to all actors via Broadcaster
         let search_message = Message::new(
             "updateSearchParams",
             FaeMessage::UpdateSearchParams(search_params),
         );
         self.shared_sender.send(search_message)?;
 
-        // Collect results
-        self.collect_results(max_results, timeout_ms).await
+        // Wait for completion from ResultHandlerActor
+        self.wait_for_completion(timeout_ms).await
     }
 
-    /// Collect search results from all actors
-    async fn collect_results(
+    /// Wait for search completion from ResultHandlerActor
+    async fn wait_for_completion(
         &mut self,
-        max_results: usize,
         timeout_ms: u64,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        let mut result_count = 0;
-        let mut search_completed = false;
-        let mut search_started = false;
+        log::debug!("Waiting for search completion from ResultHandlerActor");
 
-        while result_count < max_results && !search_completed {
-            // Use a longer timeout initially for symbol indexing, reasonable timeout for results
-            let current_timeout = if search_started { 3000 } else { timeout_ms };
-            match timeout(
-                Duration::from_millis(current_timeout),
-                self.result_receiver.recv(),
-            )
-            .await
-            {
-                Ok(Some(message)) => {
-                    log::trace!("Received message in collect_results: {}", message.method);
-                    match message.method.as_str() {
-                        "pushSearchResult" => {
-                            if let FaeMessage::PushSearchResult(result) = message.payload {
-                                search_started = true;
-                                result_count += 1;
-                                log::info!("Result #{}: {}", result_count, result.content);
-                                println!(
-                                    "{}:{}:{}: {}",
-                                    result.filename, result.line, result.column, result.content
-                                );
-                            }
-                        }
-                        "completeSearch" => {
-                            log::info!("Search completed notification received, {} results collected so far", result_count);
-                            // Process remaining messages for a reasonable time before marking as completed
-                            let mut remaining_messages = 0;
-                            let end_time = tokio::time::Instant::now()
-                                + tokio::time::Duration::from_millis(500);
-
-                            while tokio::time::Instant::now() < end_time {
-                                match tokio::time::timeout(
-                                    tokio::time::Duration::from_millis(50),
-                                    self.result_receiver.recv(),
-                                )
-                                .await
-                                {
-                                    Ok(Some(msg)) => {
-                                        if msg.method == "pushSearchResult" {
-                                            if let FaeMessage::PushSearchResult(result) =
-                                                msg.payload
-                                            {
-                                                result_count += 1;
-                                                remaining_messages += 1;
-                                                log::trace!(
-                                                    "Received remaining search result #{}: {}",
-                                                    result_count,
-                                                    result.content
-                                                );
-                                                println!(
-                                                    "{}:{}:{}: {}",
-                                                    result.filename,
-                                                    result.line,
-                                                    result.column,
-                                                    result.content
-                                                );
-                                            }
-                                        }
-                                    }
-                                    _ => break, // No more messages or timeout
-                                }
-                            }
-
-                            log::info!(
-                                "Processed {} additional results after completion notification",
-                                remaining_messages
-                            );
-                            search_completed = true;
-                        }
-                        "clearSymbolIndex" | "pushSymbolIndex" => {
-                            // Forward symbol index messages via broadcaster for proper coordination
-                            if let Err(e) = self.shared_sender.send(message) {
-                                log::warn!("Failed to forward symbol index message: {}", e);
-                            }
-                        }
-                        "completeSymbolIndex" => {
-                            // Forward completion message for individual files
-                            if let Err(e) = self.shared_sender.send(message.clone()) {
-                                log::warn!(
-                                    "Failed to forward complete symbol index message: {}",
-                                    e
-                                );
-                            }
-                        }
-                        "completeInitialIndexing" => {
-                            // Forward initial indexing completion message
-                            if let Err(e) = self.shared_sender.send(message.clone()) {
-                                log::warn!(
-                                    "Failed to forward initial indexing completion message: {}",
-                                    e
-                                );
-                            }
-                        }
-                        _ => {
-                            log::trace!("Received unhandled message: {}", message.method);
-                        }
+        match timeout(
+            Duration::from_millis(timeout_ms),
+            self.completion_receiver.recv(),
+        )
+        .await
+        {
+            Ok(Some(message)) => {
+                if message.method == "searchFinished" {
+                    if let FaeMessage::SearchFinished { result_count } = message.payload {
+                        log::info!("Search completed with {} results", result_count);
+                        Ok(result_count)
+                    } else {
+                        Err("Invalid searchFinished message payload".into())
                     }
-                }
-                Ok(None) => {
-                    log::debug!("Result receiver channel closed");
-                    break;
-                }
-                Err(_) => {
-                    log::debug!("Timeout waiting for search results or completion (timeout: {}ms, results: {}, completed: {})", 
-                                current_timeout, result_count, search_completed);
-                    if result_count == 0 && !search_completed {
-                        // Continue waiting for results
-                        continue;
-                    }
-                    break;
+                } else {
+                    log::warn!(
+                        "Unexpected message from completion channel: {}",
+                        message.method
+                    );
+                    Ok(0)
                 }
             }
+            Ok(None) => {
+                log::warn!("Completion channel closed without receiving searchFinished");
+                Ok(0)
+            }
+            Err(_) => {
+                log::warn!("Timeout waiting for search completion ({}ms)", timeout_ms);
+                Ok(0)
+            }
         }
-
-        Ok(result_count)
     }
 
     /// Shutdown the unified search system
@@ -358,6 +252,9 @@ impl UnifiedSearchSystem {
             actor.shutdown();
         }
         if let Some(mut actor) = self.content_search_actor.take() {
+            actor.shutdown();
+        }
+        if let Some(mut actor) = self.result_handler_actor.take() {
             actor.shutdown();
         }
 
