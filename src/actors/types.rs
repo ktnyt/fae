@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
     Literal,
     Regexp,
@@ -14,6 +14,6 @@ pub struct SearchParams {
 pub struct SearchResult {
     pub filename: String,
     pub line: u32,
-    pub offset: u32, // Column position (1-based) within the line
+    pub column: u32,
     pub content: String,
 }

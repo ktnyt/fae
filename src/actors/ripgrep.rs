@@ -66,7 +66,7 @@ impl RipgrepHandler {
             Some(SearchResult {
                 filename,
                 line,
-                offset: column, // Store column position in offset field for compatibility
+                column, // Store column position in offset field for compatibility
                 content,
             })
         } else {
@@ -181,7 +181,7 @@ mod tests {
 
         assert_eq!(result.filename, "src/main.rs");
         assert_eq!(result.line, 42);
-        assert_eq!(result.offset, 15); // Now represents column position
+        assert_eq!(result.column, 15); // Now represents column position
         assert_eq!(result.content, "fn main() {");
     }
 
@@ -195,7 +195,7 @@ mod tests {
 
         assert_eq!(result.filename, "config.toml");
         assert_eq!(result.line, 10);
-        assert_eq!(result.offset, 5); // Column position
+        assert_eq!(result.column, 5); // Column position
         assert_eq!(result.content, "server = \"localhost:8080\"");
     }
 
@@ -331,7 +331,7 @@ mod tests {
                     if let FaeMessage::PushSearchResult(result) = msg.payload {
                         println!(
                             "Found match: {}:{}:{} - {}",
-                            result.filename, result.line, result.offset, result.content
+                            result.filename, result.line, result.column, result.content
                         );
                         result_count += 1;
                     }

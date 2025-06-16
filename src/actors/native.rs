@@ -140,7 +140,7 @@ impl NativeSearchHandler {
                 let search_result = SearchResult {
                     filename: filename.clone(),
                     line: (line_number + 1) as u32, // 1-based line numbering
-                    offset: (mat.start() + 1) as u32, // 1-based column numbering
+                    column: (mat.start() + 1) as u32, // 1-based column numbering
                     content: line.clone(),
                 };
                 results.push(search_result);
@@ -176,6 +176,7 @@ impl NativeSearchHandler {
 
         false
     }
+}
 
 #[async_trait]
 impl MessageHandler<FaeMessage> for NativeSearchHandler {
@@ -257,22 +258,6 @@ mod tests {
         assert!(!NativeSearchHandler::is_binary_file(Path::new("README.md")));
     }
 
-    #[test]
-    fn test_should_ignore_file() {
-        assert!(NativeSearchHandler::should_ignore_file(Path::new(
-            ".git/config"
-        )));
-        assert!(NativeSearchHandler::should_ignore_file(Path::new(
-            "target/debug/main"
-        )));
-        assert!(NativeSearchHandler::should_ignore_file(Path::new(
-            ".hidden_file"
-        )));
-        assert!(!NativeSearchHandler::should_ignore_file(Path::new(
-            "src/main.rs"
-        )));
-    }
-
     #[tokio::test]
     async fn test_native_search_actor_integration() {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
@@ -310,7 +295,7 @@ mod tests {
                     if let FaeMessage::PushSearchResult(result) = msg.payload {
                         println!(
                             "Found match: {}:{}:{} - {}",
-                            result.filename, result.line, result.offset, result.content
+                            result.filename, result.line, result.column, result.content
                         );
                         result_count += 1;
                     }
@@ -346,13 +331,13 @@ mod tests {
         for result in results.iter().take(3) {
             assert!(!result.filename.is_empty());
             assert!(result.line > 0);
-            assert!(result.offset > 0);
+            assert!(result.column > 0);
             assert!(!result.content.is_empty());
             println!(
                 "  {}:{}:{} - {}",
                 result.filename,
                 result.line,
-                result.offset,
+                result.column,
                 result.content.trim()
             );
         }
@@ -370,28 +355,6 @@ mod tests {
 
         // Test invalid paths (should not panic)
         assert!(!NativeSearchHandler::is_binary_file(Path::new("")));
-    }
-
-    #[test]
-    fn test_should_ignore_file_edge_cases() {
-        // Test nested ignore patterns
-        assert!(NativeSearchHandler::should_ignore_file(Path::new(
-            "project/.git/hooks/pre-commit"
-        )));
-        assert!(NativeSearchHandler::should_ignore_file(Path::new(
-            "app/node_modules/package/index.js"
-        )));
-
-        // Test files that start with ignore pattern names
-        assert!(!NativeSearchHandler::should_ignore_file(Path::new(
-            "targets.rs"
-        )));
-        assert!(!NativeSearchHandler::should_ignore_file(Path::new(
-            "git-utils.rs"
-        )));
-
-        // Test empty paths
-        assert!(!NativeSearchHandler::should_ignore_file(Path::new("")));
     }
 
     #[tokio::test]
@@ -486,7 +449,7 @@ mod tests {
                 "  {}:{}:{} - {}",
                 result.filename,
                 result.line,
-                result.offset,
+                result.column,
                 result.content.trim()
             );
         }
@@ -510,13 +473,13 @@ mod tests {
         for result in results.iter().take(3) {
             assert!(!result.filename.is_empty());
             assert!(result.line > 0);
-            assert!(result.offset > 0);
+            assert!(result.column > 0);
             assert!(!result.content.is_empty());
             println!(
                 "  {}:{}:{} - {}",
                 result.filename,
                 result.line,
-                result.offset,
+                result.column,
                 result.content.trim()
             );
         }

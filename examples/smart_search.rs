@@ -134,7 +134,7 @@ async fn search_with_tool(
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
                     if let FaeMessage::PushSearchResult(result) = message.payload {
-                        results.push((result.filename, result.line, result.offset, result.content));
+                        results.push((result.filename, result.line, result.column, result.content));
                     }
                 } else if message.method == "clearResults" {
                     results.clear();

@@ -140,7 +140,7 @@ async fn run_search_test(
                                 "  📄 {}:{}:{} | {}",
                                 result.filename,
                                 result.line,
-                                result.offset,
+                                result.column,
                                 result.content.trim()
                             );
                         }

@@ -58,7 +58,7 @@ async fn demonstrate_search_actor<T>(
                             result_count,
                             result.filename,
                             result.line,
-                            result.offset,
+                            result.column,
                             result.content.trim()
                         );
                     }

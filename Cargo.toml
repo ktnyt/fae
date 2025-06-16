@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # Core dependencies actually used
 async-trait = "0.1"
+fuzzy-matcher = "0.3"  # ファジー検索
 ignore = "0.4"        # .gitignore対応
 log = "0.4"
 regex = "1.10"
@@ -28,3 +29,7 @@ path = "examples/basic_search.rs"
 [[example]]
 name = "smart_search"
 path = "examples/smart_search.rs"
+
+[[example]]
+name = "filepath_search"
+path = "examples/filepath_search.rs"
