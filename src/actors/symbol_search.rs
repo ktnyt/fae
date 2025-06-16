@@ -125,6 +125,11 @@ impl SymbolSearchHandler {
         }
 
         log::debug!("Completed symbol search for query: '{}'", query);
+        
+        // Send completion notification
+        let _ = controller
+            .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+            .await;
     }
 
     /// Check if a symbol is allowed for the given search mode
@@ -185,11 +190,8 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
             "completeSymbolIndex" => {
                 if let FaeMessage::CompleteSymbolIndex(filepath) = message.payload {
                     log::debug!("Symbol indexing completed for: {}", filepath);
-
-                    // If we have pending search, perform it now
-                    if let Some(ref search_params) = self.current_search.clone() {
-                        self.perform_search(search_params, controller).await;
-                    }
+                    // Note: Search will be triggered by updateSearchParams, not here
+                    // to avoid repeated searches during bulk indexing
                 } else {
                     log::warn!("completeSymbolIndex received unexpected payload");
                 }

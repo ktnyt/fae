@@ -9,7 +9,7 @@
 
 use fae::actors::messages::FaeMessage;
 use fae::actors::types::{SearchMode, SearchParams};
-use fae::actors::{AgActor, NativeSearchActor, RipgrepActor, SymbolIndexActor, SymbolSearchActor};
+use fae::actors::{AgActor, FilepathSearchActor, NativeSearchActor, RipgrepActor, SymbolIndexActor, SymbolSearchActor};
 use fae::cli::create_search_params;
 use fae::core::Message;
 use std::env;
@@ -148,8 +148,8 @@ async fn execute_symbol_search(
     let init_message = Message::new("initialize", FaeMessage::ClearResults);
     symbol_index_tx.send(init_message)?;
     
-    // Wait a bit for initial indexing
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for initial indexing to complete
+    tokio::time::sleep(Duration::from_millis(2000)).await;
     
     // Send search query
     let search_message = Message::new(
@@ -158,27 +158,50 @@ async fn execute_symbol_search(
     );
     symbol_search_tx.send(search_message)?;
     
-    // Collect results
+    // Collect results and forward symbol index messages
     let mut result_count = 0;
-    while result_count < max_results {
+    let mut search_completed = false;
+    
+    while result_count < max_results && !search_completed {
         match timeout(Duration::from_millis(timeout_ms), external_rx.recv()).await {
             Ok(Some(message)) => {
-                if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
-                        result_count += 1;
-                        println!(
-                            "{}:{}:{}: {}",
-                            result.filename,
-                            result.line,
-                            result.column,
-                            result.content
-                        );
+                match message.method.as_str() {
+                    "pushSearchResult" => {
+                        if let FaeMessage::PushSearchResult(result) = message.payload {
+                            result_count += 1;
+                            println!(
+                                "{}:{}:{}: {}",
+                                result.filename,
+                                result.line,
+                                result.column,
+                                result.content
+                            );
+                        }
+                    }
+                    "completeSearch" => {
+                        log::debug!("Symbol search completed notification received");
+                        search_completed = true;
+                    }
+                    "clearSymbolIndex" | "pushSymbolIndex" => {
+                        // Forward symbol index messages to SymbolSearchActor
+                        if let Err(e) = symbol_search_tx.send(message) {
+                            log::warn!("Failed to forward symbol index message to search actor: {}", e);
+                        }
+                    }
+                    "completeSymbolIndex" => {
+                        // Forward complete message but don't trigger search immediately
+                        if let Err(e) = symbol_search_tx.send(message) {
+                            log::warn!("Failed to forward complete symbol index message to search actor: {}", e);
+                        }
+                    }
+                    _ => {
+                        log::debug!("Received unhandled message: {}", message.method);
                     }
                 }
             }
             Ok(None) => break,
             Err(_) => {
-                if result_count == 0 {
+                if result_count == 0 && !search_completed {
                     // Wait a bit more for symbol indexing to complete
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     continue;
@@ -275,25 +298,40 @@ async fn collect_search_results(
     timeout_ms: u64,
 ) -> usize {
     let mut result_count = 0;
+    let mut search_completed = false;
     
-    while result_count < max_results {
+    while result_count < max_results && !search_completed {
         match timeout(Duration::from_millis(timeout_ms), external_rx.recv()).await {
             Ok(Some(message)) => {
-                if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
-                        result_count += 1;
-                        println!(
-                            "{}:{}:{}: {}",
-                            result.filename,
-                            result.line,
-                            result.column,
-                            result.content
-                        );
+                match message.method.as_str() {
+                    "pushSearchResult" => {
+                        if let FaeMessage::PushSearchResult(result) = message.payload {
+                            result_count += 1;
+                            println!(
+                                "{}:{}:{}: {}",
+                                result.filename,
+                                result.line,
+                                result.column,
+                                result.content
+                            );
+                        }
+                    }
+                    "completeSearch" => {
+                        log::debug!("Search completed notification received");
+                        search_completed = true;
+                    }
+                    _ => {
+                        // Ignore other message types
                     }
                 }
             }
             Ok(None) => break,
-            Err(_) => break,
+            Err(_) => {
+                if result_count == 0 && !search_completed {
+                    log::debug!("Timeout waiting for search results or completion");
+                }
+                break;
+            }
         }
     }
     
@@ -329,7 +367,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.timeout_ms,
             ).await?
         }
-        SearchMode::Literal | SearchMode::Regexp | SearchMode::Filepath => {
+        SearchMode::Filepath => {
+            execute_filepath_search(
+                search_params,
+                &config.search_path,
+                config.max_results,
+                config.timeout_ms,
+            ).await?
+        }
+        SearchMode::Literal | SearchMode::Regexp => {
             execute_content_search(
                 search_params,
                 &config.search_path,
@@ -347,4 +393,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     Ok(())
+}
+
+/// Execute filepath search
+async fn execute_filepath_search(
+    search_params: SearchParams,
+    search_path: &str,
+    max_results: usize,
+    timeout_ms: u64,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    log::info!("Executing filepath search");
+    
+    let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+    let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+    
+    let mut actor = FilepathSearchActor::new_filepath_search_actor(actor_rx, external_tx, search_path);
+    
+    let search_message = Message::new(
+        "updateSearchParams",
+        FaeMessage::UpdateSearchParams(search_params),
+    );
+    actor_tx.send(search_message)?;
+    
+    let result_count = collect_search_results(&mut external_rx, max_results, timeout_ms).await;
+    actor.shutdown();
+    
+    Ok(result_count)
 }

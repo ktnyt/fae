@@ -59,12 +59,24 @@ impl NativeSearchHandler {
                         break;
                     }
                 }
+                // Send completion notification
+                let _ = controller
+                    .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                    .await;
             }
             Ok(Err(e)) => {
                 log::error!("Native search failed: {}", e);
+                // Send completion notification even on error
+                let _ = controller
+                    .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                    .await;
             }
             Err(e) => {
                 log::error!("Native search task panicked: {}", e);
+                // Send completion notification even on panic
+                let _ = controller
+                    .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                    .await;
             }
         }
     }

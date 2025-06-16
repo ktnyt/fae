@@ -100,6 +100,10 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                                 "Ag skipping search for unsupported mode: {:?}",
                                 query.mode
                             );
+                            // Send completion notification for skipped modes
+                            let _ = controller
+                                .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                                .await;
                             return;
                         }
                         SearchMode::Literal | SearchMode::Regexp => {
@@ -109,10 +113,20 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
 
                     if let Err(e) = controller.spawn(query).await {
                         log::error!("Failed to spawn ag command: {}", e);
+                        // Send completion notification on spawn failure
+                        let _ = controller
+                            .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                            .await;
                     }
                 } else {
                     log::warn!("updateSearchParams received non-SearchQuery payload");
                 }
+            }
+            "processCompleted" => {
+                // Command process completed, send completion notification
+                let _ = controller
+                    .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                    .await;
             }
             _ => {
                 log::debug!("Unknown message method: {}", message.method);

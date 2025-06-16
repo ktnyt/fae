@@ -5,6 +5,7 @@ pub enum FaeMessage {
     UpdateSearchParams(SearchParams),
     ClearResults,
     PushSearchResult(SearchResult),
+    CompleteSearch, // Indicates search operation completion
 
     // Symbol index management messages
     ClearSymbolIndex(String), // filepath
