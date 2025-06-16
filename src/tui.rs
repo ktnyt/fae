@@ -1,5 +1,6 @@
 use crate::actors::{messages::FaeMessage, types::{SearchParams, SearchResult, SearchMode as ActorSearchMode}};
 use crate::unified_search::UnifiedSearchSystem;
+use crate::core::Message;
 use arboard::Clipboard;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -24,7 +25,6 @@ use tokio::time::sleep;
 
 pub struct TuiApp {
     terminal: Terminal<CrosstermBackend<Stdout>>,
-    search_system: UnifiedSearchSystem,
     search_input: String,
     search_results: Vec<SearchResult>,
     list_state: ListState,
@@ -34,7 +34,9 @@ pub struct TuiApp {
     show_toast: bool,
     toast_end_time: Option<Instant>,
     debounce_timer: Option<Instant>,
-    result_receiver: tokio::sync::mpsc::UnboundedReceiver<Vec<SearchResult>>,
+    result_receiver: tokio::sync::mpsc::UnboundedReceiver<Message<FaeMessage>>,
+    control_sender: tokio::sync::mpsc::UnboundedSender<Message<FaeMessage>>,
+    _search_system: UnifiedSearchSystem, // Keep reference for lifecycle management
 }
 
 #[derive(Clone, Debug)]
@@ -100,19 +102,18 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        // Create search system with watch_files=true for TUI
-        let mut search_system = UnifiedSearchSystem::new(search_path, true).await?;
-
-        // Setup result streaming
+        // Create channels for TUI communication
+        let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel();
-        search_system.set_result_sender(result_tx);
+        
+        // Create search system with watch_files=true for TUI
+        let search_system = UnifiedSearchSystem::new(search_path, true, result_tx, control_receiver).await?;
 
         let mut list_state = ListState::default();
         list_state.select(Some(0));
 
         Ok(TuiApp {
             terminal,
-            search_system,
             search_input: String::new(),
             search_results: Vec::new(),
             list_state,
@@ -123,6 +124,8 @@ impl TuiApp {
             toast_end_time: None,
             debounce_timer: None,
             result_receiver: result_rx,
+            control_sender,
+            _search_system: search_system,
         })
     }
 
@@ -135,10 +138,19 @@ impl TuiApp {
             self.draw_ui()?;
 
             // Check for search results
-            if let Ok(results) = self.result_receiver.try_recv() {
-                self.search_results = results;
-                if !self.search_results.is_empty() && self.list_state.selected().is_none() {
-                    self.list_state.select(Some(0));
+            if let Ok(message) = self.result_receiver.try_recv() {
+                match &message.payload {
+                    FaeMessage::PushSearchResult(result) => {
+                        self.search_results.push(result.clone());
+                        if self.list_state.selected().is_none() {
+                            self.list_state.select(Some(0));
+                        }
+                    }
+                    FaeMessage::ClearResults => {
+                        self.search_results.clear();
+                        self.list_state.select(Some(0));
+                    }
+                    _ => {}
                 }
             }
 
@@ -257,7 +269,8 @@ impl TuiApp {
         };
 
         // Send search request to unified search system
-        if let Err(e) = self.search_system.send_message(FaeMessage::UpdateSearchParams(_search_params)).await {
+        let search_message = Message::new("updateSearchParams", FaeMessage::UpdateSearchParams(_search_params));
+        if let Err(e) = self.control_sender.send(search_message) {
             log::error!("Failed to send search message: {}", e);
         }
 

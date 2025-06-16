@@ -36,7 +36,7 @@ impl ResultHandler {
     }
 
     /// Handle a search result
-    async fn handle_search_result(&mut self, result: SearchResult) {
+    async fn handle_search_result(&mut self, result: SearchResult, controller: &ActorController<FaeMessage>) {
         if self.search_completed || self.result_count >= self.max_results {
             return; // Don't process more results after completion or limit reached
         }
@@ -45,10 +45,17 @@ impl ResultHandler {
         self.result_count += 1;
 
         log::info!("Result #{}: {}", self.result_count, result.content);
-        println!(
-            "{}:{}:{}: {}",
-            result.filename, result.line, result.column, result.content
-        );
+        
+        // Send result to external consumers (CLI/TUI) via broadcaster
+        if let Err(e) = controller
+            .send_message(
+                "pushSearchResult".to_string(),
+                FaeMessage::PushSearchResult(result),
+            )
+            .await
+        {
+            log::error!("Failed to send PushSearchResult message: {}", e);
+        }
     }
 
     /// Handle search completion notification
@@ -139,7 +146,7 @@ impl MessageHandler<FaeMessage> for ResultHandler {
         match message.method.as_str() {
             "pushSearchResult" => {
                 if let FaeMessage::PushSearchResult(result) = message.payload {
-                    self.handle_search_result(result).await;
+                    self.handle_search_result(result, controller).await;
                 } else {
                     log::warn!("pushSearchResult received unexpected payload");
                 }

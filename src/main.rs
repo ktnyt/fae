@@ -10,6 +10,8 @@
 use fae::cli::create_search_params;
 use fae::tui::TuiApp;
 use fae::unified_search::UnifiedSearchSystem;
+use fae::core::Message;
+use fae::actors::messages::FaeMessage;
 use std::env;
 
 /// CLI application configuration
@@ -26,7 +28,7 @@ impl Default for FaeConfig {
             query: String::new(),
             search_path: ".".to_string(),
             max_results: 50,
-            timeout_ms: 5000, // Increased timeout for unified system
+            timeout_ms: 15000, // Increased timeout for symbol indexing
         }
     }
 }
@@ -95,13 +97,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         search_params.mode
     );
 
+    // Create control channels for external communication
+    let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel();
+    
     // Create unified search system (CLI mode doesn't need file watching)
-    let mut search_system = UnifiedSearchSystem::new(&config.search_path, false).await?;
+    let mut search_system = UnifiedSearchSystem::new(&config.search_path, false, result_sender, control_receiver).await?;
 
-    // Execute search through unified system
-    let result_count = search_system
-        .search(search_params, config.max_results, config.timeout_ms)
-        .await?;
+    // Initialize symbol indexing
+    let init_message = Message::new("initialize", FaeMessage::ClearResults); // Dummy payload for initialize
+    if let Err(e) = control_sender.send(init_message) {
+        eprintln!("Failed to send initialize message: {}", e);
+        std::process::exit(1);
+    }
+
+    // Send search request
+    let search_message = Message::new("updateSearchParams", FaeMessage::UpdateSearchParams(search_params));
+    if let Err(e) = control_sender.send(search_message) {
+        eprintln!("Failed to send search message: {}", e);
+        std::process::exit(1);
+    }
+
+    // Wait for search completion or timeout
+    let mut result_count = 0;
+    let timeout = tokio::time::Duration::from_millis(config.timeout_ms);
+    
+    match tokio::time::timeout(timeout, async {
+        while let Some(message) = result_receiver.recv().await {
+            match &message.payload {
+                FaeMessage::SearchFinished { result_count: count } => {
+                    return *count;
+                }
+                FaeMessage::PushSearchResult(result) => {
+                    // Print result immediately for CLI mode
+                    println!("{}:{} - {}", result.filename, result.line, result.content.trim());
+                    result_count += 1;
+                    if result_count >= config.max_results {
+                        return result_count;
+                    }
+                }
+                _ => {}
+            }
+        }
+        result_count
+    }).await {
+        Ok(count) => result_count = count,
+        Err(_) => {
+            eprintln!("Search timed out after {}ms", config.timeout_ms);
+        }
+    }
 
     // Shutdown the system
     search_system.shutdown();
