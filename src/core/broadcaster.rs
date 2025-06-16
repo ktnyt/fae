@@ -9,6 +9,128 @@ use std::marker::PhantomData;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot};
 
+
+pub struct Multiplexer<T: Clone + Send + 'static> {
+    receivers: Vec<mpsc::UnboundedReceiver<Message<T>>>,
+    senders: Vec<mpsc::UnboundedSender<Message<T>>>,
+    shutdown_sender: Option<oneshot::Sender<()>>,
+    thread_handle: Option<JoinHandle<()>>,
+}
+
+impl<T: Clone + Send + 'static> Multiplexer<T> {
+    pub fn new(senders: Vec<mpsc::UnboundedSender<Message<T>>>) -> Self {
+        let (shutdown_sender, _shutdown_receiver) = oneshot::channel();
+        Self { 
+            receivers: Vec::new(),
+            senders,
+            shutdown_sender: Some(shutdown_sender),
+            thread_handle: None,
+        }
+    }
+
+    pub fn register(&mut self, target: mpsc::UnboundedReceiver<Message<T>>) -> mpsc::UnboundedReceiver<Message<T>> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.receivers.push(target);
+        self.senders.push(sender);
+        receiver
+    }
+
+
+    pub fn run(&mut self) -> Vec<JoinHandle<()>> {
+        let mut handles = Vec::new();
+        
+        // Move shutdown_receiver out of self for use in the spawned task
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        self.shutdown_sender = Some(shutdown_sender);
+
+        let senders = self.senders.clone();
+        let receivers = std::mem::take(&mut self.receivers);
+
+        let handle = std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                Self::run_multiplexer_loop(receivers, senders, shutdown_receiver).await;
+            });
+        });
+
+        self.thread_handle = Some(handle);
+        handles.push(self.thread_handle.take().unwrap());
+        handles
+    }
+
+    async fn run_multiplexer_loop(
+        receivers: Vec<mpsc::UnboundedReceiver<Message<T>>>,
+        senders: Vec<mpsc::UnboundedSender<Message<T>>>,
+        mut shutdown_receiver: oneshot::Receiver<()>,
+    ) {
+        // Spawn a task for each receiver
+        let mut tasks = Vec::new();
+        let (message_tx, mut message_rx) = mpsc::unbounded_channel::<Message<T>>();
+
+        for mut receiver in receivers {
+            let tx = message_tx.clone();
+            let task = tokio::spawn(async move {
+                while let Some(message) = receiver.recv().await {
+                    if tx.send(message).is_err() {
+                        break;
+                    }
+                }
+            });
+            tasks.push(task);
+        }
+
+        // Drop the original sender to allow proper shutdown detection
+        drop(message_tx);
+
+        loop {
+            tokio::select! {
+                // Handle shutdown signal
+                _ = &mut shutdown_receiver => {
+                    log::debug!("Received shutdown signal for Multiplexer");
+                    break;
+                }
+
+                // Handle messages from any receiver
+                message = message_rx.recv() => {
+                    match message {
+                        Some(msg) => {
+                            log::trace!("Multiplexer broadcasting message: {}", msg.method);
+                            Self::broadcast_to_all(&senders, msg).await;
+                        }
+                        None => {
+                            log::debug!("All receivers closed, shutting down multiplexer");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clean up tasks
+        for task in tasks {
+            task.abort();
+        }
+    }
+
+    async fn broadcast_to_all(senders: &[mpsc::UnboundedSender<Message<T>>], message: Message<T>) {
+        for sender in senders.iter() {
+            if let Err(e) = sender.send(message.clone()) {
+                log::warn!("Failed to broadcast message to target: {}", e);
+            }
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        if let Some(shutdown_sender) = self.shutdown_sender.take() {
+            let _ = shutdown_sender.send(());
+        }
+
+        if let Some(thread_handle) = self.thread_handle.take() {
+            let _ = thread_handle.join();
+        }
+    }
+}
+
 /// A broadcaster that transparently relays messages between multiple actors
 pub struct Broadcaster<T: Clone + Send + 'static> {
     /// Handle to the broadcast loop thread
@@ -174,6 +296,85 @@ mod tests {
             let mut messages = self.received_messages.lock().unwrap();
             messages.push(message);
         }
+    }
+
+    #[tokio::test]
+    async fn test_multiplexer_creation() {
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        let (tx1, _) = mpsc::unbounded_channel::<Message<TestMessage>>();
+        let (tx2, _) = mpsc::unbounded_channel::<Message<TestMessage>>();
+
+        let _multiplexer = Multiplexer::new(vec![tx1, tx2]);
+        // Test that we can create the multiplexer without issues
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    #[tokio::test]
+    async fn test_multiplexer_broadcast() {
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
+        // Create output receivers to capture broadcasts
+        let (output_tx1, mut output_rx1) = mpsc::unbounded_channel::<Message<TestMessage>>();
+        let (output_tx2, mut output_rx2) = mpsc::unbounded_channel::<Message<TestMessage>>();
+
+        // Create multiplexer with output senders
+        let mut multiplexer = Multiplexer::new(vec![output_tx1, output_tx2]);
+
+        // Create input channels and register them
+        let (input_tx1, input_rx1) = mpsc::unbounded_channel::<Message<TestMessage>>();
+        let (input_tx2, input_rx2) = mpsc::unbounded_channel::<Message<TestMessage>>();
+
+        let _managed_rx1 = multiplexer.register(input_rx1);
+        let _managed_rx2 = multiplexer.register(input_rx2);
+
+        // Start the multiplexer
+        let _handles = multiplexer.run();
+
+        sleep(Duration::from_millis(10)).await;
+
+        // Send test messages to input channels
+        let test_message1 = TestMessage {
+            content: "test1".to_string(),
+            number: 1,
+        };
+        let test_message2 = TestMessage {
+            content: "test2".to_string(),
+            number: 2,
+        };
+
+        input_tx1.send(Message::new("method1", test_message1.clone())).unwrap();
+        input_tx2.send(Message::new("method2", test_message2.clone())).unwrap();
+
+        sleep(Duration::from_millis(20)).await;
+
+        // Check that both output receivers got both messages
+        let mut messages1 = Vec::new();
+        let mut messages2 = Vec::new();
+
+        while let Ok(msg) = output_rx1.try_recv() {
+            messages1.push(msg);
+        }
+        while let Ok(msg) = output_rx2.try_recv() {
+            messages2.push(msg);
+        }
+
+        assert_eq!(messages1.len(), 2, "Output 1 should receive 2 messages");
+        assert_eq!(messages2.len(), 2, "Output 2 should receive 2 messages");
+
+        // Verify message content
+        assert_eq!(messages1[0].payload.content, "test1");
+        assert_eq!(messages1[1].payload.content, "test2");
+        assert_eq!(messages2[0].payload.content, "test1");
+        assert_eq!(messages2[1].payload.content, "test2");
+
+        multiplexer.shutdown();
     }
 
     #[tokio::test]

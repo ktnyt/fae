@@ -8,6 +8,7 @@ edition = "2021"
 async-trait = "0.1"
 dirs = "5.0"          # ホームディレクトリ検索
 env_logger = "0.10"   # ログ出力
+futures = "0.3"       # 並行処理用
 fuzzy-matcher = "0.3"  # ファジー検索
 ignore = "0.4"        # .gitignore対応
 log = "0.4"
@@ -22,7 +23,6 @@ walkdir = "2.4"
 [dev-dependencies]
 # For tests and examples only
 tempfile = "3.8"      # 一時ディレクトリ/ファイル作成
-futures = "0.3"       # 並行処理テスト用
 
 [[example]]
 name = "search_comparison"
