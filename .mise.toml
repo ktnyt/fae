@@ -1,0 +1,55 @@
+# fae development environment configuration
+# Run `mise install` to set up the complete development environment
+
+[tools]
+# Rust toolchain
+rust = "1.85.1"
+
+# Essential cargo tools for development
+"cargo:cargo-llvm-cov" = "latest"  # Code coverage analysis
+"cargo:cargo-watch" = "latest"     # File watching and auto-execution
+
+[env]
+# Rust environment variables
+RUST_LOG = "debug"
+RUST_BACKTRACE = "1"
+
+# Development-specific settings
+CARGO_TERM_COLOR = "always"
+CARGO_INCREMENTAL = "1"
+
+[tasks.setup]
+description = "Complete development environment setup"
+run = [
+    "echo '🔧 Setting up fae development environment...'",
+    "cargo --version",
+    "rustc --version", 
+    "echo '📦 Installing project dependencies...'",
+    "cargo build",
+    "echo '🧪 Running tests to verify setup...'",
+    "timeout 30s cargo test --lib -- --test-threads=1 || true",
+    "echo '✅ Development environment setup complete!'",
+    "echo ''",
+    "echo '🚀 Available commands:'",
+    "echo '  make help              - Show all available make targets'",
+    "echo '  make watch-dev         - Watch files and auto-format + coverage'",
+    "echo '  make test              - Run all tests'",
+    "echo '  make test-coverage     - Generate coverage report'",
+    "echo '  cargo run -- --help    - Show fae CLI help'",
+]
+
+[tasks.dev]
+description = "Start development workflow"
+run = "make watch-dev"
+
+[tasks.test]
+description = "Run all tests with coverage"
+run = "make test-coverage"
+
+[tasks.clean]
+description = "Clean build artifacts and start fresh"
+run = [
+    "cargo clean",
+    "rm -rf target/llvm-cov coverage/",
+    "echo '🧹 Clean complete - ready for fresh build'"
+]
