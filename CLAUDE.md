@@ -99,7 +99,27 @@ cargo run --bin benchmark_indexing
 
 # Test Tree-sitter symbol extraction
 cargo run --bin test_tree_sitter_symbols -- src/
+
+# Development completion notifications (フラクタルスプリント用)
+# バナー形式通知 (推奨)
+osascript -e 'display notification "実装完了。レビューをお願いします🔍" with title "フラクタルスプリント完了" sound name "Glass"'
+
+# 重要な完了通知
+osascript -e 'display notification "全ての実装とテストが完了しました" with title "開発完了" subtitle "次のスプリントに進む準備ができました" sound name "Hero"'
+
+# 品質チェック完了通知
+osascript -e 'display notification "cargo test, clippy, fmt すべて完了" with title "品質チェック完了" sound name "Ping"'
+
+# エラー通知
+osascript -e 'display notification "テストで問題が発見されました" with title "スプリント中断" sound name "Basso"'
 ```
+
+**通知音オプション**:
+- `"Glass"` - クリアで控えめ（推奨）
+- `"Ping"` - 短くシンプル  
+- `"Hero"` - 完了感のある音
+- `"Purr"` - 柔らかい音
+- `"Basso"` - エラー・警告用
 
 ## High-Level Architecture
 
