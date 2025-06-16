@@ -491,7 +491,11 @@ mod tests {
 
     #[async_trait]
     impl CommandHandler<String, ()> for TestCommandHandler {
-        async fn on_message(&mut self, message: Message<String>, controller: &CommandController<String, ()>) {
+        async fn on_message(
+            &mut self,
+            message: Message<String>,
+            controller: &CommandController<String, ()>,
+        ) {
             if message.method == "spawn_command" {
                 let _ = controller.spawn(()).await;
             }
@@ -510,13 +514,15 @@ mod tests {
         #[cfg(unix)]
         {
             let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg("echo 'hello stdout'; echo 'hello stderr' >&2");
+            cmd.arg("-c")
+                .arg("echo 'hello stdout'; echo 'hello stderr' >&2");
             cmd
         }
         #[cfg(windows)]
         {
             let mut cmd = Command::new("cmd");
-            cmd.arg("/C").arg("echo hello stdout & echo hello stderr 1>&2");
+            cmd.arg("/C")
+                .arg("echo hello stdout & echo hello stderr 1>&2");
             cmd
         }
     }
@@ -539,7 +545,9 @@ mod tests {
 
         // Send message to trigger command spawn
         let spawn_message = Message::new("spawn_command", "test".to_string());
-        actor_tx.send(spawn_message).expect("Failed to send message");
+        actor_tx
+            .send(spawn_message)
+            .expect("Failed to send message");
 
         // Wait for command execution and output processing
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -552,8 +560,12 @@ mod tests {
         assert!(!stderr_lines.is_empty(), "Should receive stderr output");
 
         // Check content
-        assert!(stdout_lines.iter().any(|line| line.contains("hello stdout")));
-        assert!(stderr_lines.iter().any(|line| line.contains("hello stderr")));
+        assert!(stdout_lines
+            .iter()
+            .any(|line| line.contains("hello stdout")));
+        assert!(stderr_lines
+            .iter()
+            .any(|line| line.contains("hello stderr")));
 
         // Clean up
         actor.shutdown();
@@ -586,7 +598,11 @@ mod tests {
 
     #[async_trait]
     impl CommandHandler<String, ()> for KillTestHandler {
-        async fn on_message(&mut self, message: Message<String>, controller: &CommandController<String, ()>) {
+        async fn on_message(
+            &mut self,
+            message: Message<String>,
+            controller: &CommandController<String, ()>,
+        ) {
             match message.method.as_str() {
                 "spawn_yes" => {
                     let _ = controller.spawn(()).await;
@@ -617,13 +633,14 @@ mod tests {
         #[cfg(windows)]
         {
             let mut cmd = Command::new("cmd");
-            cmd.arg("/C").arg("for /L %i in (1,0,2) do @echo test_output");
+            cmd.arg("/C")
+                .arg("for /L %i in (1,0,2) do @echo test_output");
             cmd
         }
     }
 
     // Test error conditions and edge cases
-    
+
     fn create_failing_command(_args: ()) -> Command {
         // Create a command that will fail to execute
         Command::new("non_existent_command_xyz_12345")
@@ -647,7 +664,10 @@ mod tests {
 
         // Should have no current process after failed spawn
         let process = controller.current_process.lock().unwrap();
-        assert!(process.is_none(), "Should have no process after failed spawn");
+        assert!(
+            process.is_none(),
+            "Should have no process after failed spawn"
+        );
     }
 
     #[tokio::test]
@@ -664,7 +684,10 @@ mod tests {
 
         // Killing when no process should succeed (no-op)
         let result = controller.kill().await;
-        assert!(result.is_ok(), "Kill should succeed even when no process exists");
+        assert!(
+            result.is_ok(),
+            "Kill should succeed even when no process exists"
+        );
     }
 
     #[tokio::test]
@@ -680,24 +703,33 @@ mod tests {
         };
 
         // First spawn
-        controller.spawn(()).await.expect("First spawn should succeed");
-        
+        controller
+            .spawn(())
+            .await
+            .expect("First spawn should succeed");
+
         // Wait for some output
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Second spawn should kill first and start new
-        controller.spawn(()).await.expect("Second spawn should succeed");
-        
+        controller
+            .spawn(())
+            .await
+            .expect("Second spawn should succeed");
+
         // Should receive output from second process
         let output = timeout(Duration::from_millis(1000), output_receiver.recv())
             .await
             .expect("Should receive output")
             .expect("Should have output");
-        
+
         assert!(matches!(output, CommandOutput::Stdout(_)));
-        
+
         // Clean up
-        controller.kill().await.expect("Clean up kill should succeed");
+        controller
+            .kill()
+            .await
+            .expect("Clean up kill should succeed");
     }
 
     #[tokio::test]
@@ -716,7 +748,9 @@ mod tests {
         drop(message_receiver);
 
         // Sending message should fail gracefully
-        let result = controller.send_message("test".to_string(), "payload".to_string()).await;
+        let result = controller
+            .send_message("test".to_string(), "payload".to_string())
+            .await;
         assert!(matches!(result, Err(ActorSendError::ChannelClosed)));
     }
 
@@ -737,10 +771,8 @@ mod tests {
         let controller2 = controller.clone();
 
         // Start concurrent spawn and kill operations
-        let spawn_task = tokio::spawn(async move {
-            controller1.spawn(()).await
-        });
-        
+        let spawn_task = tokio::spawn(async move { controller1.spawn(()).await });
+
         let kill_task = tokio::spawn(async move {
             // Small delay to increase chance of race condition
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -749,12 +781,15 @@ mod tests {
 
         // Both operations should complete without panic
         let (spawn_result, kill_result) = tokio::join!(spawn_task, kill_task);
-        
+
         // At least one should succeed (might race)
         assert!(spawn_result.is_ok() || kill_result.is_ok());
-        
+
         // Ensure final cleanup
-        controller.kill().await.expect("Final cleanup should succeed");
+        controller
+            .kill()
+            .await
+            .expect("Final cleanup should succeed");
     }
 
     // Test CommandActor error handling
@@ -763,7 +798,11 @@ mod tests {
 
     #[async_trait]
     impl CommandHandler<String, ()> for PanicHandler {
-        async fn on_message(&mut self, message: Message<String>, _controller: &CommandController<String, ()>) {
+        async fn on_message(
+            &mut self,
+            message: Message<String>,
+            _controller: &CommandController<String, ()>,
+        ) {
             if message.payload == "panic" {
                 panic!("Test panic in handler");
             }
@@ -787,27 +826,29 @@ mod tests {
 
         // Send a non-panic message first
         let normal_message = Message::new("test", "normal".to_string());
-        actor_tx.send(normal_message).expect("Should send normal message");
-        
+        actor_tx
+            .send(normal_message)
+            .expect("Should send normal message");
+
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Send panic message - this might cause the actor to crash
         let panic_message = Message::new("test", "panic".to_string());
         let send_result = actor_tx.send(panic_message);
-        
+
         // The send might succeed even if handler panics
         // This test mainly ensures the panic doesn't crash the entire program
-        
+
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Try to send another message to see if actor is still alive
         let recovery_message = Message::new("test", "recovery".to_string());
         let recovery_result = actor_tx.send(recovery_message);
-        
+
         // Log results for debugging
         println!("Send panic result: {:?}", send_result);
         println!("Recovery send result: {:?}", recovery_result);
-        
+
         // Clean up
         actor.shutdown();
     }
@@ -826,16 +867,19 @@ mod tests {
 
         // First shutdown
         actor.shutdown();
-        
+
         // Second shutdown should be safe (no-op)
         actor.shutdown();
-        
+
         // Dropping after shutdown should be safe
         drop(actor);
-        
+
         // Sending to closed actor should fail gracefully
         let result = actor_tx.send(Message::new("test", "after_shutdown".to_string()));
-        assert!(result.is_err(), "Should not be able to send to shutdown actor");
+        assert!(
+            result.is_err(),
+            "Should not be able to send to shutdown actor"
+        );
     }
 
     #[tokio::test]
@@ -852,19 +896,22 @@ mod tests {
 
         // Spawn command
         controller.spawn(()).await.expect("Should spawn command");
-        
+
         // Close output receiver immediately
         drop(output_receiver);
-        
+
         // Wait a bit - output tasks should detect closed channel and stop
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         // Process should still be killable
-        controller.kill().await.expect("Should be able to kill even with closed output channel");
+        controller
+            .kill()
+            .await
+            .expect("Should be able to kill even with closed output channel");
     }
 
     // Additional stress tests and edge cases
-    
+
     #[tokio::test]
     async fn test_high_frequency_spawn_kill_cycles() {
         let (message_sender, _message_receiver) = mpsc::unbounded_channel::<Message<String>>();
@@ -880,10 +927,10 @@ mod tests {
         // Rapid spawn/kill cycles to test stability
         for i in 0..10 {
             println!("Cycle {}/10", i + 1);
-            
+
             controller.spawn(()).await.expect("Spawn should succeed");
             tokio::time::sleep(Duration::from_millis(50)).await;
-            
+
             controller.kill().await.expect("Kill should succeed");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -902,22 +949,31 @@ mod tests {
         };
 
         // Spawn first process
-        controller.spawn(()).await.expect("First spawn should succeed");
-        
+        controller
+            .spawn(())
+            .await
+            .expect("First spawn should succeed");
+
         // Kill and immediately spawn again
         controller.kill().await.expect("Kill should succeed");
-        controller.spawn(()).await.expect("Immediate respawn should succeed");
-        
+        controller
+            .spawn(())
+            .await
+            .expect("Immediate respawn should succeed");
+
         // Should receive output from new process
         let output = timeout(Duration::from_millis(1000), output_receiver.recv())
             .await
             .expect("Should receive output")
             .expect("Should have output");
-            
+
         assert!(matches!(output, CommandOutput::Stdout(_)));
-        
+
         // Clean up
-        controller.kill().await.expect("Final cleanup should succeed");
+        controller
+            .kill()
+            .await
+            .expect("Final cleanup should succeed");
     }
 
     // Test with command that produces stderr
@@ -925,13 +981,15 @@ mod tests {
         #[cfg(unix)]
         {
             let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg("echo 'error message' >&2; echo 'normal message'");
+            cmd.arg("-c")
+                .arg("echo 'error message' >&2; echo 'normal message'");
             cmd
         }
         #[cfg(windows)]
         {
             let mut cmd = Command::new("cmd");
-            cmd.arg("/C").arg("echo error message 1>&2 & echo normal message");
+            cmd.arg("/C")
+                .arg("echo error message 1>&2 & echo normal message");
             cmd
         }
     }
@@ -949,10 +1007,10 @@ mod tests {
         };
 
         controller.spawn(()).await.expect("Should spawn command");
-        
+
         let mut stdout_received = false;
         let mut stderr_received = false;
-        
+
         // Collect outputs with timeout
         for _ in 0..10 {
             match timeout(Duration::from_millis(200), output_receiver.recv()).await {
@@ -967,15 +1025,15 @@ mod tests {
                 Ok(None) => break,
                 Err(_) => break, // Timeout
             }
-            
+
             if stdout_received && stderr_received {
                 break;
             }
         }
-        
+
         assert!(stdout_received, "Should receive stdout output");
         assert!(stderr_received, "Should receive stderr output");
-        
+
         // Clean up
         controller.kill().await.expect("Should be able to kill");
     }
@@ -1008,19 +1066,22 @@ mod tests {
             output_sender,
         };
 
-        controller.spawn(()).await.expect("Should spawn quick exit command");
-        
+        controller
+            .spawn(())
+            .await
+            .expect("Should spawn quick exit command");
+
         // Should still receive output even though process exits quickly
         let output = timeout(Duration::from_millis(1000), output_receiver.recv())
             .await
             .expect("Should receive output before timeout")
             .expect("Should have output");
-            
+
         assert!(matches!(output, CommandOutput::Stdout(_)));
-        
+
         // Wait a bit for process to finish
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Kill should succeed even if process already exited
         let kill_result = controller.kill().await;
         // Note: kill might fail if process already exited, which is fine
@@ -1028,7 +1089,7 @@ mod tests {
     }
 
     // Test memory safety under stress
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_memory_safety_stress() {
         let (message_sender, _message_receiver) = mpsc::unbounded_channel::<Message<String>>();
         let (output_sender, mut output_receiver) = mpsc::unbounded_channel::<CommandOutput>();
@@ -1042,7 +1103,7 @@ mod tests {
 
         // Spawn many concurrent operations
         let mut tasks = Vec::new();
-        
+
         for i in 0..20 {
             let controller_clone = controller.clone();
             let task = tokio::spawn(async move {
@@ -1055,12 +1116,12 @@ mod tests {
             });
             tasks.push(task);
         }
-        
+
         // Wait for all tasks to complete
         for task in tasks {
             let _ = task.await;
         }
-        
+
         // Drain output channel
         let mut output_count = 0;
         while let Ok(output) = timeout(Duration::from_millis(10), output_receiver.recv()).await {
@@ -1070,9 +1131,9 @@ mod tests {
                 break;
             }
         }
-        
+
         println!("Received {} outputs during stress test", output_count);
-        
+
         // Final cleanup
         let _ = controller.kill().await;
     }
@@ -1105,11 +1166,14 @@ mod tests {
             output_sender,
         };
 
-        controller.spawn(()).await.expect("Should spawn large output command");
-        
+        controller
+            .spawn(())
+            .await
+            .expect("Should spawn large output command");
+
         let mut line_count = 0;
         let start_time = std::time::Instant::now();
-        
+
         while line_count < 100 && start_time.elapsed() < Duration::from_secs(5) {
             match timeout(Duration::from_millis(500), output_receiver.recv()).await {
                 Ok(Some(CommandOutput::Stdout(_))) => {
@@ -1122,10 +1186,14 @@ mod tests {
                 Err(_) => break, // Timeout
             }
         }
-        
+
         println!("Received {} lines of output", line_count);
-        assert!(line_count >= 50, "Should receive substantial output (got {})", line_count);
-        
+        assert!(
+            line_count >= 50,
+            "Should receive substantial output (got {})",
+            line_count
+        );
+
         // Clean up
         controller.kill().await.expect("Should be able to kill");
     }
@@ -1139,27 +1207,30 @@ mod tests {
         let handler_clone = handler.clone();
 
         // Create CommandActor
-        let mut actor = CommandActor::new(
-            actor_rx,
-            external_tx,
-            Arc::new(create_yes_command),
-            handler,
-        );
+        let mut actor =
+            CommandActor::new(actor_rx, external_tx, Arc::new(create_yes_command), handler);
 
         // Spawn yes command (infinite output)
         let spawn_message = Message::new("spawn_yes", "start".to_string());
-        actor_tx.send(spawn_message).expect("Failed to send spawn message");
+        actor_tx
+            .send(spawn_message)
+            .expect("Failed to send spawn message");
 
         // Wait for output to start flowing
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Verify output is being produced
         let initial_count = handler_clone.get_stdout_count();
-        assert!(initial_count > 0, "Should have received some output before kill");
+        assert!(
+            initial_count > 0,
+            "Should have received some output before kill"
+        );
 
         // Kill the command
         let kill_message = Message::new("kill_command", "stop".to_string());
-        actor_tx.send(kill_message).expect("Failed to send kill message");
+        actor_tx
+            .send(kill_message)
+            .expect("Failed to send kill message");
 
         // Wait for kill to take effect
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1174,13 +1245,17 @@ mod tests {
         let final_count = handler_clone.get_stdout_count();
         let continued_output = final_count - count_after_kill;
 
-        println!("Initial count: {}, After kill: {}, Final: {}, Continued: {}", 
-                 initial_count, count_after_kill, final_count, continued_output);
+        println!(
+            "Initial count: {}, After kill: {}, Final: {}, Continued: {}",
+            initial_count, count_after_kill, final_count, continued_output
+        );
 
         // Should have very little or no continued output after kill
-        assert!(continued_output <= 3, 
-               "Command should stop producing output after kill, but got {} more lines", 
-               continued_output);
+        assert!(
+            continued_output <= 3,
+            "Command should stop producing output after kill, but got {} more lines",
+            continued_output
+        );
 
         // Clean up
         actor.shutdown();

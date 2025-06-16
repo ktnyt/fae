@@ -190,7 +190,11 @@ mod tests {
     #[tokio::test]
     async fn test_ag_actor_integration() {
         // Check if ag is available before running the test
-        if let Err(_) = tokio::process::Command::new("ag").arg("--version").output().await {
+        if let Err(_) = tokio::process::Command::new("ag")
+            .arg("--version")
+            .output()
+            .await
+        {
             println!("Skipping ag integration test - ag not available");
             return;
         }

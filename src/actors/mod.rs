@@ -5,5 +5,5 @@ pub mod messages;
 pub mod ripgrep;
 pub mod types;
 
-pub use ag::{AgActor, AgHandler, create_ag_command_factory};
-pub use ripgrep::{RipgrepActor, RipgrepHandler, create_ripgrep_command_factory};
+pub use ag::{create_ag_command_factory, AgActor, AgHandler};
+pub use ripgrep::{create_ripgrep_command_factory, RipgrepActor, RipgrepHandler};
