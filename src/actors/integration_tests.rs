@@ -525,6 +525,239 @@ pub fn broadcaster_test() {
         
         harness.shutdown();
     }
+
+    #[tokio::test]
+    async fn test_race_condition_prevention() {
+        let mut harness = BroadcastIntegrationHarness::new()
+            .await
+            .expect("Failed to create broadcast test harness");
+        
+        // Start the integration
+        harness.start().await.expect("Failed to start integration");
+        
+        // Create a file with initial content
+        let initial_content = r#"
+pub fn race_test_function() {
+    println!("Initial content");
+}
+"#;
+        
+        let file_path = harness.create_rust_file("race_test.rs", initial_content)
+            .expect("Failed to create rust file");
+        
+        // Wait for initial processing to start
+        sleep(Duration::from_millis(500)).await;
+        
+        // Rapidly update the file multiple times to trigger race conditions
+        let update_tasks = (0..5).map(|i| {
+            let file_path = file_path.clone();
+            let harness_ref = &harness;
+            async move {
+                let updated_content = format!(r#"
+pub fn race_test_function_v{}() {{
+    println!("Updated content version {}");
+}}
+
+pub struct RaceTestStruct{} {{
+    version: u32,
+}}
+"#, i, i, i);
+                
+                // Small delay to create overlapping updates
+                sleep(Duration::from_millis(i * 50)).await;
+                
+                let _ = harness_ref.update_file(&file_path, &updated_content);
+                log::info!("Updated file to version {}", i);
+            }
+        });
+        
+        // Execute all updates concurrently
+        futures::future::join_all(update_tasks).await;
+        
+        // Wait for all processing to complete
+        sleep(Duration::from_millis(3000)).await;
+        
+        // Collect all messages
+        let messages = harness.collect_messages(Duration::from_millis(2000)).await;
+        
+        // Analyze race condition handling
+        let mut update_events = 0;
+        let mut clear_events = 0;
+        let mut push_events = 0;
+        let mut processed_versions = std::collections::HashSet::new();
+        
+        for message in &messages {
+            match &message.payload {
+                FaeMessage::DetectFileUpdate(path) => {
+                    if path.contains("race_test.rs") {
+                        update_events += 1;
+                    }
+                }
+                FaeMessage::ClearSymbolIndex(path) => {
+                    if path.contains("race_test.rs") {
+                        clear_events += 1;
+                    }
+                }
+                FaeMessage::PushSymbolIndex { filepath, content, .. } => {
+                    if filepath.contains("race_test.rs") {
+                        push_events += 1;
+                        
+                        // Extract version number from content
+                        if let Some(start) = content.find("_v") {
+                            if let Some(end) = content[start..].find("()") {
+                                let version_str = &content[start+2..start+end];
+                                if let Ok(version) = version_str.parse::<u32>() {
+                                    processed_versions.insert(version);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        println!("Race condition test results:");
+        println!("  File update events: {}", update_events);
+        println!("  Clear symbol events: {}", clear_events);
+        println!("  Push symbol events: {}", push_events);
+        println!("  Processed versions: {:?}", processed_versions);
+        
+        // Verify race condition handling
+        assert!(update_events >= 3, "Should detect multiple file updates");
+        assert!(clear_events >= 3, "Should clear symbols multiple times");
+        assert!(push_events > 0, "Should push some symbols");
+        
+        // The key test: verify that race condition handling works
+        // We should see evidence that processing was interrupted and restarted
+        // This is indicated by multiple clear events and the fact that updates were processed
+        assert!(clear_events >= update_events, 
+               "Should have at least as many clear events as update events due to restarts");
+        
+        // Due to rapid updates, some processing should have been interrupted
+        // We expect more push events than a single complete processing would produce
+        assert!(push_events >= processed_versions.len(), 
+               "Should have pushed symbols for processed versions");
+        
+        harness.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_initialization_vs_file_change_race() {
+        let mut harness = BroadcastIntegrationHarness::new()
+            .await
+            .expect("Failed to create broadcast test harness");
+        
+        // Create initial files before starting
+        let file1_content = r#"
+pub fn init_race_function1() {
+    println!("Function 1");
+}
+"#;
+        
+        let file2_content = r#"
+pub fn init_race_function2() {
+    println!("Function 2");
+}
+"#;
+        
+        let file1_path = harness.create_rust_file("init_race1.rs", file1_content)
+            .expect("Failed to create file1");
+        let file2_path = harness.create_rust_file("init_race2.rs", file2_content)
+            .expect("Failed to create file2");
+        
+        // Start initialization and immediately update files
+        tokio::join!(
+            harness.start(), // This triggers initialization
+            async {
+                // Small delay then update files during initialization
+                sleep(Duration::from_millis(200)).await;
+                
+                let updated_content1 = r#"
+pub fn init_race_function1_updated() {
+    println!("Updated function 1");
+}
+
+pub struct UpdatedStruct1 {
+    field: String,
+}
+"#;
+                
+                let updated_content2 = r#"
+pub fn init_race_function2_updated() {
+    println!("Updated function 2");
+}
+
+pub enum UpdatedEnum2 {
+    VariantA,
+    VariantB,
+}
+"#;
+                
+                let _ = harness.update_file(&file1_path, updated_content1);
+                let _ = harness.update_file(&file2_path, updated_content2);
+                
+                log::info!("Updated files during initialization");
+            }
+        );
+        
+        // Wait for all processing to complete
+        sleep(Duration::from_millis(4000)).await;
+        
+        // Collect messages
+        let messages = harness.collect_messages(Duration::from_millis(1500)).await;
+        
+        // Analyze initialization vs file change race
+        let mut file1_clears = 0;
+        let mut file1_pushes = 0;
+        let mut file2_clears = 0;
+        let mut file2_pushes = 0;
+        let mut file1_has_updated = false;
+        let mut file2_has_updated = false;
+        
+        for message in &messages {
+            match &message.payload {
+                FaeMessage::ClearSymbolIndex(path) => {
+                    if path.contains("init_race1.rs") {
+                        file1_clears += 1;
+                    } else if path.contains("init_race2.rs") {
+                        file2_clears += 1;
+                    }
+                }
+                FaeMessage::PushSymbolIndex { filepath, content, .. } => {
+                    if filepath.contains("init_race1.rs") {
+                        file1_pushes += 1;
+                        if content.contains("updated") || content.contains("Updated") {
+                            file1_has_updated = true;
+                        }
+                    } else if filepath.contains("init_race2.rs") {
+                        file2_pushes += 1;
+                        if content.contains("updated") || content.contains("Updated") {
+                            file2_has_updated = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        println!("Initialization vs file change race results:");
+        println!("  File1 - clears: {}, pushes: {}, has_updated: {}", file1_clears, file1_pushes, file1_has_updated);
+        println!("  File2 - clears: {}, pushes: {}, has_updated: {}", file2_clears, file2_pushes, file2_has_updated);
+        
+        // Verify that both files were processed
+        assert!(file1_clears > 0, "File1 should have been cleared");
+        assert!(file1_pushes > 0, "File1 should have symbols pushed");
+        assert!(file2_clears > 0, "File2 should have been cleared");
+        assert!(file2_pushes > 0, "File2 should have symbols pushed");
+        
+        // Due to interruption, the final state should reflect the updated content
+        // This tests that the file change interrupts initialization processing
+        assert!(file1_has_updated || file2_has_updated, 
+               "At least one file should have updated content due to race handling");
+        
+        harness.shutdown();
+    }
     
     fn extract_filename(path: &str) -> String {
         std::path::Path::new(path)

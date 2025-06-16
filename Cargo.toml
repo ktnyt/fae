@@ -22,6 +22,7 @@ walkdir = "2.4"
 # For tests and examples only
 env_logger = "0.10"
 tempfile = "3.8"      # 一時ディレクトリ/ファイル作成
+futures = "0.3"       # 並行処理テスト用
 
 [[example]]
 name = "search_comparison"

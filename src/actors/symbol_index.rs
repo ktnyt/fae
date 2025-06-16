@@ -9,13 +9,20 @@ use crate::actors::symbol_extractor::SymbolExtractor;
 use crate::core::{Actor, ActorController, Message, MessageHandler};
 use async_trait::async_trait;
 use ignore::WalkBuilder;
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 
 /// Symbol index generation handler that extracts and broadcasts symbols
 pub struct SymbolIndexHandler {
     search_path: String,
     symbol_extractor: SymbolExtractor,
+    /// Track files currently being processed to handle race conditions
+    processing_files: Arc<Mutex<HashSet<String>>>,
+    /// Track ongoing processing tasks for potential cancellation
+    processing_tasks: Arc<Mutex<Vec<AbortHandle>>>,
 }
 
 impl SymbolIndexHandler {
@@ -26,6 +33,8 @@ impl SymbolIndexHandler {
         Ok(Self {
             search_path,
             symbol_extractor,
+            processing_files: Arc::new(Mutex::new(HashSet::new())),
+            processing_tasks: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -35,10 +44,11 @@ impl SymbolIndexHandler {
 
         let search_path = self.search_path.clone();
         let controller_clone = controller.clone();
+        let processing_files_clone = self.processing_files.clone();
 
         // Perform initial indexing in a blocking task
         let result = tokio::task::spawn_blocking(move || {
-            Self::scan_and_index_files(&search_path, controller_clone)
+            Self::scan_and_index_files(&search_path, controller_clone, processing_files_clone)
         })
         .await;
 
@@ -62,6 +72,7 @@ impl SymbolIndexHandler {
     fn scan_and_index_files(
         search_path: &str,
         controller: ActorController<FaeMessage>,
+        processing_files: Arc<Mutex<HashSet<String>>>,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut file_count = 0;
         let mut extractor = SymbolExtractor::new()?;
@@ -91,6 +102,12 @@ impl SymbolIndexHandler {
 
             let file_path_str = path.to_string_lossy().to_string();
 
+            // Mark file as being processed
+            {
+                let mut files = processing_files.lock().unwrap();
+                files.insert(file_path_str.clone());
+            }
+
             // Clear existing symbols for this file
             let clear_message = FaeMessage::ClearSymbolIndex(file_path_str.clone());
             if let Err(e) = tokio::runtime::Handle::current().block_on(async {
@@ -99,14 +116,28 @@ impl SymbolIndexHandler {
                     .await
             }) {
                 log::warn!("Failed to send clearSymbolIndex message: {}", e);
+                // Remove from processing set on error
+                let mut files = processing_files.lock().unwrap();
+                files.remove(&file_path_str);
                 continue;
             }
 
             // Extract symbols from the file
             match extractor.extract_symbols_from_file(path) {
                 Ok(symbols) => {
-                    // Broadcast each symbol
+                    // Broadcast each symbol, checking for interruption
                     for symbol in symbols {
+                        // Check if processing was interrupted
+                        let still_processing = {
+                            let files = processing_files.lock().unwrap();
+                            files.contains(&file_path_str)
+                        };
+
+                        if !still_processing {
+                            log::info!("Processing of {} was interrupted during initialization", file_path_str);
+                            break;
+                        }
+
                         let push_message = FaeMessage::PushSymbolIndex {
                             filepath: symbol.filepath.clone(),
                             line: symbol.line,
@@ -129,6 +160,12 @@ impl SymbolIndexHandler {
                 Err(e) => {
                     log::warn!("Failed to extract symbols from {}: {}", file_path_str, e);
                 }
+            }
+
+            // Remove from processing set when done (or interrupted)
+            {
+                let mut files = processing_files.lock().unwrap();
+                files.remove(&file_path_str);
             }
         }
 
@@ -160,6 +197,23 @@ impl SymbolIndexHandler {
             return;
         }
 
+        // Check if this file is currently being processed
+        let is_processing = {
+            let processing_files = self.processing_files.lock().unwrap();
+            processing_files.contains(filepath)
+        };
+
+        if is_processing {
+            log::info!("File {} is currently being processed, interrupting previous processing", filepath);
+            self.interrupt_file_processing(filepath).await;
+        }
+
+        // Mark file as being processed
+        {
+            let mut processing_files = self.processing_files.lock().unwrap();
+            processing_files.insert(filepath.to_string());
+        }
+
         // Clear existing symbols for this file
         let _ = controller
             .send_message(
@@ -168,13 +222,70 @@ impl SymbolIndexHandler {
             )
             .await;
 
-        // Re-extract symbols from the file
-        match self.symbol_extractor.extract_symbols_from_file(path) {
+        // Process file in an abortable task
+        let filepath_clone = filepath.to_string();
+        let path_clone = path.to_path_buf();
+        let controller_clone = controller.clone();
+        let processing_files_clone = self.processing_files.clone();
+        
+        let handle = tokio::spawn(async move {
+            Self::process_file_symbols(
+                &filepath_clone,
+                &path_clone,
+                controller_clone,
+                processing_files_clone,
+            ).await
+        });
+
+        // Store the abort handle
+        {
+            let mut processing_tasks = self.processing_tasks.lock().unwrap();
+            processing_tasks.push(handle.abort_handle());
+        }
+
+        // Wait for the task to complete
+        let _ = handle.await;
+    }
+
+    /// Process file symbols in an abortable way
+    async fn process_file_symbols(
+        filepath: &str,
+        path: &std::path::PathBuf,
+        controller: ActorController<FaeMessage>,
+        processing_files: Arc<Mutex<HashSet<String>>>,
+    ) {
+        // Use a new extractor instance for this task
+        let mut extractor = match SymbolExtractor::new() {
+            Ok(extractor) => extractor,
+            Err(e) => {
+                log::error!("Failed to create symbol extractor: {}", e);
+                // Remove from processing set before returning
+                {
+                    let mut files = processing_files.lock().unwrap();
+                    files.remove(filepath);
+                }
+                return;
+            }
+        };
+
+        // Extract symbols from the file
+        match extractor.extract_symbols_from_file(path) {
             Ok(symbols) => {
                 log::debug!("Extracted {} symbols from {}", symbols.len(), filepath);
 
                 // Broadcast each symbol
                 for symbol in symbols {
+                    // Check if processing was interrupted
+                    let still_processing = {
+                        let files = processing_files.lock().unwrap();
+                        files.contains(filepath)
+                    };
+
+                    if !still_processing {
+                        log::info!("Processing of {} was interrupted, stopping symbol broadcast", filepath);
+                        return;
+                    }
+
                     let push_message = FaeMessage::PushSymbolIndex {
                         filepath: symbol.filepath.clone(),
                         line: symbol.line,
@@ -183,15 +294,40 @@ impl SymbolIndexHandler {
                         symbol_type: symbol.symbol_type,
                     };
 
-                    let _ = controller
+                    if let Err(e) = controller
                         .send_message("pushSymbolIndex".to_string(), push_message)
-                        .await;
+                        .await {
+                        log::warn!("Failed to send pushSymbolIndex message: {}", e);
+                        break;
+                    }
                 }
+
+                log::debug!("Successfully processed symbols for {}", filepath);
             }
             Err(e) => {
                 log::warn!("Failed to extract symbols from {}: {}", filepath, e);
             }
         }
+
+        // Remove from processing set when done
+        {
+            let mut files = processing_files.lock().unwrap();
+            files.remove(filepath);
+        }
+    }
+
+    /// Interrupt processing for a specific file
+    async fn interrupt_file_processing(&mut self, filepath: &str) {
+        log::debug!("Interrupting processing for file: {}", filepath);
+        
+        // Remove from processing set to signal interruption
+        {
+            let mut processing_files = self.processing_files.lock().unwrap();
+            processing_files.remove(filepath);
+        }
+
+        // Note: We don't abort the actual tasks here because they check the processing_files
+        // set regularly and will self-terminate when they find they're no longer marked as processing
     }
 
     /// Handle file deletion by clearing its symbols
@@ -201,6 +337,17 @@ impl SymbolIndexHandler {
         controller: &ActorController<FaeMessage>,
     ) {
         log::info!("Handling file deletion: {}", filepath);
+
+        // Interrupt any ongoing processing for this file
+        let is_processing = {
+            let processing_files = self.processing_files.lock().unwrap();
+            processing_files.contains(filepath)
+        };
+
+        if is_processing {
+            log::info!("Interrupting processing for deleted file: {}", filepath);
+            self.interrupt_file_processing(filepath).await;
+        }
 
         // Clear symbols for the deleted file
         let _ = controller
