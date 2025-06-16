@@ -101,6 +101,32 @@ impl ResultHandler {
         self.max_results = max_results;
         log::debug!("Updated max results to: {}", max_results);
     }
+
+    /// Handle symbol index progress report
+    fn handle_symbol_index_report(&self, queued_files: usize, indexed_files: usize, symbols_found: usize) {
+        let progress_percentage = if queued_files > 0 {
+            (indexed_files as f64 / queued_files as f64 * 100.0).round() as u32
+        } else {
+            100
+        };
+
+        log::info!(
+            "Symbol indexing progress: {}% ({}/{} files, {} symbols found)",
+            progress_percentage,
+            indexed_files,
+            queued_files,
+            symbols_found
+        );
+
+        // Print progress to stdout for CLI users
+        eprintln!(
+            "Indexing: {}% ({}/{} files, {} symbols)",
+            progress_percentage,
+            indexed_files,
+            queued_files,
+            symbols_found
+        );
+    }
 }
 
 #[async_trait]
@@ -130,6 +156,13 @@ impl MessageHandler<FaeMessage> for ResultHandler {
                     self.set_max_results(max_results);
                 } else {
                     log::warn!("setMaxResults received unexpected payload");
+                }
+            }
+            "reportSymbolIndex" => {
+                if let FaeMessage::ReportSymbolIndex { queued_files, indexed_files, symbols_found } = message.payload {
+                    self.handle_symbol_index_report(queued_files, indexed_files, symbols_found);
+                } else {
+                    log::warn!("reportSymbolIndex received unexpected payload");
                 }
             }
             // Ignore other messages (they're not for us)

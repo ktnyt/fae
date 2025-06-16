@@ -29,6 +29,19 @@ pub struct SymbolIndexHandler {
     operation_queue: Arc<Mutex<VecDeque<FileOperation>>>,
     /// Track if we're currently processing a file to prevent concurrent operations
     is_processing: Arc<Mutex<bool>>,
+    /// Statistics tracking
+    stats: Arc<Mutex<IndexingStats>>,
+}
+
+/// Statistics for symbol indexing progress
+#[derive(Debug, Clone)]
+struct IndexingStats {
+    /// Total number of files queued for processing
+    queued_files: usize,
+    /// Number of files that have been successfully indexed
+    indexed_files: usize,
+    /// Total number of symbols found across all indexed files
+    symbols_found: usize,
 }
 
 impl SymbolIndexHandler {
@@ -38,6 +51,11 @@ impl SymbolIndexHandler {
             search_path,
             operation_queue: Arc::new(Mutex::new(VecDeque::new())),
             is_processing: Arc::new(Mutex::new(false)),
+            stats: Arc::new(Mutex::new(IndexingStats {
+                queued_files: 0,
+                indexed_files: 0,
+                symbols_found: 0,
+            })),
         })
     }
 
@@ -57,6 +75,13 @@ impl SymbolIndexHandler {
         match result {
             Ok(Ok(file_count)) => {
                 log::info!("Initial queue populated with {} files", file_count);
+                // Update statistics with initial file count
+                {
+                    let mut stats = self.stats.lock().unwrap();
+                    stats.queued_files = file_count;
+                }
+                // Send initial progress report
+                self.send_progress_report(controller).await;
                 // Start processing queue
                 self.process_next_from_queue(controller).await;
             }
@@ -235,28 +260,40 @@ impl SymbolIndexHandler {
             .await;
 
         // Process file symbols
-        Self::process_file_symbols_sync(filepath, path, controller.clone()).await;
+        let symbol_count = Self::process_file_symbols_sync(filepath, path, controller.clone()).await;
+        
+        // Update statistics
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.indexed_files += 1;
+            stats.symbols_found += symbol_count;
+        }
+        
+        // Send progress report
+        self.send_progress_report(controller).await;
     }
 
     /// Process file symbols synchronously (simplified version for queue processing)
+    /// Returns the number of symbols found in the file
     async fn process_file_symbols_sync(
         filepath: &str,
         path: &std::path::Path,
         controller: ActorController<FaeMessage>,
-    ) {
+    ) -> usize {
         // Use a new extractor instance for this task
         let mut extractor = match SymbolExtractor::new() {
             Ok(extractor) => extractor,
             Err(e) => {
                 log::error!("Failed to create symbol extractor: {}", e);
-                return;
+                return 0;
             }
         };
 
         // Extract symbols from the file
         match extractor.extract_symbols_from_file(path) {
             Ok(symbols) => {
-                log::debug!("Extracted {} symbols from {}", symbols.len(), filepath);
+                let symbol_count = symbols.len();
+                log::debug!("Extracted {} symbols from {}", symbol_count, filepath);
 
                 // Broadcast each symbol
                 for symbol in symbols {
@@ -287,9 +324,12 @@ impl SymbolIndexHandler {
                 {
                     log::warn!("Failed to send completeSymbolIndex message: {}", e);
                 }
+                
+                symbol_count
             }
             Err(e) => {
                 log::warn!("Failed to extract symbols from {}: {}", filepath, e);
+                0
             }
         }
     }
@@ -298,6 +338,39 @@ impl SymbolIndexHandler {
     fn is_currently_processing(&self) -> bool {
         let processing = self.is_processing.lock().unwrap();
         *processing
+    }
+
+    /// Send progress report to external listeners
+    async fn send_progress_report(&self, controller: &ActorController<FaeMessage>) {
+        let (stats, current_queue_size) = {
+            let stats_guard = self.stats.lock().unwrap();
+            let queue_guard = self.operation_queue.lock().unwrap();
+            (stats_guard.clone(), queue_guard.len())
+        };
+        
+        // Update total queued files to include initial files + any new files in queue
+        let total_queued = stats.queued_files + current_queue_size;
+        
+        log::info!(
+            "Symbol indexing progress: {}/{} files processed, {} symbols found, {} pending",
+            stats.indexed_files,
+            total_queued,
+            stats.symbols_found,
+            current_queue_size
+        );
+
+        let report_message = FaeMessage::ReportSymbolIndex {
+            queued_files: total_queued,
+            indexed_files: stats.indexed_files,
+            symbols_found: stats.symbols_found,
+        };
+
+        if let Err(e) = controller
+            .send_message("reportSymbolIndex".to_string(), report_message)
+            .await
+        {
+            log::warn!("Failed to send reportSymbolIndex message: {}", e);
+        }
     }
 
     /// Handle file deletion by clearing its symbols
