@@ -7,7 +7,6 @@ help:
 	@echo "Available targets:"
 	@echo "  test             - Run all tests"
 	@echo "  test-coverage    - Run tests with coverage analysis"
-	@echo "  test-coverage-open - Run coverage and open HTML report"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  lint             - Run clippy linter"
 	@echo "  format           - Format code with rustfmt"
@@ -20,17 +19,9 @@ test:
 
 # Run tests with coverage
 test-coverage:
-	cargo llvm-cov --lib --package fae --html -- --test-threads=1
-	@echo "Coverage report generated in target/llvm-cov/html/index.html"
+	cargo llvm-cov --lib --package fae --lcov --output-path coverage/lcov.info -- --test-threads=1
+	@echo "Coverage report generated in coverage/lcov.info"
 
-# Run coverage and open HTML report
-test-coverage-open: test-coverage
-	open target/llvm-cov/html/index.html
-
-# Command module specific coverage
-test-coverage-command:
-	cargo llvm-cov --lib --package fae test command --html -- --test-threads=1
-	@echo "Command module coverage report generated"
 
 # Clean build artifacts
 clean:

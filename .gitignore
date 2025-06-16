@@ -19,3 +19,6 @@ sfs_backup_*/
 # Old configuration
 project-memory.json
 mise.toml
+
+# Coverage
+/coverage/
