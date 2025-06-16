@@ -40,7 +40,7 @@ impl FilepathSearchHandler {
 
         // Perform streaming search in a blocking task
         let result = tokio::task::spawn_blocking(move || {
-            Self::search_filepaths_streaming(&search_path, &query, mode, controller_clone)
+            Self::search_filepaths(&search_path, &query, mode, controller_clone)
         })
         .await;
 
@@ -58,7 +58,7 @@ impl FilepathSearchHandler {
     }
 
     /// Search filepaths using fuzzy matching with streaming results (blocking operation)
-    fn search_filepaths_streaming(
+    fn search_filepaths(
         search_path: &str,
         query: &str,
         mode: SearchMode,
@@ -119,80 +119,23 @@ impl FilepathSearchHandler {
         // Stream results in order of relevance
         for result in scored_results {
             let message = FaeMessage::PushSearchResult(result);
-            
+
             // Use blocking send since we're in a blocking context
             let send_result = tokio::runtime::Handle::current().block_on(async {
-                controller.send_message("pushSearchResult".to_string(), message).await
+                controller
+                    .send_message("pushSearchResult".to_string(), message)
+                    .await
             });
 
             if let Err(e) = send_result {
                 log::warn!("Failed to send search result: {}", e);
                 break;
             }
-            
+
             result_count += 1;
         }
 
         Ok(result_count)
-    }
-
-    /// Legacy search function for backward compatibility
-    fn search_filepaths(
-        search_path: &str,
-        query: &str,
-        mode: SearchMode,
-    ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut results = Vec::new();
-
-        // Only handle Filepath mode
-        if mode != SearchMode::Filepath {
-            return Ok(results);
-        }
-
-        let matcher = SkimMatcherV2::default();
-
-        // Walk through files and directories using ignore crate
-        let walker = WalkBuilder::new(search_path)
-            .hidden(false) // Show hidden files by default
-            .git_ignore(true) // Respect .gitignore
-            .git_global(true) // Respect global .gitignore
-            .git_exclude(true) // Respect .git/info/exclude
-            .ignore(true) // Respect .ignore files
-            .parents(true) // Check parent directories for ignore files
-            .build();
-
-        for entry in walker.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            let path_str = path.to_string_lossy();
-
-            // Skip the search root itself
-            if path_str == search_path {
-                continue;
-            }
-
-            // Perform fuzzy matching against the relative path
-            let relative_path = if let Ok(rel_path) = path.strip_prefix(search_path) {
-                rel_path.to_string_lossy().to_string()
-            } else {
-                path_str.to_string()
-            };
-
-            if let Some((score, indices)) = matcher.fuzzy_indices(&relative_path, query) {
-                // Create a search result for the matched filepath
-                let search_result = SearchResult {
-                    filename: path_str.to_string(),
-                    line: 1,              // Line 1 for filepaths
-                    column: score as u32, // Use score as offset for sorting
-                    content: Self::format_match_content(&relative_path, &indices, path.is_dir()),
-                };
-                results.push(search_result);
-            }
-        }
-
-        // Sort by fuzzy matching score (higher is better)
-        results.sort_by(|a, b| b.column.cmp(&a.column));
-
-        Ok(results)
     }
 
     /// Format the match content with highlighted characters
@@ -422,20 +365,42 @@ mod tests {
         actor.shutdown();
     }
 
-    #[test]
-    fn test_search_filepaths_functionality() {
-        // Test the core filepath search functionality
-        let results = FilepathSearchHandler::search_filepaths("./src", "rs", SearchMode::Filepath)
-            .expect("Search should succeed");
+    #[tokio::test]
+    async fn test_search_filepaths_streaming_functionality() {
+        // Test the core filepath search streaming functionality
+        let (tx, mut rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let controller = ActorController::new(tx);
 
-        println!("Found {} filepath matches for 'rs'", results.len());
+        let result_count = tokio::task::spawn_blocking(move || {
+            FilepathSearchHandler::search_filepaths("./src", "rs", SearchMode::Filepath, controller)
+        })
+        .await
+        .expect("Task should not panic")
+        .expect("Search should succeed");
+
+        println!("Found {} filepath matches for 'rs'", result_count);
         assert!(
-            results.len() > 0,
+            result_count > 0,
             "Should find matches for 'rs' in filepaths"
         );
 
+        // Collect the streaming results
+        let mut received_results = Vec::new();
+        while let Ok(message) = rx.try_recv() {
+            if message.method == "pushSearchResult" {
+                if let FaeMessage::PushSearchResult(result) = message.payload {
+                    received_results.push(result);
+                }
+            }
+        }
+
         // Verify that results have correct structure
-        for result in results.iter().take(3) {
+        assert_eq!(
+            received_results.len(),
+            result_count,
+            "Result count should match streamed results"
+        );
+        for result in received_results.iter().take(3) {
             assert!(!result.filename.is_empty());
             assert_eq!(result.line, 1); // Filepaths should have line 1
             assert!(!result.content.is_empty());
@@ -446,16 +411,33 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_search_filepaths_wrong_mode() {
+    #[tokio::test]
+    async fn test_search_filepaths_streaming_wrong_mode() {
         // Test that non-Filepath modes return empty results
-        let results = FilepathSearchHandler::search_filepaths("./src", "test", SearchMode::Literal)
-            .expect("Search should succeed");
+        let (tx, mut rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let controller = ActorController::new(tx);
+
+        let result_count = tokio::task::spawn_blocking(move || {
+            FilepathSearchHandler::search_filepaths(
+                "./src",
+                "test",
+                SearchMode::Literal,
+                controller,
+            )
+        })
+        .await
+        .expect("Task should not panic")
+        .expect("Search should succeed");
 
         assert_eq!(
-            results.len(),
-            0,
+            result_count, 0,
             "Should return no results for non-Filepath mode"
+        );
+
+        // Verify no messages were sent
+        assert!(
+            rx.try_recv().is_err(),
+            "Should not receive any messages for unsupported mode"
         );
     }
 }
