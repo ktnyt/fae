@@ -205,19 +205,12 @@ async fn execute_symbol_search(
     let init_message = Message::new("initialize", FaeMessage::ClearResults);
     symbol_index_tx.send(init_message)?;
 
-    // Wait for initial indexing to complete
-    tokio::time::sleep(Duration::from_millis(2000)).await;
-
-    // Send search query
-    let search_message = Message::new(
-        "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_params),
-    );
-    symbol_search_tx.send(search_message)?;
-
-    // Collect results and forward symbol index messages
+    // Start message forwarding immediately and wait for indexing to complete
     let mut result_count = 0;
     let mut search_completed = false;
+    let mut search_sent = false;
+    let mut files_indexed = 0;
+    let expected_files = 24; // Approximately expected based on earlier output
 
     while result_count < max_results && !search_completed {
         match timeout(Duration::from_millis(timeout_ms), external_rx.recv()).await {
@@ -246,9 +239,26 @@ async fn execute_symbol_search(
                         }
                     }
                     "completeSymbolIndex" => {
-                        // Forward complete message but don't trigger search immediately
+                        files_indexed += 1;
+                        log::debug!("File indexing completed: {}/{}", files_indexed, expected_files);
+                        
+                        // Forward complete message to SymbolSearchActor
                         if let Err(e) = symbol_search_tx.send(message) {
                             log::warn!("Failed to forward complete symbol index message to search actor: {}", e);
+                        }
+                        
+                        // Send search query once we have enough files indexed
+                        if !search_sent && files_indexed >= (expected_files / 2) {
+                            log::info!("Sending search query after {} files indexed", files_indexed);
+                            let search_message = Message::new(
+                                "updateSearchParams",
+                                FaeMessage::UpdateSearchParams(search_params.clone()),
+                            );
+                            if let Err(e) = symbol_search_tx.send(search_message) {
+                                log::error!("Failed to send search query: {}", e);
+                            } else {
+                                search_sent = true;
+                            }
                         }
                     }
                     _ => {
@@ -259,6 +269,21 @@ async fn execute_symbol_search(
             Ok(None) => break,
             Err(_) => {
                 if result_count == 0 && !search_completed {
+                    // If search hasn't been sent yet and we've waited, send it anyway
+                    if !search_sent {
+                        log::warn!("Timeout waiting for indexing, sending search query anyway");
+                        let search_message = Message::new(
+                            "updateSearchParams",
+                            FaeMessage::UpdateSearchParams(search_params.clone()),
+                        );
+                        if let Err(e) = symbol_search_tx.send(search_message) {
+                            log::error!("Failed to send fallback search query: {}", e);
+                        } else {
+                            search_sent = true;
+                            continue; // Give it another chance
+                        }
+                    }
+                    
                     // Wait a bit more for symbol indexing to complete
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     continue;
