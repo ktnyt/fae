@@ -62,6 +62,32 @@ cargo check
 cargo build --release
 ```
 
+### Code Coverage
+```bash
+# Install coverage tool
+cargo install cargo-llvm-cov
+
+# Run tests with coverage analysis
+make test-coverage  # or: cargo llvm-cov --lib --package fae --html -- --test-threads=1
+
+# Open HTML coverage report
+make test-coverage-open  # or: open target/llvm-cov/html/index.html
+
+# Command module specific coverage
+make test-coverage-command
+
+# CI-friendly coverage (no HTML)
+make test-coverage-ci
+
+# Development workflow (format, lint, test, coverage)
+make dev
+```
+
+**Coverage Targets:**
+- **command.rs**: 96.40% line coverage, 79.42% region coverage (excellent)
+- **Overall project**: Aim for >85% line coverage
+- **Critical modules**: Aim for >90% line coverage
+
 ### Development Tools
 ```bash
 # Debug logging

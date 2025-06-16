@@ -1,5 +1,9 @@
 # fae - Fast And Elegant code search
 
+[![CI](https://github.com/ktnyt/fae/workflows/CI/badge.svg)](https://github.com/ktnyt/fae/actions)
+[![Coverage](https://codecov.io/gh/ktnyt/fae/branch/main/graph/badge.svg)](https://codecov.io/gh/ktnyt/fae)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Lightweight and magical code discovery tool with real-time search capabilities
 
 ## Overview
