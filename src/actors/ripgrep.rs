@@ -24,10 +24,8 @@ pub fn create_ripgrep_command_factory(search_path: String) -> impl CommandFactor
         }
 
         // Common flags for structured output
-        cmd.arg("--line-number") // Show line numbers
-            .arg("--column") // Show column numbers
+        cmd.arg("--vimgrep") // Show every match on its own line with line/column numbers
             .arg("--no-heading") // Don't group by file
-            .arg("--with-filename") // Always show filename
             .arg("--color=never") // No color codes
             .arg(&args.query) // Search pattern
             .arg(&search_path); // Search path
@@ -46,7 +44,7 @@ impl RipgrepHandler {
 
     /// Parse ripgrep output line into SearchResult
     fn parse_ripgrep_line(&self, line: &str) -> Option<SearchResult> {
-        // Ripgrep output format with --line-number --column --with-filename:
+        // Ripgrep output format with --vimgrep:
         // filename:line:column:content
         let parts: Vec<&str> = line.splitn(4, ':').collect();
         if parts.len() >= 4 {

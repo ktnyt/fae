@@ -24,9 +24,7 @@ pub fn create_ag_command_factory(search_path: String) -> impl CommandFactory<Sea
         }
 
         // Common flags for structured output
-        cmd.arg("--line-numbers") // Show line numbers
-            .arg("--column") // Show column numbers
-            .arg("--nogroup") // Don't group by file
+        cmd.arg("--vimgrep") // Show every match on its own line with line/column numbers
             .arg("--nocolor") // No color output
             .arg(&args.query) // Search pattern
             .arg(&search_path); // Search path
@@ -45,7 +43,7 @@ impl AgHandler {
 
     /// Parse ag output line into SearchResult
     fn parse_ag_line(&self, line: &str) -> Option<SearchResult> {
-        // Ag output format with --line-numbers --column --nogroup:
+        // Ag output format with --vimgrep:
         // filename:line:column:content
         let parts: Vec<&str> = line.splitn(4, ':').collect();
         if parts.len() >= 4 {

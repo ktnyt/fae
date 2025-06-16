@@ -14,7 +14,6 @@ use tokio::time::timeout;
 
 #[derive(Debug, Clone)]
 struct SearchStats {
-    tool_name: String,
     query: String,
     mode: SearchMode,
     execution_time: Duration,
@@ -25,9 +24,8 @@ struct SearchStats {
 }
 
 impl SearchStats {
-    fn new(tool_name: String) -> Self {
+    fn new() -> Self {
         Self {
-            tool_name,
             query: String::new(),
             mode: SearchMode::Literal,
             execution_time: Duration::from_secs(0),
@@ -56,7 +54,7 @@ async fn run_search_test(
     mode: SearchMode,
     search_path: &str,
 ) -> SearchStats {
-    let mut stats = SearchStats::new(tool_name.to_string());
+    let mut stats = SearchStats::new();
     stats.query = query.to_string();
     stats.mode = mode;
 
@@ -90,7 +88,7 @@ async fn run_search_test(
     let mut first_result_time = None;
 
     // Create appropriate actor
-    let mut actor = match tool_name {
+    let actor = match tool_name {
         "ripgrep" => {
             let actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, search_path);
             Some(actor)
