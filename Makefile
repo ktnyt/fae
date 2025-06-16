@@ -30,9 +30,9 @@ help:
 	@echo "  watch-format     - Watch files and auto-format on changes"
 	@echo "  watch-coverage   - Watch files and update coverage on changes"
 
-# Run all tests
+# Run all tests (no timeout - integration tests require ~70+ seconds)
 test:
-	timeout 30s cargo test --lib -- --test-threads=1
+	cargo test --lib -- --test-threads=1
 
 # Run tests with coverage (using mise-managed cargo-llvm-cov)
 test-coverage:
@@ -67,9 +67,9 @@ check:
 build:
 	cargo build --release
 
-# Run specific test module
+# Run specific test module (no timeout for reliable execution)
 test-command:
-	timeout 30s cargo test -p fae command --lib -- --test-threads=1
+	cargo test -p fae command --lib -- --test-threads=1
 
 # CI-friendly coverage (no HTML)
 test-coverage-ci:

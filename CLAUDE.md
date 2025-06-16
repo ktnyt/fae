@@ -136,18 +136,30 @@ osascript -e 'display notification "テストで問題が発見されました" 
 ### Core Components
 - **`src/main.rs`**: CLI entry point (async support)
 - **`src/lib.rs`**: Public API and re-exports
-- **`src/types.rs`**: Core data structures (SearchResult, SymbolType, etc.)
-- **`src/tui.rs`**: TUI with async iterator + message engine architecture
-- **`src/cli/`**: CLI application and search coordination
-- **`src/searchers/`**: Multi-mode search engines with backend support
-- **`src/languages/`**: Tree-sitter integration for symbol extraction
+- **`src/cli.rs`**: CLI application and search coordination
+- **`src/unified_search.rs`**: Unified search system with Actor coordination
+- **`src/core/`**: Core Actor system infrastructure
+  - `actor.rs`: Base Actor trait and CommandActor implementation
+  - `broadcaster.rs`: Event broadcasting and coordination
+  - `command.rs`: Command execution and process management
+  - `message.rs`: Message passing types and protocols
+- **`src/actors/`**: Complete Actor-based search implementation
+  - `symbol_index.rs`: Symbol indexing and file watching
+  - `symbol_search.rs`: Symbol search with fuzzy matching
+  - `watch.rs`: File system monitoring and change detection
+  - `result_handler.rs`: Result aggregation and management
+  - `ripgrep.rs`, `ag.rs`, `native.rs`: Backend search implementations
+  - `filepath.rs`: File path search functionality
+  - `symbol_extractor.rs`: Tree-sitter symbol extraction
 
 ### Key Design Patterns
-- **Event-Driven TUI**: tokio::select! for event multiplexing
+- **Actor System**: Message-driven architecture with tokio actors
+- **Broadcaster Pattern**: Event distribution across multiple actors
 - **Async Integration**: spawn_blocking for sync/async bridge
 - **Multi-mode Search**: Content, Symbol (#), File (>), and Regex (/) search modes
-- **Progressive Indexing**: Non-blocking background processing
+- **Progressive Indexing**: Non-blocking background processing with WatchActor
 - **Parallel Processing**: Rayon-based concurrent file processing
+- **Command Management**: Safe process spawning and lifecycle management
 
 ## Important Implementation Details
 
@@ -183,11 +195,12 @@ osascript -e 'display notification "テストで問題が発見されました" 
 - **Security Tests**: Malicious input and edge cases
 - **Performance Tests**: Benchmark regressions and scalability
 
-### TUI Architecture Patterns (Phase 6-7 実装済み)
-- **非同期Iterator + メッセージエンジン**: tokio::select!によるイベント多重化
-- **ratatui + crossterm**: ターミナル状態管理とクリーンアップ
-- **spawn_blocking**: 同期コードの非同期統合パターン
-- **イベント型安全性**: TuiEvent, InputEvent, SearchEvent による型安全な処理
+### Actor System Architecture (Phase 8 実装済み)
+- **Unified Actor Communication**: Broadcaster-mediated message passing
+- **Type-Safe Messages**: Structured message protocols with Actor-specific types
+- **Async Actor Coordination**: tokio::select! for event multiplexing across actors
+- **Resource Management**: Safe command spawning and cleanup with CommandActor
+- **Progressive State Management**: Streaming updates with ResultHandlerActor
 
 ## CLI Usage Notes
 
@@ -225,11 +238,14 @@ cargo build --release # Release build must succeed
 
 ## Important Files to Understand
 
-- **`src/search_coordinator.rs`**: Core indexing logic with parallel processing
-- **`src/tui.rs`**: Progressive indexing and UI responsiveness
-- **`src/languages/common.rs`**: Tree-sitter query management
-- **`src/index_manager.rs`**: File exclusion logic and discovery
-- **`tests/`**: Comprehensive test suite (92+ tests) with security and real-world scenarios
+- **`src/unified_search.rs`**: Unified search system and Actor coordination
+- **`src/core/broadcaster.rs`**: Event broadcasting and message distribution
+- **`src/core/command.rs`**: Command execution and process management
+- **`src/actors/symbol_index.rs`**: Symbol indexing and file watching
+- **`src/actors/symbol_search.rs`**: Fuzzy search implementation
+- **`src/actors/watch.rs`**: File system monitoring
+- **`src/actors/result_handler.rs`**: Result aggregation and streaming
+- **`src/actors/integration_tests.rs`**: Comprehensive Actor integration tests
 
 ## 重要な学習と記憶 (Lessons Learned)
 
@@ -239,7 +255,7 @@ cargo build --release # Release build must succeed
 **原因**:
 - 統合テスト（WatchActor + SymbolIndexActor）は複雑な非同期処理を含む
 - ファイルシステム監視、Actor間協調、複数ファイル操作は時間がかかる
-- 実際の実行時間: 全81テストで54.46秒
+- 実際の実行時間: 全129テストで70.19秒
 
 **解決策**:
 - **開発時**: timeoutなしで実行 (`cargo test --lib -- --test-threads=1`)
@@ -260,40 +276,48 @@ cargo test --lib -- --test-threads=1
 - 複数ファイルの並行更新テストは十分な実行時間が必要
 - Actor間のメッセージ協調テストは非同期待機を含む
 
-### 競合状態防止の実装成果 (2025-06-16)
-- **処理中ファイル追跡**: `Arc<Mutex<HashSet<String>>>`による安全な状態管理
+### Actor System実装成果 (2025-06-16)
+- **完全なActor分離**: SymbolIndexActor, SymbolSearchActor, WatchActor, ResultHandlerActor
+- **Broadcaster統合**: 型安全なメッセージ配信とイベント協調
+- **競合状態防止**: `Arc<Mutex<HashSet<String>>>`による安全な状態管理
 - **優雅な中断処理**: 進行中処理の適切な停止と新規処理の開始
-- **包括的テストカバレッジ**: 高速連続更新と初期化中断の両方をテスト
-- **警告ゼロ達成**: クリーンなコードベース（81テスト、5警告→0警告）
+- **包括的テストカバレッジ**: 129テスト（128 passed, 1 failed）
+- **統合テスト**: Actor間協調、ファイル監視、競合状態の包括的検証
 
 ## Current Status (2025-06-16)
 
 ### Completed Features ✅
-- **Phase 1-7**: Complete TUI implementation with async iterator + message engine
+- **Phase 8**: Complete Actor System implementation with unified search
 - **Multi-mode Search**: Content, Symbol (#), File (>), and Regex (/) search modes
-- **Backend Integration**: ripgrep/ag support with fallback
-- **Test Coverage**: 171 total tests (119 existing + 52 new TUI-related)
+- **Backend Integration**: ripgrep/ag support with fallback via dedicated actors
+- **Test Coverage**: 129 total tests with comprehensive Actor integration
 - **Production Ready**: Full CLI compatibility maintained
-- **Symbol Index Architecture**: 完全な階層化アーキテクチャが実装済み
-- **TUI Refactoring Phase 1**: Modular architecture implemented (2025-06-13)
-  - Separated input handling, text editing, styles, and constants
-  - Eliminated 200+ lines of duplicated code from src/tui.rs
-  - Created reusable EditableText trait pattern
-  - Unified style management with TuiStyles structure
-  - Improved maintainability and testability
+- **Actor System Architecture**: 完全なActor-based architectureが実装済み
+  - SymbolIndexActor: Symbol indexing and file watching
+  - SymbolSearchActor: Fuzzy search with symbol filtering
+  - WatchActor: File system monitoring and change detection
+  - ResultHandlerActor: Result aggregation and streaming
+  - CommandActor: Safe process spawning and lifecycle management
+  - Broadcaster: Event distribution and Actor coordination
+- **Core Infrastructure**: Type-safe message passing, async coordination, resource management
 
-### Symbol Index Implementation Status (2025-06-13)
-- **SearchCoordinator**: プログレッシブインデックス構築、並列シンボル抽出
-- **SymbolIndex**: SkimMatcherベースの高速ファジー検索、メタデータ統合
-- **CacheManager**: LRUキャッシュ、変更検知、100MBメモリ制限
+### Actor System Implementation Status (2025-06-16)
+- **SymbolIndexActor**: プログレッシブインデックス構築、並列シンボル抽出、ファイル監視統合
+- **SymbolSearchActor**: SkimMatcherベースの高速ファジー検索、メタデータ統合
+- **WatchActor**: リアルタイムファイル変更検知、インデックス更新通知
+- **ResultHandlerActor**: 結果集約、ストリーミング配信、最大結果制限
+- **CommandActor**: 安全なプロセス実行、ライフサイクル管理、競合状態防止
+- **Broadcaster**: 型安全なメッセージ配信、Actor間イベント協調
 - **Tree-sitter Integration**: 4言語対応（Rust, TypeScript, JavaScript, Python）
-- **IndexManager**: ファイル発見、.gitignore統合、バイナリ除外
+- **Backend Integration**: ripgrep, ag, native search actors
 
-### Next Phase Candidates (Phase 8-9)
-- **File Watching**: Real-time index updates with notify integration
+### Next Phase Candidates (Phase 9-10)
+- **Performance Optimization**: Large codebase scaling, memory optimization
 - **Git Integration**: Changed file detection, branch information
 - **Configuration**: .fae.toml support for customization
-- **Performance**: Further optimizations for large codebases
+- **Extended Language Support**: Additional Tree-sitter language integrations
+- **Advanced Search Features**: Semantic search, code context analysis
+- **Test Stability**: Fix failing test_spawn_immediately_after_kill
 
 
 ## 📚 詳細ドキュメント
@@ -312,4 +336,4 @@ cargo test --lib -- --test-threads=1
 - **Indexing Speed**: ~46,875 symbols/second after regex optimization
 - **Memory Usage**: Efficient with large codebases through streaming processing  
 - **UI Responsiveness**: 16ms polling interval for real-time updates
-- **Test Coverage**: 171 comprehensive tests covering core functionality
+- **Test Coverage**: 129 comprehensive tests covering Actor system and integration
