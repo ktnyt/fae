@@ -432,6 +432,138 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_is_binary_file_edge_cases() {
+        // Test files without extension
+        assert!(!NativeSearchHandler::is_binary_file(Path::new("Makefile")));
+        assert!(!NativeSearchHandler::is_binary_file(Path::new("LICENSE")));
+        
+        // Test case sensitivity
+        assert!(NativeSearchHandler::is_binary_file(Path::new("test.EXE")));
+        assert!(NativeSearchHandler::is_binary_file(Path::new("image.PNG")));
+        
+        // Test invalid paths (should not panic)
+        assert!(!NativeSearchHandler::is_binary_file(Path::new("")));
+    }
+
+    #[test]
+    fn test_should_ignore_file_edge_cases() {
+        // Test nested ignore patterns
+        assert!(NativeSearchHandler::should_ignore_file(Path::new("project/.git/hooks/pre-commit")));
+        assert!(NativeSearchHandler::should_ignore_file(Path::new("app/node_modules/package/index.js")));
+        
+        // Test files that start with ignore pattern names
+        assert!(!NativeSearchHandler::should_ignore_file(Path::new("targets.rs")));
+        assert!(!NativeSearchHandler::should_ignore_file(Path::new("git-utils.rs")));
+        
+        // Test empty paths
+        assert!(!NativeSearchHandler::should_ignore_file(Path::new("")));
+    }
+
+    #[tokio::test]
+    async fn test_native_search_handler_error_cases() {
+        // Test native search handler edge cases using a full actor setup
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        // Create NativeSearchActor
+        let mut actor = NativeSearchActor::new_native_search_actor(actor_rx, external_tx, "./test");
+
+        // Test 1: Invalid payload type - send wrong message type
+        let invalid_message = Message::new("updateSearchParams", FaeMessage::ClearResults);
+        actor_tx.send(invalid_message).expect("Should send message");
+
+        // Test 2: Unknown method
+        let unknown_message = Message::new("unknownMethod", FaeMessage::ClearResults);  
+        actor_tx.send(unknown_message).expect("Should send message");
+
+        // Wait a bit for message processing
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // No result messages should be received for invalid operations
+        let mut result_count = 0;
+        while let Ok(message) = tokio::time::timeout(
+            std::time::Duration::from_millis(50), 
+            external_rx.recv()
+        ).await {
+            if let Some(_msg) = message {
+                result_count += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Should receive no search results for invalid operations
+        assert_eq!(result_count, 0, "Invalid operations should not produce search results");
+
+        // Clean up
+        actor.shutdown();
+    }
+
+    #[test]
+    fn test_search_files_error_cases() {
+        // Test search in non-existent directory
+        let result = NativeSearchHandler::search_files("/non/existent/path", "test", SearchMode::Literal);
+        // Should handle gracefully, not panic
+        assert!(result.is_ok());
+        let results = result.unwrap();
+        assert_eq!(results.len(), 0);
+
+        // Test invalid regex pattern
+        let result = NativeSearchHandler::search_files("./src", "[invalid_regex", SearchMode::Regexp);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_command_factory_regex_mode() {
+        let factory = create_native_search_command_factory("./src".to_string());
+
+        let query = SearchParams {
+            query: "test.*pattern".to_string(),
+            mode: SearchMode::Regexp,
+        };
+
+        let cmd = factory(query);
+        let program = cmd.as_std().get_program();
+        assert_eq!(program, "echo"); // Should still be dummy command
+    }
+
+    #[tokio::test]
+    async fn test_native_handler_stdout_stderr() {
+        // Test that native handler properly handles unexpected stdout/stderr
+        // Since we can't easily create a CommandController for testing,
+        // this test primarily validates that the methods exist and don't panic
+        let _handler = NativeSearchHandler::new("./test".to_string());
+        
+        // Use actor setup to get real controller access during actual operation
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        let mut actor = NativeSearchActor::new_native_search_actor(actor_rx, external_tx, "./test");
+
+        // Send a dummy search to trigger any setup, then clean up immediately
+        let search_message = Message::new(
+            "updateSearchParams", 
+            FaeMessage::UpdateSearchParams(SearchParams {
+                query: "test".to_string(),
+                mode: SearchMode::Literal,
+            })
+        );
+        actor_tx.send(search_message).expect("Should send message");
+        
+        // Wait a tiny bit then clean up
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        
+        // Drain any results
+        while let Ok(_) = tokio::time::timeout(
+            std::time::Duration::from_millis(5), 
+            external_rx.recv()
+        ).await {}
+
+        // Clean up
+        actor.shutdown();
+    }
+
     #[tokio::test]
     async fn test_search_files_regex_mode() {
         let results = NativeSearchHandler::search_files("./src", r"fn \w+\(", SearchMode::Regexp)

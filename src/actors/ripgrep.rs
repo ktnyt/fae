@@ -188,6 +188,85 @@ mod tests {
         assert_eq!(program, "rg");
     }
 
+    #[test]
+    fn test_parse_ripgrep_line_invalid_format() {
+        let handler = RipgrepHandler::new();
+
+        // Test invalid format - too few colons
+        let line = "invalidformat";
+        let result = handler.parse_ripgrep_line(line);
+        assert!(result.is_none());
+
+        // Test invalid format - missing parts
+        let line = "file.rs:42";
+        let result = handler.parse_ripgrep_line(line);
+        assert!(result.is_none());
+
+        // Test invalid line number
+        let line = "file.rs:not_a_number:15:content";
+        let result = handler.parse_ripgrep_line(line);
+        assert!(result.is_none());
+
+        // Test invalid column number
+        let line = "file.rs:42:not_a_number:content";
+        let result = handler.parse_ripgrep_line(line);
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_ripgrep_command_factory_regex_mode() {
+        let factory = create_ripgrep_command_factory("./src".to_string());
+
+        let query = SearchParams {
+            query: "test.*pattern".to_string(),
+            mode: SearchMode::Regexp,
+        };
+
+        let cmd = factory(query);
+        let program = cmd.as_std().get_program();
+        assert_eq!(program, "rg");
+    }
+
+    #[tokio::test]
+    async fn test_ripgrep_handler_error_cases() {
+        // Test ripgrep handler edge cases using a full actor setup
+        let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
+        // Create RipgrepActor  
+        let mut actor = RipgrepActor::new_ripgrep_actor(actor_rx, external_tx, "./test");
+
+        // Test 1: Invalid payload type - send wrong message type
+        let invalid_message = Message::new("updateSearchParams", FaeMessage::ClearResults);
+        actor_tx.send(invalid_message).expect("Should send message");
+
+        // Test 2: Unknown method
+        let unknown_message = Message::new("unknownMethod", FaeMessage::ClearResults);  
+        actor_tx.send(unknown_message).expect("Should send message");
+
+        // Wait a bit for message processing
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // No result messages should be received for invalid operations
+        let mut result_count = 0;
+        while let Ok(message) = tokio::time::timeout(
+            std::time::Duration::from_millis(50), 
+            external_rx.recv()
+        ).await {
+            if let Some(_msg) = message {
+                result_count += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Should receive no search results for invalid operations
+        assert_eq!(result_count, 0, "Invalid operations should not produce search results");
+
+        // Clean up
+        actor.shutdown();
+    }
+
     #[tokio::test]
     async fn test_ripgrep_actor_integration() {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
