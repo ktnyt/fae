@@ -309,6 +309,11 @@ pub struct TuiApp {
     // Search control channel for dynamic search execution
     search_control_sender: Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
 
+    // Search debounce control
+    debounce_delay: Duration,
+    pending_search_query: Option<String>,
+    last_input_time: Option<Instant>,
+
     // Separated application state
     pub state: TuiState,
 }
@@ -350,6 +355,10 @@ impl TuiApp {
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
             state_receiver: Some(state_receiver),
             search_control_sender: None, // Will be set later via set_search_control_sender
+            // Search debounce control
+            debounce_delay: Duration::from_millis(300), // 300ms debounce delay
+            pending_search_query: None,
+            last_input_time: None,
             state: TuiState::new(),
         };
 
@@ -464,6 +473,29 @@ impl TuiApp {
                     self.needs_redraw = true;
                 }
 
+                // Search debounce timer - execute pending search when debounce delay expires
+                _ = async {
+                    if let (Some(last_time), Some(_)) = (self.last_input_time, &self.pending_search_query) {
+                        let elapsed = last_time.elapsed();
+                        if elapsed >= self.debounce_delay {
+                            tokio::time::sleep(Duration::from_millis(0)).await // Immediate wake
+                        } else {
+                            tokio::time::sleep(self.debounce_delay - elapsed).await
+                        }
+                    } else {
+                        std::future::pending().await // No pending search
+                    }
+                } => {
+                    // Execute the pending search
+                    if let Some(query) = self.pending_search_query.take() {
+                        log::debug!("TuiApp: Executing debounced search for '{}'", query);
+                        if let Err(e) = self.execute_search(query) {
+                            log::error!("Failed to execute debounced search: {}", e);
+                        }
+                        self.last_input_time = None;
+                    }
+                }
+
                 // Periodic updates (toast expiration, etc.)
                 _ = tokio::time::sleep(Duration::from_millis(50)) => {
                     if self.state.update_toast() {
@@ -537,33 +569,33 @@ impl TuiApp {
         }
     }
 
-    /// Execute incremental search as user types
+    /// Execute incremental search as user types with debounce
     fn execute_incremental_search(&mut self) {
         // Clear previous results and selection (but keep search input intact)
         self.state.search_results.clear();
         self.state.selected_result_index = None;
 
         if !self.state.search_input.is_empty() {
-            log::debug!("TuiApp: Incremental search for '{}'", self.state.search_input);
+            log::debug!("TuiApp: Scheduling debounced search for '{}'", self.state.search_input);
             
-            // Execute dynamic search immediately (no toast notifications for search)
-            if let Err(e) = self.execute_search(self.state.search_input.clone()) {
-                log::error!("Failed to execute incremental search: {}", e);
-                // Only log errors, don't show toast for search operations
-            } else {
-                log::debug!("TuiApp: Incremental search request sent successfully");
-            }
+            // Set up debounced search - save query and timestamp
+            self.pending_search_query = Some(self.state.search_input.clone());
+            self.last_input_time = Some(Instant::now());
         } else {
-            // Clear results when input is empty
-            log::debug!("TuiApp: Empty search input, clearing results");
+            // Clear results immediately when input is empty
+            log::debug!("TuiApp: Empty search input, clearing results immediately");
+            
+            // Cancel any pending search
+            self.pending_search_query = None;
+            self.last_input_time = None;
+            
+            // Execute clear search immediately for empty query
+            if let Err(e) = self.execute_search(String::new()) {
+                log::error!("Failed to execute clear search: {}", e);
+            }
         }
     }
 
-    /// Update search results based on current input (legacy method)
-    /// Trigger search execution - shows current search mode and clears results
-    fn update_search_results(&mut self) {
-        self.execute_incremental_search();
-    }
 
     /// Move cursor down to next result
     fn move_cursor_down(&mut self) {
