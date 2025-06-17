@@ -15,6 +15,8 @@ use tokio::sync::mpsc;
 pub struct TuiActor {
     tui_handle: TuiHandle,
     control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+    current_search_result_count: usize,
+    max_search_results: usize,
 }
 
 impl TuiActor {
@@ -26,6 +28,8 @@ impl TuiActor {
         Self { 
             tui_handle,
             control_sender,
+            current_search_result_count: 0,
+            max_search_results: 9999,
         }
     }
 
@@ -92,7 +96,7 @@ impl MessageHandler<FaeMessage> for TuiActor {
                     if let Err(e) = self.tui_handle.show_toast(
                         progress_message,
                         ToastType::Info,
-                        Duration::from_secs(2),
+                        Duration::from_secs(3),
                     ) {
                         log::warn!("Failed to show indexing progress toast: {}", e);
                     }
@@ -111,6 +115,31 @@ impl MessageHandler<FaeMessage> for TuiActor {
             }
 
             FaeMessage::PushSearchResult(result) => {
+                // Check if we've reached the maximum result limit
+                if self.current_search_result_count >= self.max_search_results {
+                    log::warn!(
+                        "TuiActor: Maximum search results ({}) reached, aborting search",
+                        self.max_search_results
+                    );
+                    
+                    // Send abort search message to stop all ongoing searches
+                    let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
+                    if let Err(e) = self.control_sender.send(abort_message) {
+                        log::error!("Failed to send abort search message: {}", e);
+                    }
+                    
+                    // Show toast notification about hitting the limit
+                    if let Err(e) = self.tui_handle.show_toast(
+                        format!("Search stopped: {} results limit reached", self.max_search_results),
+                        ToastType::Warning,
+                        Duration::from_secs(5),
+                    ) {
+                        log::warn!("Failed to show search limit toast: {}", e);
+                    }
+                    
+                    return; // Don't process this result
+                }
+                
                 // Add search result to TUI
                 let formatted_result = format!(
                     "{}:{} - {}",
@@ -126,7 +155,12 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 {
                     log::warn!("Failed to add search result to TUI: {}", e);
                 } else {
-                    log::debug!("TuiActor: Search result added successfully");
+                    // Increment the result count on successful addition
+                    self.current_search_result_count += 1;
+                    log::debug!(
+                        "TuiActor: Search result added successfully (count: {})",
+                        self.current_search_result_count
+                    );
                 }
             }
 
@@ -139,18 +173,26 @@ impl MessageHandler<FaeMessage> for TuiActor {
             }
 
             FaeMessage::ClearResults => {
-                // Clear search results in TUI
+                // Clear search results in TUI and reset counter
                 if let Err(e) = self
                     .tui_handle
                     .update_state(crate::tui::StateUpdate::new().with_clear_results())
                 {
                     log::warn!("Failed to clear TUI results: {}", e);
                 }
+                
+                // Reset search result counter
+                self.current_search_result_count = 0;
+                log::debug!("TuiActor: Search result counter reset");
             }
 
             FaeMessage::UpdateSearchParams(params) => {
                 // Don't update TUI search input - it should remain user-controlled
                 log::debug!("Search started for: '{}'", params.query);
+                
+                // Reset search result counter for new search
+                self.current_search_result_count = 0;
+                log::debug!("TuiActor: Search result counter reset for new search");
             }
 
             // Handle file change notifications
@@ -309,5 +351,83 @@ mod tests {
                 assert!(results[0].contains("fn test_function() {"));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_search_result_limit_enforcement() {
+        let (tui_tx, mut tui_rx) = mpsc::unbounded_channel();
+        let tui_handle = crate::tui::TuiHandle {
+            state_sender: tui_tx,
+        };
+        let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+        let mut tui_actor = TuiActor::new(tui_handle, control_tx);
+
+        let (controller_tx, _controller_rx) = mpsc::unbounded_channel();
+        let controller = ActorController::new(controller_tx);
+
+        // Set a lower limit for testing (instead of 9999)
+        tui_actor.max_search_results = 3;
+
+        // Add results up to the limit
+        for i in 1..=3 {
+            let search_result = SearchResult {
+                filename: format!("test{}.rs", i),
+                line: i as u32,
+                column: 10,
+                content: format!("content {}", i),
+            };
+
+            let result_message = Message::new(
+                "pushSearchResult",
+                FaeMessage::PushSearchResult(search_result),
+            );
+
+            tui_actor.on_message(result_message, &controller).await;
+        }
+
+        // Verify all 3 results were added
+        assert_eq!(tui_actor.current_search_result_count, 3);
+
+        // Try to add a 4th result - this should trigger the limit
+        let overflow_result = SearchResult {
+            filename: "overflow.rs".to_string(),
+            line: 999,
+            column: 10,
+            content: "overflow content".to_string(),
+        };
+
+        let overflow_message = Message::new(
+            "pushSearchResult",
+            FaeMessage::PushSearchResult(overflow_result),
+        );
+
+        tui_actor.on_message(overflow_message, &controller).await;
+
+        // Verify that abort message was sent
+        if let Ok(abort_msg) = control_rx.try_recv() {
+            assert_eq!(abort_msg.method, "abortSearch");
+            if let FaeMessage::AbortSearch = abort_msg.payload {
+                // Correct message type
+            } else {
+                panic!("Expected AbortSearch message");
+            }
+        } else {
+            panic!("Expected abort message to be sent");
+        }
+
+        // Verify result count didn't increase beyond limit
+        assert_eq!(tui_actor.current_search_result_count, 3);
+
+        // Verify toast notification was sent
+        let mut toast_found = false;
+        while let Ok(state_update) = tui_rx.try_recv() {
+            if let Some((message, _, _)) = state_update.toast {
+                if message.contains("results limit reached") {
+                    toast_found = true;
+                    break;
+                }
+            }
+        }
+        assert!(toast_found, "Expected toast notification about search limit");
     }
 }
