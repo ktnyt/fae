@@ -17,6 +17,7 @@ pub struct LanguageConfig {
 pub struct SymbolExtractor {
     parser: Parser,
     rust_config: Option<LanguageConfig>,
+    javascript_config: Option<LanguageConfig>,
 }
 
 impl SymbolExtractor {
@@ -27,9 +28,13 @@ impl SymbolExtractor {
         // Initialize Rust language support
         let rust_config = Self::create_rust_config()?;
 
+        // Initialize JavaScript language support
+        let javascript_config = Self::create_javascript_config()?;
+
         Ok(Self {
             parser,
             rust_config: Some(rust_config),
+            javascript_config: Some(javascript_config),
         })
     }
 
@@ -103,6 +108,36 @@ impl SymbolExtractor {
         Ok(LanguageConfig { language, query })
     }
 
+    /// Create JavaScript language configuration with queries
+    fn create_javascript_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
+        let language = tree_sitter_javascript::language();
+
+        // Tree-sitter query for JavaScript symbols (simplified)
+        let query_source = r#"
+        ; Function declarations
+        (function_declaration
+          name: (identifier) @function.name)
+        
+        ; Class declarations
+        (class_declaration
+          name: (identifier) @class.name)
+        
+        ; Variable declarations
+        (variable_declarator
+          name: (identifier) @variable.name)
+        
+        ; Function parameters
+        (function_declaration
+          parameters: (formal_parameters
+            (identifier) @parameter.name))
+        "#;
+
+        let query = Query::new(&language, query_source)
+            .map_err(|e| format!("Failed to parse JavaScript query: {}", e))?;
+
+        Ok(LanguageConfig { language, query })
+    }
+
     /// Extract symbols from a file
     pub fn extract_symbols_from_file(
         &mut self,
@@ -124,6 +159,8 @@ impl SymbolExtractor {
         // Determine language based on file extension
         let language_config = if filepath.ends_with(".rs") {
             self.rust_config.as_ref()
+        } else if filepath.ends_with(".js") || filepath.ends_with(".mjs") || filepath.ends_with(".cjs") {
+            self.javascript_config.as_ref()
         } else {
             return Ok(Vec::new()); // Unsupported language
         };
@@ -325,6 +362,79 @@ impl User {
     }
 
     #[test]
+    fn test_javascript_symbol_extraction() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let javascript_code = r#"
+// Function declarations
+function greet(name) {
+    return "Hello " + name;
+}
+
+// Variable declarations
+let userName = "John";
+var userAge = 30;
+
+// Const declarations
+const MAX_USERS = 100;
+"#;
+
+        let symbols = extractor
+            .extract_symbols_from_content(javascript_code, "test.js".to_string())
+            .expect("Failed to extract JavaScript symbols");
+
+        assert!(!symbols.is_empty(), "Should extract some JavaScript symbols");
+
+        // Check that we found the expected symbol types
+        let symbol_names: Vec<String> = symbols.iter().map(|s| s.content.clone()).collect();
+        println!("Extracted JavaScript symbols: {:?}", symbol_names);
+
+        // We should find function, variable, and parameter symbols
+        let has_function = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Function);
+        let has_variable = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Variable);
+        let has_parameter = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Parameter);
+
+        assert!(has_function, "Should find function symbols");
+        assert!(has_variable, "Should find variable symbols");
+        assert!(has_parameter, "Should find parameter symbols");
+    }
+
+    #[test]
+    fn test_javascript_file_extensions() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        let js_code = r#"
+function testFunction() {
+    return "test";
+}
+"#;
+
+        // Test .js extension
+        let symbols_js = extractor
+            .extract_symbols_from_content(js_code, "test.js".to_string())
+            .expect("Failed to extract from .js file");
+        assert!(!symbols_js.is_empty(), "Should extract from .js files");
+
+        // Test .mjs extension
+        let symbols_mjs = extractor
+            .extract_symbols_from_content(js_code, "test.mjs".to_string())
+            .expect("Failed to extract from .mjs file");
+        assert!(!symbols_mjs.is_empty(), "Should extract from .mjs files");
+
+        // Test .cjs extension
+        let symbols_cjs = extractor
+            .extract_symbols_from_content(js_code, "test.cjs".to_string())
+            .expect("Failed to extract from .cjs file");
+        assert!(!symbols_cjs.is_empty(), "Should extract from .cjs files");
+    }
+
+    #[test]
     fn test_unsupported_language() {
         let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
 
@@ -352,6 +462,10 @@ class MyClass:
         assert!(
             extractor.rust_config.is_some(),
             "Default extractor should have Rust config"
+        );
+        assert!(
+            extractor.javascript_config.is_some(),
+            "Default extractor should have JavaScript config"
         );
     }
 
