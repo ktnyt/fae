@@ -7,6 +7,7 @@
 use crate::actors::messages::FaeMessage;
 use crate::actors::symbol_extractor::SymbolExtractor;
 use crate::core::{Actor, ActorController, Message, MessageHandler};
+use crate::languages::LanguageRegistry;
 use async_trait::async_trait;
 use ignore::WalkBuilder;
 use std::collections::VecDeque;
@@ -138,7 +139,11 @@ impl SymbolIndexHandler {
     /// Check if file type is supported for symbol extraction
     fn is_supported_file(path: &Path) -> bool {
         if let Some(extension) = path.extension() {
-            matches!(extension.to_str(), Some("rs" | "js" | "mjs" | "cjs"))
+            if let Some(ext_str) = extension.to_str() {
+                LanguageRegistry::is_extension_supported(ext_str)
+            } else {
+                false
+            }
         } else {
             false
         }
