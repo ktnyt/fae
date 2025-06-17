@@ -4,6 +4,12 @@
 //! 1. Input box - for search queries
 //! 2. Results box - for displaying search results
 //! 3. Status bar - for basic help information
+//!
+//! Internal state includes:
+//! - Input string for search queries
+//! - Search results array with navigation
+//! - Cursor position for result selection
+//! - Toast display state and content
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -19,15 +25,79 @@ use ratatui::{
 };
 use std::{
     io::{stdout, Result, Stdout},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-/// Simple TUI application with three basic components
+/// Toast notification state and content
+#[derive(Clone, Debug)]
+pub struct ToastState {
+    pub visible: bool,
+    pub message: String,
+    pub toast_type: ToastType,
+    pub show_until: Option<Instant>,
+}
+
+/// Type of toast notification
+#[derive(Clone, Debug, PartialEq)]
+pub enum ToastType {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+impl ToastState {
+    /// Create a new hidden toast
+    pub fn new() -> Self {
+        Self {
+            visible: false,
+            message: String::new(),
+            toast_type: ToastType::Info,
+            show_until: None,
+        }
+    }
+
+    /// Show a toast with specified message and type for given duration
+    pub fn show(&mut self, message: String, toast_type: ToastType, duration: Duration) {
+        self.visible = true;
+        self.message = message;
+        self.toast_type = toast_type;
+        self.show_until = Some(Instant::now() + duration);
+    }
+
+    /// Update toast state - hide if expired
+    pub fn update(&mut self) {
+        if let Some(until) = self.show_until {
+            if Instant::now() >= until {
+                self.hide();
+            }
+        }
+    }
+
+    /// Hide the toast
+    pub fn hide(&mut self) {
+        self.visible = false;
+        self.show_until = None;
+    }
+}
+
+/// Simple TUI application with complete internal state for drawing
 pub struct TuiApp {
+    // Terminal management
     terminal: Terminal<CrosstermBackend<Stdout>>,
-    search_input: String,
-    search_results: Vec<String>,
     should_quit: bool,
+    
+    // 1. Input string state
+    pub search_input: String,
+    
+    // 2. Search results array
+    pub search_results: Vec<String>,
+    
+    // 3. Result cursor position information  
+    pub selected_result_index: Option<usize>,
+    
+    // 4. Toast state (display/hide and content)
+    pub toast_state: ToastState,
 }
 
 impl TuiApp {
@@ -56,9 +126,11 @@ impl TuiApp {
 
         Ok(TuiApp {
             terminal,
+            should_quit: false,
             search_input: String::new(),
             search_results: Vec::new(),
-            should_quit: false,
+            selected_result_index: None,
+            toast_state: ToastState::new(),
         })
     }
 
@@ -103,6 +175,14 @@ impl TuiApp {
                 self.should_quit = true;
             }
 
+            // Result navigation
+            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.move_cursor_down();
+            }
+            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.move_cursor_up();
+            }
+
             // Text input
             KeyCode::Char(c) => {
                 self.search_input.push(c);
@@ -113,9 +193,13 @@ impl TuiApp {
                 self.update_search_results();
             }
 
-            // Enter to trigger search
+            // Enter to trigger search or select result
             KeyCode::Enter => {
-                self.update_search_results();
+                if self.selected_result_index.is_some() {
+                    self.handle_result_selection();
+                } else {
+                    self.update_search_results();
+                }
             }
 
             _ => {}
@@ -125,6 +209,7 @@ impl TuiApp {
     /// Update search results based on current input
     fn update_search_results(&mut self) {
         self.search_results.clear();
+        self.selected_result_index = None;
         
         if !self.search_input.is_empty() {
             // Add some mock results for demonstration
@@ -134,13 +219,82 @@ impl TuiApp {
                     i, i * 10, self.search_input
                 ));
             }
+            
+            // Set cursor to first result if we have results
+            if !self.search_results.is_empty() {
+                self.selected_result_index = Some(0);
+            }
+            
+            // Show toast with search info
+            self.toast_state.show(
+                format!("Found {} results for '{}'", self.search_results.len(), self.search_input),
+                ToastType::Info,
+                Duration::from_secs(2),
+            );
+        }
+    }
+
+    /// Move cursor down to next result
+    fn move_cursor_down(&mut self) {
+        if !self.search_results.is_empty() {
+            match self.selected_result_index {
+                Some(index) => {
+                    if index + 1 < self.search_results.len() {
+                        self.selected_result_index = Some(index + 1);
+                    } else {
+                        // Wrap to first result
+                        self.selected_result_index = Some(0);
+                    }
+                }
+                None => {
+                    self.selected_result_index = Some(0);
+                }
+            }
+        }
+    }
+
+    /// Move cursor up to previous result
+    fn move_cursor_up(&mut self) {
+        if !self.search_results.is_empty() {
+            match self.selected_result_index {
+                Some(index) => {
+                    if index > 0 {
+                        self.selected_result_index = Some(index - 1);
+                    } else {
+                        // Wrap to last result
+                        self.selected_result_index = Some(self.search_results.len() - 1);
+                    }
+                }
+                None => {
+                    self.selected_result_index = Some(self.search_results.len() - 1);
+                }
+            }
+        }
+    }
+
+    /// Handle result selection (Enter key on selected result)
+    fn handle_result_selection(&mut self) {
+        if let Some(index) = self.selected_result_index {
+            if let Some(result) = self.search_results.get(index) {
+                // Show toast with selected result info
+                self.toast_state.show(
+                    format!("Selected: {}", result),
+                    ToastType::Success,
+                    Duration::from_secs(3),
+                );
+            }
         }
     }
 
     /// Draw the UI
     fn draw(&mut self) -> Result<()> {
+        // Update toast state
+        self.toast_state.update();
+        
         let search_input = self.search_input.clone();
         let search_results = self.search_results.clone();
+        let selected_index = self.selected_result_index;
+        let toast_state = self.toast_state.clone();
         
         self.terminal.draw(|f| {
             let chunks = Layout::default()
@@ -156,10 +310,15 @@ impl TuiApp {
             render_input_box(f, chunks[0], &search_input);
 
             // 2. Results box
-            render_results_box(f, chunks[1], &search_results);
+            render_results_box(f, chunks[1], &search_results, selected_index);
 
             // 3. Status bar
             render_status_bar(f, chunks[2]);
+            
+            // 4. Toast (if visible)
+            if toast_state.visible {
+                render_toast(f, &toast_state);
+            }
         })?;
         Ok(())
     }
@@ -186,15 +345,29 @@ fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &s
     f.render_widget(input, area);
 }
 
-/// Render the results box
-fn render_results_box(f: &mut Frame, area: ratatui::layout::Rect, search_results: &[String]) {
+/// Render the results box with cursor highlighting
+fn render_results_box(f: &mut Frame, area: ratatui::layout::Rect, search_results: &[String], selected_index: Option<usize>) {
     let items: Vec<ListItem> = search_results
         .iter()
-        .map(|result| ListItem::new(result.as_str()))
+        .enumerate()
+        .map(|(i, result)| {
+            let item = ListItem::new(result.as_str());
+            if Some(i) == selected_index {
+                item.style(Style::default().fg(Color::Black).bg(Color::White))
+            } else {
+                item
+            }
+        })
         .collect();
 
+    let title = if let Some(index) = selected_index {
+        format!("Search Results ({}/{})", index + 1, search_results.len())
+    } else {
+        "Search Results".to_string()
+    };
+
     let results_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Search Results"))
+        .block(Block::default().borders(Borders::ALL).title(title))
         .style(Style::default().fg(Color::White));
 
     f.render_widget(results_list, area);
@@ -202,9 +375,65 @@ fn render_results_box(f: &mut Frame, area: ratatui::layout::Rect, search_results
 
 /// Render the status bar
 fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect) {
-    let help_text = "Type to search | Enter: Execute | Esc/Ctrl+C: Quit";
+    let help_text = "Type to search | ↑↓/Ctrl+P/N: Navigate | Enter: Select | Esc/Ctrl+C: Quit";
     let status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
     f.render_widget(status, area);
+}
+
+/// Render toast notification
+fn render_toast(f: &mut Frame, toast_state: &ToastState) {
+    use ratatui::{
+        layout::Alignment,
+        widgets::Clear,
+    };
+    
+    // Create a centered popup area (30% width, 15% height)
+    let popup_area = centered_rect(30, 15, f.size());
+    
+    // Clear the area first
+    f.render_widget(Clear, popup_area);
+    
+    // Choose color based on toast type
+    let (border_color, text_color) = match toast_state.toast_type {
+        ToastType::Info => (Color::Blue, Color::White),
+        ToastType::Success => (Color::Green, Color::White),
+        ToastType::Warning => (Color::Yellow, Color::Black),
+        ToastType::Error => (Color::Red, Color::White),
+    };
+    
+    let toast_widget = Paragraph::new(toast_state.message.as_str())
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title("Notification")
+            .border_style(Style::default().fg(border_color)))
+        .style(Style::default().fg(text_color))
+        .alignment(Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    
+    f.render_widget(toast_widget, popup_area);
+}
+
+/// Helper function to create centered rectangle
+fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    use ratatui::layout::{Constraint, Direction, Layout};
+    
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
