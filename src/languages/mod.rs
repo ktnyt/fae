@@ -5,6 +5,7 @@
 
 pub mod rust;
 pub mod javascript;
+pub mod python;
 
 use crate::actors::types::{Symbol, SymbolType};
 use std::path::Path;
@@ -131,6 +132,7 @@ impl LanguageRegistry {
         let mut extensions = Vec::new();
         extensions.extend(rust::RustExtractor::get_supported_extensions());
         extensions.extend(javascript::JavaScriptExtractor::get_supported_extensions());
+        extensions.extend(python::PythonExtractor::get_supported_extensions());
         extensions
     }
 
@@ -138,6 +140,7 @@ impl LanguageRegistry {
     pub fn is_extension_supported(extension: &str) -> bool {
         rust::RustExtractor::supports_extension(extension)
             || javascript::JavaScriptExtractor::supports_extension(extension)
+            || python::PythonExtractor::supports_extension(extension)
     }
 
     /// Get the appropriate language extractor for a file path
@@ -148,6 +151,9 @@ impl LanguageRegistry {
             }
             if javascript::JavaScriptExtractor::supports_extension(extension) {
                 return Some(Box::new(javascript::JavaScriptExtractor));
+            }
+            if python::PythonExtractor::supports_extension(extension) {
+                return Some(Box::new(python::PythonExtractor));
             }
         }
         None

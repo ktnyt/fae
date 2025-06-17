@@ -20,6 +20,7 @@ tokio-stream = "0.1"   # Stream utilities for tokio
 tree-sitter = "0.22"  # AST解析
 tree-sitter-rust = "0.21"  # Rust言語サポート
 tree-sitter-javascript = "0.21"  # JavaScript言語サポート
+tree-sitter-python = "0.21"  # Python言語サポート
 walkdir = "2.4"
 
 # TUI dependencies

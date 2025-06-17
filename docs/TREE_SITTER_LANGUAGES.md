@@ -11,79 +11,112 @@ This document tracks the current status and planned support for programming lang
   - Cargo dependency: `tree-sitter-rust = "0.20"`
 
 - [x] **JavaScript** (`tree-sitter-javascript`)
-  - Status: ✅ Fully implemented
+  - Status: ✅ Fully implemented | 🏛️ Official tree-sitter parser (419⭐)
   - Symbols: Functions (declarations, expressions, arrow functions), Classes, Variables (let/var/const), Parameters, Modules (imports)
   - File extensions: `.js`, `.mjs`, `.cjs`
-  - Cargo dependency: `tree-sitter-javascript = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-javascript`
+  - ABI: Version 14+
   - Features: Named function expressions, arrow functions, ES6 imports, default imports
 
 ## High Priority Languages 🎯
 
-### Web Development
+### Web Development (Official Tree-sitter Parsers)
 - [ ] **TypeScript** (`tree-sitter-typescript`)
+  - Status: 🏛️ Official tree-sitter parser
   - Symbols: Functions, Classes, Interfaces, Types, Variables, Constants, Methods, Properties
   - File extensions: `.ts`, `.tsx`
-  - Cargo dependency: `tree-sitter-typescript = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-typescript`
+  - ABI: Version 14+
 
 - [ ] **Python** (`tree-sitter-python`)
-  - Symbols: Functions, Classes, Variables, Methods, Properties, Imports
+  - Status: 🏛️ Official tree-sitter parser (446⭐)
+  - Symbols: Functions, Classes, Variables, Methods, Properties, Imports, Decorators
   - File extensions: `.py`, `.pyw`
-  - Cargo dependency: `tree-sitter-python = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-python`
+  - ABI: Version 14+
 
-### Systems Programming
+### Core Systems Languages (Official)
 - [ ] **C** (`tree-sitter-c`)
+  - Status: 🏛️ Official tree-sitter parser
   - Symbols: Functions, Structs, Unions, Enums, Variables, Typedefs, Macros
   - File extensions: `.c`, `.h`
-  - Cargo dependency: `tree-sitter-c = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-c`
+  - ABI: Version 14+
 
 - [ ] **C++** (`tree-sitter-cpp`)
+  - Status: 🏛️ Official tree-sitter parser
   - Symbols: Functions, Classes, Structs, Namespaces, Variables, Methods, Templates
   - File extensions: `.cpp`, `.cxx`, `.cc`, `.hpp`, `.hxx`, `.hh`
-  - Cargo dependency: `tree-sitter-cpp = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-cpp`
+  - ABI: Version 14+
 
 - [ ] **Go** (`tree-sitter-go`)
+  - Status: 🏛️ Official tree-sitter parser
   - Symbols: Functions, Types, Variables, Constants, Methods, Interfaces, Packages
   - File extensions: `.go`
-  - Cargo dependency: `tree-sitter-go = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-go`
+  - ABI: Version 14+
 
 ## Medium Priority Languages 📝
 
-### Popular Languages
-- [ ] **Java** (`tree-sitter-java`)
-  - Symbols: Classes, Methods, Fields, Interfaces, Enums, Packages
-  - File extensions: `.java`
-  - Cargo dependency: `tree-sitter-java = "0.20"`
+### Web Frameworks & Component Languages (Community Maintained)
+- [ ] **Vue** (`tree-sitter-vue`)
+  - Status: 👥 Community maintained
+  - Symbols: Vue components, Functions, Variables, Props, Computed, Methods, Data
+  - File extensions: `.vue`
+  - Repository: Community maintained
+  - Features: Single File Component parsing, template/script/style separation
 
-- [ ] **C#** (`tree-sitter-c-sharp`)
-  - Symbols: Classes, Methods, Properties, Fields, Interfaces, Namespaces
-  - File extensions: `.cs`
-  - Cargo dependency: `tree-sitter-c-sharp = "0.20"`
+- [ ] **Svelte** (`tree-sitter-svelte`)
+  - Status: 👥 Community maintained
+  - Symbols: Svelte components, Functions, Variables, Props, Stores, Actions
+  - File extensions: `.svelte`
+  - Repository: Community maintained
+  - Features: Reactive declarations, component props, event handlers
+
+### Popular Languages (Official & Well-Maintained)
+- [ ] **Java** (`tree-sitter-java`)
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Classes, Methods, Fields, Interfaces, Enums, Packages, Annotations
+  - File extensions: `.java`
+  - Repository: `tree-sitter/tree-sitter-java`
+  - ABI: Version 14+
 
 - [ ] **PHP** (`tree-sitter-php`)
-  - Symbols: Functions, Classes, Methods, Properties, Variables, Constants
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Functions, Classes, Methods, Properties, Variables, Constants, Namespaces
   - File extensions: `.php`, `.phtml`
-  - Cargo dependency: `tree-sitter-php = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-php`
+  - ABI: Version 14+
 
 - [ ] **Ruby** (`tree-sitter-ruby`)
-  - Symbols: Classes, Methods, Modules, Constants, Variables
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Classes, Methods, Modules, Constants, Variables, Blocks
   - File extensions: `.rb`, `.rake`, `.gemspec`
-  - Cargo dependency: `tree-sitter-ruby = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-ruby`
+  - ABI: Version 14+
 
-### Functional Languages
+- [ ] **Scala** (`tree-sitter-scala`)
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Functions, Classes, Objects, Traits, Variables, Types
+  - File extensions: `.scala`, `.sc`
+  - Repository: `tree-sitter/tree-sitter-scala`
+  - ABI: Version 14+
+
+### Functional Languages (Official)
 - [ ] **Haskell** (`tree-sitter-haskell`)
-  - Symbols: Functions, Types, Classes, Instances, Modules
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Functions, Types, Classes, Instances, Modules, Data constructors
   - File extensions: `.hs`, `.lhs`
-  - Cargo dependency: `tree-sitter-haskell = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-haskell`
+  - ABI: Version 14+
 
 - [ ] **OCaml** (`tree-sitter-ocaml`)
-  - Symbols: Functions, Types, Modules, Values, Classes
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Functions, Types, Modules, Values, Classes, Variants
   - File extensions: `.ml`, `.mli`
-  - Cargo dependency: `tree-sitter-ocaml = "0.20"`
-
-- [ ] **Elixir** (`tree-sitter-elixir`)
-  - Symbols: Functions, Modules, Structs, Protocols, Defmacros
-  - File extensions: `.ex`, `.exs`
-  - Cargo dependency: `tree-sitter-elixir = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-ocaml`
+  - ABI: Version 14+
 
 ### Mobile Development
 - [ ] **Swift** (`tree-sitter-swift`)
@@ -98,11 +131,13 @@ This document tracks the current status and planned support for programming lang
 
 ## Lower Priority Languages 📋
 
-### Scripting & Automation
+### Scripting & Automation (Official)
 - [ ] **Bash** (`tree-sitter-bash`)
-  - Symbols: Functions, Variables, Commands
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Functions, Variables, Commands, Aliases
   - File extensions: `.sh`, `.bash`, `.zsh`
-  - Cargo dependency: `tree-sitter-bash = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-bash`
+  - ABI: Version 14+
 
 - [ ] **PowerShell** (`tree-sitter-powershell`)
   - Symbols: Functions, Variables, Classes, Commands
@@ -119,37 +154,42 @@ This document tracks the current status and planned support for programming lang
   - File extensions: `.pl`, `.pm`, `.pod`
   - Cargo dependency: `tree-sitter-perl = "0.20"`
 
-### Data & Configuration
-- [ ] **SQL** (`tree-sitter-sql`)
-  - Symbols: Tables, Functions, Procedures, Views, Triggers
-  - File extensions: `.sql`
-  - Cargo dependency: `tree-sitter-sql = "0.20"`
+### Data & Configuration (Official)
+- [ ] **JSON** (`tree-sitter-json`)
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Objects, Arrays, Properties, Values
+  - File extensions: `.json`, `.jsonc`
+  - Repository: `tree-sitter/tree-sitter-json`
+  - ABI: Version 14+
 
 - [ ] **YAML** (`tree-sitter-yaml`)
-  - Symbols: Keys, Values, Lists, Objects
+  - Status: 👥 Community maintained (High quality)
+  - Symbols: Keys, Values, Lists, Objects, Anchors
   - File extensions: `.yml`, `.yaml`
-  - Cargo dependency: `tree-sitter-yaml = "0.20"`
+  - Repository: Community maintained
+  - ABI: Version 14+
 
 - [ ] **TOML** (`tree-sitter-toml`)
+  - Status: 👥 Community maintained (High quality)
   - Symbols: Tables, Keys, Values, Arrays
   - File extensions: `.toml`
-  - Cargo dependency: `tree-sitter-toml = "0.20"`
+  - Repository: Community maintained
+  - ABI: Version 14+
 
-- [ ] **JSON** (`tree-sitter-json`)
-  - Symbols: Objects, Arrays, Properties
-  - File extensions: `.json`, `.jsonc`
-  - Cargo dependency: `tree-sitter-json = "0.20"`
-
-### Markup & Documentation
+### Markup & Documentation (Official)
 - [ ] **HTML** (`tree-sitter-html`)
-  - Symbols: Elements, IDs, Classes, Attributes
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Elements, IDs, Classes, Attributes, Tags
   - File extensions: `.html`, `.htm`
-  - Cargo dependency: `tree-sitter-html = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-html`
+  - ABI: Version 14+
 
 - [ ] **CSS** (`tree-sitter-css`)
-  - Symbols: Selectors, Properties, Classes, IDs, Functions
+  - Status: 🏛️ Official tree-sitter parser
+  - Symbols: Selectors, Properties, Classes, IDs, Functions, Rules
   - File extensions: `.css`
-  - Cargo dependency: `tree-sitter-css = "0.20"`
+  - Repository: `tree-sitter/tree-sitter-css`
+  - ABI: Version 14+
 
 - [ ] **Markdown** (`tree-sitter-markdown`)
   - Symbols: Headers, Links, Code blocks, Lists
@@ -226,6 +266,28 @@ Each language requires specific tree-sitter queries to extract symbols. Here are
         name: (identifier) @module.name))))
 ```
 
+**Frontend Framework examples:**
+```scheme
+; JSX/TSX - React functional components
+(function_declaration
+  name: (identifier) @function.name
+  body: (statement_block
+    (return_statement
+      (jsx_element) @component.jsx)))
+
+; Vue - Single File Component script
+(export_statement
+  declaration: (object_expression
+    (property
+      key: (identifier) @component.property
+      value: (function_expression))))
+
+; Svelte - Component script variables
+(variable_declaration
+  (variable_declarator
+    name: (identifier) @variable.reactive))
+```
+
 ### File Extension Mapping
 
 The language detection system should map file extensions to appropriate tree-sitter parsers. Multiple extensions per language are supported.
@@ -247,18 +309,30 @@ Each language's symbols should be mapped to fae's `SymbolType` enum:
 
 ## Implementation Priority
 
-1. **Phase 1** (High Priority): ✅ JavaScript, TypeScript, Python, C, C++, Go
-2. **Phase 2** (Medium Priority): Java, C#, PHP, Ruby, Swift, Kotlin
-3. **Phase 3** (Lower Priority): Remaining languages based on user demand
+1. **Phase 1** (High Priority - Official Parsers): ✅ JavaScript, TypeScript, Python, C, C++, Go
+2. **Phase 2** (Medium Priority - Official Parsers): Java, PHP, Ruby, Scala, Haskell, OCaml
+3. **Phase 3** (Web Frameworks - Community): Vue, Svelte, React JSX/TSX
+4. **Phase 4** (Lower Priority): Remaining languages based on user demand
+
+### Priority Rationale
+- **Official parsers** are prioritized for stability and long-term maintenance
+- **High-star repositories** (300+ stars) indicate strong community adoption
+- **ABI Version 14+** ensures compatibility with modern tree-sitter versions
 
 ## Status Legend
 
+### Implementation Status
 - ✅ **Fully implemented** - Language support with comprehensive symbol extraction
 - 🚧 **In progress** - Currently being implemented
 - 📋 **Planned** - Scheduled for future implementation
 - ❓ **Under consideration** - May be implemented based on demand
 
+### Parser Maintenance Status
+- 🏛️ **Official tree-sitter parser** - Maintained by tree-sitter organization
+- 👥 **Community maintained** - High-quality community parsers
+- ⚠️ **Experimental** - Early stage or less stable parsers
+
 ---
 
 **Last updated:** 2025-06-17
-**Total languages:** 2 implemented, 36+ planned
+**Total languages:** 2 implemented, 41+ planned
