@@ -16,8 +16,6 @@ use tokio::sync::mpsc;
 pub struct ResultHandler {
     /// Current count of received results
     result_count: usize,
-    /// Maximum number of results to collect
-    max_results: usize,
     /// Whether search has been completed
     search_completed: bool,
     /// Whether any search has started (first result received)
@@ -26,10 +24,9 @@ pub struct ResultHandler {
 
 impl ResultHandler {
     /// Create a new ResultHandler
-    pub fn new(max_results: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             result_count: 0,
-            max_results,
             search_completed: false,
             search_started: false,
         }
@@ -41,8 +38,8 @@ impl ResultHandler {
         result: SearchResult,
         controller: &ActorController<FaeMessage>,
     ) {
-        if self.search_completed || self.result_count >= self.max_results {
-            return; // Don't process more results after completion or limit reached
+        if self.search_completed {
+            return; // Don't process more results after completion
         }
 
         self.search_started = true;
@@ -59,15 +56,6 @@ impl ResultHandler {
             .await
         {
             log::error!("Failed to send PushSearchResult message: {}", e);
-        }
-
-        // Check if we've reached max results and auto-complete if so
-        if self.result_count >= self.max_results {
-            log::info!(
-                "Max results ({}) reached, triggering search completion",
-                self.max_results
-            );
-            self.handle_search_completion(controller).await;
         }
     }
 
@@ -116,11 +104,6 @@ impl ResultHandler {
         self.search_started
     }
 
-    /// Set maximum number of results to collect
-    pub fn set_max_results(&mut self, max_results: usize) {
-        self.max_results = max_results;
-        log::debug!("Updated max results to: {}", max_results);
-    }
 
     /// Handle symbol index progress report
     fn handle_symbol_index_report(
@@ -176,13 +159,6 @@ impl MessageHandler<FaeMessage> for ResultHandler {
                     log::warn!("completeSearch received unexpected payload");
                 }
             }
-            "setMaxResults" => {
-                if let FaeMessage::SetMaxResults { max_results } = message.payload {
-                    self.set_max_results(max_results);
-                } else {
-                    log::warn!("setMaxResults received unexpected payload");
-                }
-            }
             "reportSymbolIndex" => {
                 if let FaeMessage::ReportSymbolIndex {
                     queued_files,
@@ -211,9 +187,8 @@ impl ResultHandlerActor {
     pub fn new_result_handler_actor(
         message_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-        max_results: usize,
     ) -> Self {
-        let handler = ResultHandler::new(max_results);
+        let handler = ResultHandler::new();
         Self::new(message_receiver, sender, handler)
     }
 }
@@ -226,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_result_handler_creation() {
-        let handler = ResultHandler::new(10);
+        let handler = ResultHandler::new();
         assert_eq!(handler.get_result_count(), 0);
         assert!(!handler.is_completed());
         assert!(!handler.has_started());
@@ -237,7 +212,7 @@ mod tests {
         let (_actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, _external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        let actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx, 10);
+        let actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx);
 
         // Test that we can create the actor successfully
         drop(actor);
@@ -248,7 +223,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, mut external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        let mut actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx, 5);
+        let mut actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx);
 
         // Send some search results
         for i in 1..=3 {
@@ -303,7 +278,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, _external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        let mut actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx, 2);
+        let mut actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx);
 
         // Send more results than the limit
         for i in 1..=5 {
@@ -332,7 +307,7 @@ mod tests {
         let (actor_tx, actor_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (external_tx, _external_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        let mut actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx, 10);
+        let mut actor = ResultHandlerActor::new_result_handler_actor(actor_rx, external_tx);
 
         // Send an unknown message
         let unknown_message = Message::new("unknownMethod", FaeMessage::ClearResults);

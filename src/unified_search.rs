@@ -174,7 +174,6 @@ impl UnifiedSearchSystem {
         let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
             result_handler_rx,
             result_sender.clone(), // ResultHandler sends results to external receiver
-            50,                    // Default max results
         );
 
         // Conditionally create watch actor

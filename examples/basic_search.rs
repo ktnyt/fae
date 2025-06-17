@@ -45,9 +45,9 @@ async fn demonstrate_search_actor<T>(
 
     // Collect results for a short time
     let mut result_count = 0;
-    let max_results = 5; // Show only first 5 results for demo
+    let demo_limit = 5; // Show only first 5 results for demo
 
-    while result_count < max_results {
+    while result_count < demo_limit {
         match timeout(Duration::from_millis(300), external_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
@@ -79,8 +79,8 @@ async fn demonstrate_search_actor<T>(
         }
     }
 
-    if result_count == max_results {
-        println!("  ... (showing first {} results only)", max_results);
+    if result_count == demo_limit {
+        println!("  ... (showing first {} results only)", demo_limit);
     }
 
     println!();

@@ -10,9 +10,6 @@ pub enum FaeMessage {
     NotifySearchReport {
         result_count: usize,
     }, // Final search completion with result count
-    SetMaxResults {
-        max_results: usize,
-    }, // Configuration message for result handler
 
     // Symbol index management messages
     ClearSymbolIndex(String), // filepath

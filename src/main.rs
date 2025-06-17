@@ -18,7 +18,6 @@ use std::env;
 struct FaeConfig {
     query: String,
     search_path: String,
-    max_results: usize,
     timeout_ms: u64,
 }
 
@@ -27,7 +26,6 @@ impl Default for FaeConfig {
         Self {
             query: String::new(),
             search_path: ".".to_string(),
-            max_results: 50,
             timeout_ms: 15000, // Increased timeout for symbol indexing
         }
     }
@@ -53,13 +51,6 @@ fn parse_args() -> Result<Option<FaeConfig>, String> {
             "--path" => {
                 if i + 1 < args.len() {
                     config.search_path = args[i + 1].clone();
-                }
-            }
-            "--max-results" => {
-                if i + 1 < args.len() {
-                    if let Ok(max) = args[i + 1].parse() {
-                        config.max_results = max;
-                    }
                 }
             }
             _ => {}
