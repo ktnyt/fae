@@ -57,8 +57,8 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
 // Import search-related types
-use crate::cli::parse_query_with_mode;
 use crate::actors::types::SearchMode;
+use crate::cli::parse_query_with_mode;
 
 /// Type alias for TUI state update results to avoid large error types
 pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
@@ -307,7 +307,8 @@ pub struct TuiApp {
     state_receiver: Option<mpsc::UnboundedReceiver<StateUpdate>>,
 
     // Search control channel for dynamic search execution
-    search_control_sender: Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
+    search_control_sender:
+        Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
 
     // Search debounce control
     debounce_delay: Duration,
@@ -356,7 +357,7 @@ impl TuiApp {
             state_receiver: Some(state_receiver),
             search_control_sender: None, // Will be set later via set_search_control_sender
             // Search debounce control
-            debounce_delay: Duration::from_millis(300), // 300ms debounce delay
+            debounce_delay: Duration::from_millis(100), // 100ms debounce delay
             pending_search_query: None,
             last_input_time: None,
             state: TuiState::new(),
@@ -374,27 +375,33 @@ impl TuiApp {
     }
 
     /// Execute a dynamic search by sending a request to the UnifiedSearchSystem
-    pub fn execute_search(&self, query: String) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn execute_search(
+        &self,
+        query: String,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref sender) = self.search_control_sender {
+            use crate::actors::messages::FaeMessage;
             use crate::cli::create_search_params;
             use crate::core::Message;
-            use crate::actors::messages::FaeMessage;
-            
+
             log::debug!("TuiApp executing search: '{}'", query);
-            
+
             // Parse the query and determine search mode
             let search_params = create_search_params(&query);
-            
+
             // Skip search if query is empty or just a prefix
             if search_params.query.trim().is_empty() {
-                log::debug!("Aborting search for empty or prefix-only query: '{}'", query);
-                
+                log::debug!(
+                    "Aborting search for empty or prefix-only query: '{}'",
+                    query
+                );
+
                 // Send abort search message to stop any ongoing searches
                 let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
                 if let Err(e) = sender.send(abort_message) {
                     log::warn!("Failed to send abort search message: {}", e);
                 }
-                
+
                 // Clear previous results for empty queries
                 let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
                 if let Err(e) = sender.send(clear_message) {
@@ -402,37 +409,43 @@ impl TuiApp {
                 }
                 return Ok(());
             }
-            
+
             // Abort any ongoing search before starting new one
             let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
             if let Err(e) = sender.send(abort_message) {
                 log::warn!("Failed to send abort search message: {}", e);
             }
-            
+
             // Clear previous results first
             let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
             if let Err(e) = sender.send(clear_message) {
                 log::warn!("Failed to send clear results message: {}", e);
             }
-            
+
             // Send search request
             let search_message = Message::new(
                 "updateSearchParams",
                 FaeMessage::UpdateSearchParams(search_params),
             );
-            
+
             if let Err(e) = sender.send(search_message) {
                 let error_msg = format!("Failed to send search request: {}", e);
                 log::error!("{}", error_msg);
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_msg)));
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    error_msg,
+                )));
             }
-            
+
             log::debug!("Search request sent successfully");
             Ok(())
         } else {
             let error_msg = "Search control sender not initialized";
             log::error!("{}", error_msg);
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_msg)))
+            Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                error_msg,
+            )))
         }
     }
 
@@ -576,26 +589,28 @@ impl TuiApp {
         self.state.selected_result_index = None;
 
         if !self.state.search_input.is_empty() {
-            log::debug!("TuiApp: Scheduling debounced search for '{}'", self.state.search_input);
-            
+            log::debug!(
+                "TuiApp: Scheduling debounced search for '{}'",
+                self.state.search_input
+            );
+
             // Set up debounced search - save query and timestamp
             self.pending_search_query = Some(self.state.search_input.clone());
             self.last_input_time = Some(Instant::now());
         } else {
             // Clear results immediately when input is empty
             log::debug!("TuiApp: Empty search input, clearing results immediately");
-            
+
             // Cancel any pending search
             self.pending_search_query = None;
             self.last_input_time = None;
-            
+
             // Execute clear search immediately for empty query
             if let Err(e) = self.execute_search(String::new()) {
                 log::error!("Failed to execute clear search: {}", e);
             }
         }
     }
-
 
     /// Move cursor down to next result
     fn move_cursor_down(&mut self) {
@@ -635,7 +650,6 @@ impl TuiApp {
             }
         }
     }
-
 
     /// Handle result selection (Enter key on selected result)
     fn handle_result_selection(&mut self) {
@@ -986,13 +1000,13 @@ fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &s
     let mode_name = match mode {
         SearchMode::Literal => "Text",
         SearchMode::Symbol => "Symbol (#)",
-        SearchMode::Variable => "Variable ($)", 
+        SearchMode::Variable => "Variable ($)",
         SearchMode::Filepath => "File (@)",
         SearchMode::Regexp => "Regex (/)",
     };
 
     let title = format!("Search Input - {} Mode", mode_name);
-    
+
     let input = Paragraph::new(search_input)
         .block(Block::default().borders(Borders::ALL).title(title))
         .style(Style::default().fg(Color::White));
@@ -1135,7 +1149,6 @@ fn calculate_toast_size_absolute(
     (actual_width, actual_height)
 }
 
-
 /// Calculate how many lines text will take when wrapped to given width
 fn calculate_wrapped_lines(text: &str, width: usize) -> usize {
     if text.is_empty() {
@@ -1190,7 +1203,6 @@ fn calculate_wrapped_lines(text: &str, width: usize) -> usize {
     lines.max(1)
 }
 
-
 /// Create a rect in top right corner with exact dimensions (width in chars, height in lines)
 fn top_right_rect_absolute(
     width_chars: u16,
@@ -1212,7 +1224,6 @@ fn top_right_rect_absolute(
         height: actual_height,
     }
 }
-
 
 #[cfg(test)]
 mod tests {
