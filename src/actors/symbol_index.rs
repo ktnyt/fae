@@ -138,9 +138,62 @@ impl SymbolIndexHandler {
     /// Check if file type is supported for symbol extraction
     fn is_supported_file(path: &Path) -> bool {
         if let Some(extension) = path.extension() {
-            matches!(extension.to_str(), Some("rs"))
+            matches!(extension.to_str(), Some("rs" | "js" | "mjs" | "cjs"))
         } else {
             false
+        }
+    }
+
+    /// Check if file should be processed (ignore rules + file type support)
+    fn should_process_file(filepath: &str, search_path: &str) -> bool {
+        let path = Path::new(filepath);
+        
+        // First check if file type is supported
+        if !Self::is_supported_file(path) {
+            return false;
+        }
+
+        // Basic performance filtering
+        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+            if filename.starts_with('.') {
+                return false;
+            }
+        }
+
+        // Create a simpler ignore checker using GitignoreBuilder
+        let search_path_buf = Path::new(search_path);
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(search_path_buf);
+        
+        // Add .gitignore file if it exists
+        let gitignore_path = search_path_buf.join(".gitignore");
+        if gitignore_path.exists() {
+            let _ = builder.add(gitignore_path);
+        }
+
+        // Add global .gitignore if available
+        if let Some(home_dir) = dirs::home_dir() {
+            let global_gitignore = home_dir.join(".gitignore_global");
+            if global_gitignore.exists() {
+                let _ = builder.add(global_gitignore);
+            }
+        }
+
+        let gitignore = match builder.build() {
+            Ok(gitignore) => gitignore,
+            Err(_) => return true, // If gitignore build fails, assume file should be processed
+        };
+
+        // Get relative path for gitignore matching
+        let relative_path = if let Ok(rel_path) = path.strip_prefix(search_path_buf) {
+            rel_path
+        } else {
+            path
+        };
+
+        // Check if file is ignored
+        match gitignore.matched(relative_path, path.is_dir()) {
+            ignore::Match::Ignore(_) => false, // File is ignored, don't process
+            _ => true, // File should be processed
         }
     }
 
@@ -412,11 +465,16 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
             }
             "detectFileCreate" => {
                 if let FaeMessage::DetectFileCreate(filepath) = message.payload {
-                    // Add create operation to queue
-                    self.add_operation_to_queue(FileOperation::Create(filepath));
-                    // If not currently processing, start processing queue
-                    if !self.is_currently_processing() {
-                        self.process_next_from_queue(controller).await;
+                    // Check if file should be processed (ignore rules + file type)
+                    if Self::should_process_file(&filepath, &self.search_path) {
+                        // Add create operation to queue
+                        self.add_operation_to_queue(FileOperation::Create(filepath));
+                        // If not currently processing, start processing queue
+                        if !self.is_currently_processing() {
+                            self.process_next_from_queue(controller).await;
+                        }
+                    } else {
+                        log::debug!("Skipping file create for ignored/unsupported file: {}", filepath);
                     }
                 } else {
                     log::warn!("detectFileCreate received non-filepath payload");
@@ -424,11 +482,16 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
             }
             "detectFileUpdate" => {
                 if let FaeMessage::DetectFileUpdate(filepath) = message.payload {
-                    // Add update operation to queue
-                    self.add_operation_to_queue(FileOperation::Update(filepath));
-                    // If not currently processing, start processing queue
-                    if !self.is_currently_processing() {
-                        self.process_next_from_queue(controller).await;
+                    // Check if file should be processed (ignore rules + file type)
+                    if Self::should_process_file(&filepath, &self.search_path) {
+                        // Add update operation to queue
+                        self.add_operation_to_queue(FileOperation::Update(filepath));
+                        // If not currently processing, start processing queue
+                        if !self.is_currently_processing() {
+                            self.process_next_from_queue(controller).await;
+                        }
+                    } else {
+                        log::debug!("Skipping file update for ignored/unsupported file: {}", filepath);
                     }
                 } else {
                     log::warn!("detectFileUpdate received non-filepath payload");
@@ -436,7 +499,8 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
             }
             "detectFileDelete" => {
                 if let FaeMessage::DetectFileDelete(filepath) = message.payload {
-                    // Add delete operation to queue
+                    // For delete operations, we should always process to clear any existing symbols
+                    // regardless of current ignore rules or file type support
                     self.add_operation_to_queue(FileOperation::Delete(filepath));
                     // If not currently processing, start processing queue
                     if !self.is_currently_processing() {
@@ -478,10 +542,18 @@ mod tests {
 
     #[test]
     fn test_is_supported_file() {
+        // Rust files
         assert!(SymbolIndexHandler::is_supported_file(Path::new("test.rs")));
         assert!(SymbolIndexHandler::is_supported_file(Path::new(
             "/path/to/main.rs"
         )));
+        
+        // JavaScript files
+        assert!(SymbolIndexHandler::is_supported_file(Path::new("test.js")));
+        assert!(SymbolIndexHandler::is_supported_file(Path::new("module.mjs")));
+        assert!(SymbolIndexHandler::is_supported_file(Path::new("config.cjs")));
+        
+        // Unsupported files
         assert!(!SymbolIndexHandler::is_supported_file(Path::new("test.py")));
         assert!(!SymbolIndexHandler::is_supported_file(Path::new(
             "README.md"

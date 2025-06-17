@@ -222,6 +222,7 @@ impl SymbolExtractor {
                 let symbol_type = match capture_name {
                     "function.name" => SymbolType::Function,
                     "struct.name" => SymbolType::Struct,
+                    "class.name" => SymbolType::Class, // JavaScript classes
                     "enum.name" => SymbolType::Enum,
                     "method.name" => SymbolType::Method,
                     "constant.name" => SymbolType::Constant,
