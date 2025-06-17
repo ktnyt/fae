@@ -35,6 +35,10 @@ pub struct ToastState {
     pub message: String,
     pub toast_type: ToastType,
     pub show_until: Option<Instant>,
+    // Auto-close tracking
+    last_message: String,
+    last_change_time: Instant,
+    pub same_message_count: u32,
 }
 
 /// Type of toast notification
@@ -54,23 +58,49 @@ impl ToastState {
             message: String::new(),
             toast_type: ToastType::Info,
             show_until: None,
+            last_message: String::new(),
+            last_change_time: Instant::now(),
+            same_message_count: 0,
         }
     }
 
     /// Show a toast with specified message and type for given duration
     pub fn show(&mut self, message: String, toast_type: ToastType, duration: Duration) {
+        // Check if this is the same message as before
+        if self.last_message == message {
+            self.same_message_count += 1;
+            // If same message appears 3+ times, reduce display duration
+            let adjusted_duration = if self.same_message_count >= 3 {
+                Duration::from_millis(500) // Very short duration for repeated messages
+            } else {
+                duration
+            };
+            self.show_until = Some(Instant::now() + adjusted_duration);
+        } else {
+            // New message - reset tracking
+            self.same_message_count = 1;
+            self.last_message = message.clone();
+            self.last_change_time = Instant::now();
+            self.show_until = Some(Instant::now() + duration);
+        }
+        
         self.visible = true;
         self.message = message;
         self.toast_type = toast_type;
-        self.show_until = Some(Instant::now() + duration);
     }
 
-    /// Update toast state - hide if expired
+    /// Update toast state - hide if expired or stale
     pub fn update(&mut self) {
         if let Some(until) = self.show_until {
             if Instant::now() >= until {
                 self.hide();
+                return;
             }
+        }
+        
+        // Auto-close if same state for too long (30 seconds without change)
+        if self.visible && self.last_change_time.elapsed() > Duration::from_secs(30) {
+            self.hide();
         }
     }
 
@@ -78,6 +108,9 @@ impl ToastState {
     pub fn hide(&mut self) {
         self.visible = false;
         self.show_until = None;
+        // Reset tracking when hiding
+        self.same_message_count = 0;
+        self.last_change_time = Instant::now();
     }
 }
 
@@ -403,7 +436,14 @@ fn render_toast(f: &mut Frame, toast_state: &ToastState) {
         ToastType::Error => (Color::Red, Color::White, "❌ Error"),
     };
     
-    let toast_widget = Paragraph::new(toast_state.message.as_str())
+    // Add repeat count indicator if message appeared multiple times
+    let display_message = if toast_state.same_message_count > 1 {
+        format!("{} ({}x)", toast_state.message, toast_state.same_message_count)
+    } else {
+        toast_state.message.clone()
+    };
+    
+    let toast_widget = Paragraph::new(display_message.as_str())
         .block(Block::default()
             .borders(Borders::ALL)
             .title(title)
