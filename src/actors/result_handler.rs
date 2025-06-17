@@ -143,9 +143,9 @@ impl ResultHandler {
             symbols_found
         );
 
-        // Print progress to stdout for CLI users
-        eprintln!(
-            "Indexing: {}% ({}/{} files, {} symbols)",
+        // Log progress at info level to avoid interfering with CLI output
+        log::info!(
+            "Indexing progress: {}% ({}/{} files, {} symbols)",
             progress_percentage, indexed_files, queued_files, symbols_found
         );
     }
