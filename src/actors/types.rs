@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(SearchMode::Filepath, SearchMode::Filepath);
         assert_eq!(SearchMode::Symbol, SearchMode::Symbol);
         assert_eq!(SearchMode::Variable, SearchMode::Variable);
-        
+
         // Test different variants are not equal
         assert_ne!(SearchMode::Literal, SearchMode::Regexp);
         assert_ne!(SearchMode::Symbol, SearchMode::Variable);
@@ -121,7 +121,7 @@ mod tests {
             query: "test_query".to_string(),
             mode: SearchMode::Symbol,
         };
-        
+
         assert_eq!(params.query, "test_query");
         assert_eq!(params.mode, SearchMode::Symbol);
     }
@@ -134,7 +134,7 @@ mod tests {
             column: 10,
             content: "fn test_function()".to_string(),
         };
-        
+
         assert_eq!(result.filename, "test.rs");
         assert_eq!(result.line, 42);
         assert_eq!(result.column, 10);
@@ -167,7 +167,7 @@ mod tests {
             "main".to_string(),
             SymbolType::Function,
         );
-        
+
         assert_eq!(symbol.filepath, "src/main.rs");
         assert_eq!(symbol.line, 15);
         assert_eq!(symbol.column, 8);
@@ -184,9 +184,9 @@ mod tests {
             "MyStruct".to_string(),
             SymbolType::Struct,
         );
-        
+
         let result = symbol.into_search_result();
-        
+
         assert_eq!(result.filename, "src/lib.rs");
         assert_eq!(result.line, 25);
         assert_eq!(result.column, 4);
@@ -212,7 +212,10 @@ mod tests {
             "test_var".to_string(),
             SymbolType::Variable,
         );
-        assert_eq!(variable_symbol.into_search_result().content, "[var] test_var");
+        assert_eq!(
+            variable_symbol.into_search_result().content,
+            "[var] test_var"
+        );
 
         let constant_symbol = Symbol::new(
             "test.rs".to_string(),
@@ -221,7 +224,10 @@ mod tests {
             "TEST_CONST".to_string(),
             SymbolType::Constant,
         );
-        assert_eq!(constant_symbol.into_search_result().content, "[const] TEST_CONST");
+        assert_eq!(
+            constant_symbol.into_search_result().content,
+            "[const] TEST_CONST"
+        );
     }
 
     #[test]

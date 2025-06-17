@@ -260,15 +260,16 @@ impl SymbolIndexHandler {
             .await;
 
         // Process file symbols
-        let symbol_count = Self::process_file_symbols_sync(filepath, path, controller.clone()).await;
-        
+        let symbol_count =
+            Self::process_file_symbols_sync(filepath, path, controller.clone()).await;
+
         // Update statistics
         {
             let mut stats = self.stats.lock().unwrap();
             stats.indexed_files += 1;
             stats.symbols_found += symbol_count;
         }
-        
+
         // Send progress report
         self.send_progress_report(controller).await;
     }
@@ -324,7 +325,7 @@ impl SymbolIndexHandler {
                 {
                     log::warn!("Failed to send completeSymbolIndex message: {}", e);
                 }
-                
+
                 symbol_count
             }
             Err(e) => {
@@ -347,10 +348,10 @@ impl SymbolIndexHandler {
             let queue_guard = self.operation_queue.lock().unwrap();
             (stats_guard.clone(), queue_guard.len())
         };
-        
+
         // Update total queued files to include initial files + any new files in queue
         let total_queued = stats.queued_files + current_queue_size;
-        
+
         log::info!(
             "Symbol indexing progress: {}/{} files processed, {} symbols found, {} pending",
             stats.indexed_files,

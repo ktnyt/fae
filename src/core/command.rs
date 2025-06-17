@@ -101,7 +101,7 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
         let output_sender_stderr = self.output_sender.clone();
         let token_stdout = cancellation_token.clone();
         let token_stderr = cancellation_token.clone();
-        
+
         // Create completion notification sender
         let completion_output_sender = self.output_sender.clone();
 
@@ -186,7 +186,7 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
         tokio::spawn(async move {
             let mut stdout_done = false;
             let mut stderr_done = false;
-            
+
             loop {
                 tokio::select! {
                     _ = completion_token.cancelled() => {
@@ -202,7 +202,7 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
                         log::debug!("Stderr processing completed");
                     }
                 }
-                
+
                 // When both stdout and stderr are done, send processCompleted
                 if stdout_done && stderr_done {
                     log::info!("Process completed (both stdout and stderr finished)");

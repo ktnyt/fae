@@ -106,7 +106,7 @@ impl<T: Clone + Send + 'static> Broadcaster<T> {
             log::debug!("Broadcaster already shutting down");
             return;
         }
-        
+
         log::info!("Manual shutdown requested for Broadcaster");
         self.is_shutting_down = true;
 
@@ -128,7 +128,9 @@ impl<T: Clone + Send + 'static> Broadcaster<T> {
 
 impl<T: Clone + Send + 'static> Drop for Broadcaster<T> {
     fn drop(&mut self) {
-        if !self.is_shutting_down && (self.shutdown_sender.is_some() || self.thread_handle.is_some()) {
+        if !self.is_shutting_down
+            && (self.shutdown_sender.is_some() || self.thread_handle.is_some())
+        {
             log::debug!("Broadcaster dropped without explicit shutdown, performing cleanup");
             self.shutdown();
         }

@@ -27,7 +27,7 @@ pub struct UnifiedSearchSystem {
     content_search_actor: Option<ContentSearchActor>,
     result_handler_actor: Option<ResultHandlerActor>,
     watch_actor: Option<WatchActor>,
-    
+
     // Control message forwarding task handle for graceful shutdown
     control_forwarding_handle: Option<JoinHandle<()>>,
 }
@@ -58,7 +58,14 @@ impl UnifiedSearchSystem {
         result_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
         control_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_with_mode(search_path, watch_files, result_sender, control_receiver, None).await
+        Self::new_with_mode(
+            search_path,
+            watch_files,
+            result_sender,
+            control_receiver,
+            None,
+        )
+        .await
     }
 
     /// Create a new unified search system with external control channels and optional search mode optimization
@@ -69,14 +76,16 @@ impl UnifiedSearchSystem {
         control_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         search_mode: Option<SearchMode>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-
         // Determine if symbol-related actors are needed
         let needs_symbol_actors = search_mode.map_or(true, |mode| {
             matches!(mode, SearchMode::Symbol | SearchMode::Variable)
         });
 
         if !needs_symbol_actors {
-            log::info!("Symbol search not needed for mode {:?}, optimizing by skipping symbol actors", search_mode);
+            log::info!(
+                "Symbol search not needed for mode {:?}, optimizing by skipping symbol actors",
+                search_mode
+            );
         }
 
         // Create actor channels
@@ -108,13 +117,13 @@ impl UnifiedSearchSystem {
             result_handler_tx,
             result_sender.clone(), // Include result sender for broadcasting
         ];
-        
+
         // Only add symbol actors if they are needed
         if needs_symbol_actors {
             actor_senders.push(symbol_index_tx);
             actor_senders.push(symbol_search_tx);
         }
-        
+
         if let Some(tx) = watch_tx {
             actor_senders.push(tx);
         }
@@ -139,7 +148,10 @@ impl UnifiedSearchSystem {
 
         let symbol_search_actor = if needs_symbol_actors {
             log::debug!("Creating SymbolSearchActor for symbol search");
-            Some(SymbolSearchActor::new_symbol_search_actor(symbol_search_rx, shared_sender.clone()))
+            Some(SymbolSearchActor::new_symbol_search_actor(
+                symbol_search_rx,
+                shared_sender.clone(),
+            ))
         } else {
             log::debug!("Skipping SymbolSearchActor creation for non-symbol search");
             // Drop the receiver to prevent channel warnings
@@ -163,7 +175,7 @@ impl UnifiedSearchSystem {
         let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
             result_handler_rx,
             result_sender.clone(), // ResultHandler sends results to external receiver
-            50,            // Default max results
+            50,                    // Default max results
         );
 
         // Conditionally create watch actor
@@ -195,16 +207,19 @@ impl UnifiedSearchSystem {
             let mut control_receiver = control_receiver;
             while let Some(message) = control_receiver.recv().await {
                 log::debug!("Forwarding control message: {}", message.method);
-                
+
                 // Check if shared_sender is still open before sending
                 if shared_sender_clone.is_closed() {
                     log::debug!("Shared sender closed, stopping control message forwarding");
                     break;
                 }
-                
+
                 if let Err(e) = shared_sender_clone.send(message) {
                     // During shutdown, this is expected behavior - log as debug, not error
-                    log::debug!("Control message forwarding stopped (receiver closed): {}", e);
+                    log::debug!(
+                        "Control message forwarding stopped (receiver closed): {}",
+                        e
+                    );
                     break;
                 }
             }
@@ -223,8 +238,6 @@ impl UnifiedSearchSystem {
             control_forwarding_handle: Some(control_forwarding_handle),
         })
     }
-
-
 
     /// Create content search actor with fallback strategy (rg → ag → native)
     async fn create_content_search_actor(
@@ -271,12 +284,10 @@ impl UnifiedSearchSystem {
             .unwrap_or(false)
     }
 
-
     /// Check if file watching is enabled
     pub fn is_watching_files(&self) -> bool {
         self.watch_files
     }
-
 
     /// Shutdown the unified search system with graceful task termination
     pub fn shutdown(&mut self) {
@@ -286,14 +297,14 @@ impl UnifiedSearchSystem {
         if let Some(handle) = self.control_forwarding_handle.take() {
             log::debug!("Terminating control message forwarding task");
             handle.abort(); // Forcefully abort the task
-            
+
             // Note: We use abort() instead of waiting for graceful shutdown here because:
             // 1. The control_receiver will be dropped when main exits
             // 2. This will naturally terminate the forwarding loop
             // 3. Abort ensures immediate termination even if there are pending messages
         }
 
-        // Phase 2: Shutdown broadcaster to stop message broadcasting  
+        // Phase 2: Shutdown broadcaster to stop message broadcasting
         // This prevents WARN logs from actors trying to send to closed channels
         self.broadcaster.shutdown();
 
@@ -317,11 +328,10 @@ impl UnifiedSearchSystem {
             log::info!("Shutting down WatchActor");
             actor.shutdown();
         }
-        
+
         log::info!("Unified search system shutdown completed");
     }
 }
-
 
 impl Drop for UnifiedSearchSystem {
     fn drop(&mut self) {
@@ -337,7 +347,8 @@ mod tests {
     async fn test_unified_search_system_creation() {
         let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let result = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver).await;
+        let result =
+            UnifiedSearchSystem::new("./src", false, result_sender, control_receiver).await;
         assert!(
             result.is_ok(),
             "Should create unified search system successfully"
@@ -389,7 +400,7 @@ mod tests {
 
         // Test Native actor shutdown
         let mut native_actor = ContentSearchActor::Native(
-            NativeSearchActor::new_native_search_actor(rx, result_tx.clone(), "./src")
+            NativeSearchActor::new_native_search_actor(rx, result_tx.clone(), "./src"),
         );
         native_actor.shutdown(); // Should not panic
 
@@ -455,7 +466,13 @@ mod tests {
         // Test with invalid path
         let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let result = UnifiedSearchSystem::new("/non/existent/path/12345", false, result_sender, control_receiver).await;
+        let result = UnifiedSearchSystem::new(
+            "/non/existent/path/12345",
+            false,
+            result_sender,
+            control_receiver,
+        )
+        .await;
         // This might succeed or fail depending on the implementation
         // The test ensures the system handles it gracefully either way
         match result {
@@ -499,16 +516,19 @@ mod tests {
 
         // Verify watch actor was not created
         assert!(!system.watch_files, "watch_files should be false");
-        assert!(system.watch_actor.is_none(), "WatchActor should not be created");
+        assert!(
+            system.watch_actor.is_none(),
+            "WatchActor should not be created"
+        );
 
         system.shutdown();
     }
 
     #[tokio::test]
     async fn test_realtime_symbol_indexing_integration() {
-        use tempfile::TempDir;
         use std::io::Write;
         use std::time::Duration;
+        use tempfile::TempDir;
 
         // Create temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -517,19 +537,19 @@ mod tests {
         // Create system with file watching enabled
         let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new(&temp_path, true, result_sender, control_receiver)
-            .await
-            .expect("Failed to create unified search system with WatchActor");
+        let mut system =
+            UnifiedSearchSystem::new(&temp_path, true, result_sender, control_receiver)
+                .await
+                .expect("Failed to create unified search system with WatchActor");
 
         // Give the system time to initialize
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Create a Rust file in the temp directory
         let test_file_path = temp_dir.path().join("test.rs");
-        let mut test_file = std::fs::File::create(&test_file_path)
-            .expect("Failed to create test file");
-        writeln!(test_file, "pub fn hello_world() {{}}")
-            .expect("Failed to write to test file");
+        let mut test_file =
+            std::fs::File::create(&test_file_path).expect("Failed to create test file");
+        writeln!(test_file, "pub fn hello_world() {{}}").expect("Failed to write to test file");
         test_file.flush().expect("Failed to flush test file");
 
         // Give the watch actor time to detect the file

@@ -79,8 +79,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(Some(config)) => config,
         Ok(None) => {
             // Launch TUI mode
-            let mut app = TuiApp::new(".").await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-            return app.run().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+            let mut app = TuiApp::new(".")
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            return app
+                .run()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
         }
         Err(err) => {
             eprintln!("{}", err);

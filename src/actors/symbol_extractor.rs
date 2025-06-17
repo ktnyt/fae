@@ -349,7 +349,10 @@ class MyClass:
     #[test]
     fn test_default_trait() {
         let extractor = SymbolExtractor::default();
-        assert!(extractor.rust_config.is_some(), "Default extractor should have Rust config");
+        assert!(
+            extractor.rust_config.is_some(),
+            "Default extractor should have Rust config"
+        );
     }
 
     #[test]
@@ -370,7 +373,9 @@ pub struct TestStruct {
     field: String,
 }
 "#;
-        temp_file.write_all(rust_code.as_bytes()).expect("Failed to write to temp file");
+        temp_file
+            .write_all(rust_code.as_bytes())
+            .expect("Failed to write to temp file");
         temp_file.flush().expect("Failed to flush temp file");
 
         let symbols = extractor
@@ -378,10 +383,12 @@ pub struct TestStruct {
             .expect("Failed to extract symbols from file");
 
         assert!(!symbols.is_empty(), "Should extract symbols from file");
-        
-        let has_function = symbols.iter().any(|s| s.symbol_type == SymbolType::Function);
+
+        let has_function = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Function);
         let has_struct = symbols.iter().any(|s| s.symbol_type == SymbolType::Struct);
-        
+
         assert!(has_function, "Should find function symbols in file");
         assert!(has_struct, "Should find struct symbols in file");
     }
@@ -411,7 +418,10 @@ pub struct TestStruct {
         // Test with out of bounds line index
         let lines = vec!["fn test()"];
         let content = extractor.create_symbol_content("test", &lines, 10);
-        assert_eq!(content, "test", "Should return symbol name for out of bounds");
+        assert_eq!(
+            content, "test",
+            "Should return symbol name for out of bounds"
+        );
 
         // Test with zero line index
         let lines = vec!["fn test()"];
@@ -452,18 +462,45 @@ pub struct FieldStruct {
             .expect("Failed to extract symbols");
 
         // Check that we have the expected symbol types
-        let symbol_types: std::collections::HashSet<SymbolType> = 
+        let symbol_types: std::collections::HashSet<SymbolType> =
             symbols.iter().map(|s| s.symbol_type).collect();
 
-        assert!(symbol_types.contains(&SymbolType::Function), "Should have function symbols");
-        assert!(symbol_types.contains(&SymbolType::Struct), "Should have struct symbols");
-        assert!(symbol_types.contains(&SymbolType::Enum), "Should have enum symbols");
-        assert!(symbol_types.contains(&SymbolType::Constant), "Should have constant symbols");
-        assert!(symbol_types.contains(&SymbolType::Variable), "Should have static variable symbols");
-        assert!(symbol_types.contains(&SymbolType::Type), "Should have type symbols");
-        assert!(symbol_types.contains(&SymbolType::Module), "Should have module symbols");
-        assert!(symbol_types.contains(&SymbolType::Method), "Should have method symbols");
-        assert!(symbol_types.contains(&SymbolType::Field), "Should have field symbols");
+        assert!(
+            symbol_types.contains(&SymbolType::Function),
+            "Should have function symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Struct),
+            "Should have struct symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Enum),
+            "Should have enum symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Constant),
+            "Should have constant symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Variable),
+            "Should have static variable symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Type),
+            "Should have type symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Module),
+            "Should have module symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Method),
+            "Should have method symbols"
+        );
+        assert!(
+            symbol_types.contains(&SymbolType::Field),
+            "Should have field symbols"
+        );
     }
 
     #[test]
@@ -488,7 +525,7 @@ pub fn incomplete_function(
 
         // The extractor should handle invalid syntax gracefully
         let result = extractor.extract_symbols_from_content(invalid_rust, "test.rs".to_string());
-        
+
         // Tree-sitter is robust and can parse partial/invalid syntax
         assert!(result.is_ok(), "Should handle invalid syntax gracefully");
     }

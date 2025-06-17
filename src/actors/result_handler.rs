@@ -146,7 +146,10 @@ impl ResultHandler {
         // Log progress at info level to avoid interfering with CLI output
         log::info!(
             "Indexing progress: {}% ({}/{} files, {} symbols)",
-            progress_percentage, indexed_files, queued_files, symbols_found
+            progress_percentage,
+            indexed_files,
+            queued_files,
+            symbols_found
         );
     }
 }
