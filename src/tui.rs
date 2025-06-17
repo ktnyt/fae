@@ -548,9 +548,15 @@ impl TuiApp {
             KeyCode::Esc => {
                 self.should_quit = true;
             }
-            // Toggle statistics overlay with Tab
+            // Tab cycles through search modes, Shift+Tab shows statistics
             KeyCode::Tab => {
-                self.state.show_stats_overlay = !self.state.show_stats_overlay;
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    // Shift+Tab: Toggle statistics overlay
+                    self.state.show_stats_overlay = !self.state.show_stats_overlay;
+                } else {
+                    // Tab: Cycle through search modes
+                    self.cycle_search_mode();
+                }
                 self.needs_redraw = true;
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -672,6 +678,25 @@ impl TuiApp {
                 );
             }
         }
+    }
+
+    /// Cycle through search modes: none -> # -> $ -> @ -> / -> none
+    fn cycle_search_mode(&mut self) {
+        let (current_mode, base_query) = parse_query_with_mode(&self.state.search_input);
+        
+        let next_prefix = match current_mode {
+            SearchMode::Literal => "#",   // none -> #symbol
+            SearchMode::Symbol => "$",    // # -> $variable
+            SearchMode::Variable => "@",  // $ -> @file
+            SearchMode::Filepath => "/",  // @ -> /regex
+            SearchMode::Regexp => "",     // / -> none (literal)
+        };
+        
+        // Update search input with new prefix
+        self.state.search_input = format!("{}{}", next_prefix, base_query);
+        
+        // Execute search with new mode
+        self.execute_incremental_search();
     }
 
     /// Draw the UI
@@ -1064,7 +1089,7 @@ fn render_results_box(
 /// Render the status bar with help text on left and index status on right
 fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, _index_status: &IndexStatus) {
     // Simple help text only - index status now shown as toast
-    let help_text = "Modes: text | #symbol | $variable | @file | /regex | ↑↓: Navigate | Enter: Select | Tab: Stats | Esc: Quit";
+    let help_text = "↑↓: Navigate | Enter: Select | Tab: Cycle modes | Shift+Tab: Stats | Esc: Quit";
     let help_status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
@@ -1122,7 +1147,7 @@ fn render_stats_overlay(f: &mut Frame, index_status: &IndexStatus) {
         🔍 Symbols found: {}\n\
         📋 Queued files: {}\n\
         ✅ Status: {}\n\n\
-        Press Tab to close",
+        Press Shift+Tab to close",
         index_status.indexed_files,
         index_status.symbols_found,
         index_status.queued_files,
