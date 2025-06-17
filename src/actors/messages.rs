@@ -24,8 +24,8 @@ pub enum FaeMessage {
     CompleteSymbolIndex(String), // filepath
     CompleteInitialIndexing,     // Indicates all initial symbol indexing is complete
     ReportSymbolIndex {
-        queued_files: usize,
-        indexed_files: usize,
+        remaining_files: usize,
+        processed_files: usize,
         symbols_found: usize,
     }, // Progress report for symbol indexing
 

@@ -108,12 +108,13 @@ impl ResultHandler {
     /// Handle symbol index progress report
     fn handle_symbol_index_report(
         &self,
-        queued_files: usize,
-        indexed_files: usize,
+        remaining_files: usize,
+        processed_files: usize,
         symbols_found: usize,
     ) {
-        let progress_percentage = if queued_files > 0 {
-            (indexed_files as f64 / queued_files as f64 * 100.0).round() as u32
+        let total_files = remaining_files + processed_files;
+        let progress_percentage = if total_files > 0 {
+            (processed_files as f64 / total_files as f64 * 100.0).round() as u32
         } else {
             100
         };
@@ -121,8 +122,8 @@ impl ResultHandler {
         log::info!(
             "Symbol indexing progress: {}% ({}/{} files, {} symbols found)",
             progress_percentage,
-            indexed_files,
-            queued_files,
+            processed_files,
+            total_files,
             symbols_found
         );
 
@@ -130,8 +131,8 @@ impl ResultHandler {
         log::info!(
             "Indexing progress: {}% ({}/{} files, {} symbols)",
             progress_percentage,
-            indexed_files,
-            queued_files,
+            processed_files,
+            total_files,
             symbols_found
         );
     }
@@ -161,12 +162,12 @@ impl MessageHandler<FaeMessage> for ResultHandler {
             }
             "reportSymbolIndex" => {
                 if let FaeMessage::ReportSymbolIndex {
-                    queued_files,
-                    indexed_files,
+                    remaining_files,
+                    processed_files,
                     symbols_found,
                 } = message.payload
                 {
-                    self.handle_symbol_index_report(queued_files, indexed_files, symbols_found);
+                    self.handle_symbol_index_report(remaining_files, processed_files, symbols_found);
                 } else {
                     log::warn!("reportSymbolIndex received unexpected payload");
                 }

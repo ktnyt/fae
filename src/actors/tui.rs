@@ -80,27 +80,28 @@ impl MessageHandler<FaeMessage> for TuiActor {
         log::debug!("TuiActor received message: {}", message.method);
         match &message.payload {
             FaeMessage::ReportSymbolIndex {
-                queued_files,
-                indexed_files,
+                remaining_files,
+                processed_files,
                 symbols_found,
             } => {
-                log::debug!("TuiActor: Updating index status: {}/{} files, {} symbols", indexed_files, queued_files, symbols_found);
+                let total_files = remaining_files + processed_files;
+                log::debug!("TuiActor: Updating index status: {}/{} files, {} symbols", processed_files, total_files, symbols_found);
                 
                 // Update TUI index status for F1 statistics overlay
                 use crate::tui::StateUpdate;
                 let state_update = StateUpdate::new()
-                    .with_index_progress(*queued_files, *indexed_files, *symbols_found);
+                    .with_index_progress(total_files, *processed_files, *symbols_found);
                     
                 if let Err(e) = self.tui_handle.update_state(state_update) {
                     log::warn!("Failed to update TUI index status: {}", e);
                 }
                 
                 // Show indexing progress as toast
-                if *queued_files > 0 {
+                if *remaining_files > 0 {
                     let progress_message = format!(
                         "Indexing: {}/{} files, {} symbols",
-                        indexed_files,
-                        indexed_files + queued_files,
+                        processed_files,
+                        total_files,
                         symbols_found
                     );
                     if let Err(e) = self.tui_handle.show_toast(
@@ -284,8 +285,8 @@ mod tests {
         let progress_message = Message::new(
             "reportSymbolIndex",
             FaeMessage::ReportSymbolIndex {
-                queued_files: 5,
-                indexed_files: 3,
+                remaining_files: 2,
+                processed_files: 3,
                 symbols_found: 120,
             },
         );
@@ -295,8 +296,8 @@ mod tests {
         // Verify index status was updated
         if let Ok(state_update) = tui_rx.try_recv() {
             if let Some(index_status) = state_update.index_status {
-                assert_eq!(index_status.queued_files, 5);
-                assert_eq!(index_status.indexed_files, 3);
+                assert_eq!(index_status.queued_files, 5); // total_files = 2 + 3
+                assert_eq!(index_status.indexed_files, 3); // processed_files
                 assert_eq!(index_status.symbols_found, 120);
                 assert!(index_status.is_active);
             }
@@ -306,8 +307,8 @@ mod tests {
         let complete_message = Message::new(
             "reportSymbolIndex",
             FaeMessage::ReportSymbolIndex {
-                queued_files: 0,
-                indexed_files: 8,
+                remaining_files: 0,
+                processed_files: 8,
                 symbols_found: 240,
             },
         );
@@ -317,8 +318,8 @@ mod tests {
         // Verify completion status was updated
         if let Ok(state_update) = tui_rx.try_recv() {
             if let Some(index_status) = state_update.index_status {
-                assert_eq!(index_status.queued_files, 0);
-                assert_eq!(index_status.indexed_files, 8);
+                assert_eq!(index_status.queued_files, 8); // total_files = 0 + 8
+                assert_eq!(index_status.indexed_files, 8); // processed_files
                 assert_eq!(index_status.symbols_found, 240);
                 assert!(!index_status.is_active); // Indexing is complete
                 assert!(index_status.is_complete());

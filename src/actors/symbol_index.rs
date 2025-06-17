@@ -420,8 +420,8 @@ impl SymbolIndexHandler {
         );
 
         let report_message = FaeMessage::ReportSymbolIndex {
-            queued_files: total_queued,
-            indexed_files: stats.indexed_files,
+            remaining_files: current_queue_size,
+            processed_files: stats.indexed_files,
             symbols_found: stats.symbols_found,
         };
 
