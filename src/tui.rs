@@ -46,7 +46,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
 use std::{
@@ -225,7 +225,7 @@ pub struct TuiState {
     pub kill_ring: String,         // Kill/yank buffer (emacs-style)
     
     // 8. Result list scroll state
-    pub results_scroll_offset: usize,  // Top visible result index for scrolling
+    pub results_list_state: ListState,  // StatefulList state for scrolling
 }
 
 impl TuiState {
@@ -240,7 +240,7 @@ impl TuiState {
             show_stats_overlay: false,
             cursor_position: 0,
             kill_ring: String::new(),
-            results_scroll_offset: 0,
+            results_list_state: ListState::default(),
         }
     }
 
@@ -678,6 +678,8 @@ impl TuiApp {
         // Clear previous results and selection (but keep search input intact)
         self.state.search_results.clear();
         self.state.selected_result_index = None;
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
 
         if !self.state.search_input.is_empty() {
             log::debug!(
@@ -719,6 +721,8 @@ impl TuiApp {
                     self.state.selected_result_index = Some(0);
                 }
             }
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
     }
 
@@ -739,6 +743,8 @@ impl TuiApp {
                     self.state.selected_result_index = Some(self.state.search_results.len() - 1);
                 }
             }
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
     }
 
@@ -848,6 +854,8 @@ impl TuiApp {
         self.state.cursor_position = 0;
         self.state.search_results.clear();
         self.state.selected_result_index = None;
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
         
         // Show toast notification
         self.state.toast_state.show(
@@ -877,6 +885,8 @@ impl TuiApp {
         } else {
             self.state.selected_result_index = Some(0);
         }
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
     }
 
     /// Scroll results down half page (C-d when input empty)
@@ -894,12 +904,16 @@ impl TuiApp {
         } else {
             self.state.selected_result_index = Some(0);
         }
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
     }
 
     /// Jump to first result (C-,)
     fn goto_first_result(&mut self) {
         if !self.state.search_results.is_empty() {
             self.state.selected_result_index = Some(0);
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
     }
 
@@ -907,6 +921,8 @@ impl TuiApp {
     fn goto_last_result(&mut self) {
         if !self.state.search_results.is_empty() {
             self.state.selected_result_index = Some(self.state.search_results.len() - 1);
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
     }
 
@@ -936,7 +952,7 @@ impl TuiApp {
             // 1. Input box
             render_input_box(f, chunks[0], &search_input, cursor_position);
 
-            // 2. Results box
+            // 2. Results box  
             render_results_box(f, chunks[1], &search_results, selected_index);
 
             // 3. Status bar
@@ -981,6 +997,8 @@ impl TuiApp {
             } else {
                 self.state.selected_result_index = None;
             }
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
 
         if let Some(append_results) = update.append_results {
@@ -989,6 +1007,8 @@ impl TuiApp {
             // Set cursor to first result if this was the first addition
             if was_empty && !self.state.search_results.is_empty() {
                 self.state.selected_result_index = Some(0);
+                // Update ListState for scrolling
+                self.state.results_list_state.select(self.state.selected_result_index);
             }
         }
 
@@ -1000,6 +1020,8 @@ impl TuiApp {
             } else {
                 self.state.selected_result_index = None;
             }
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
 
         if let Some((message, toast_type, duration)) = update.toast {
@@ -1009,6 +1031,8 @@ impl TuiApp {
         if update.clear_results {
             self.state.search_results.clear();
             self.state.selected_result_index = None;
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
 
         if update.hide_toast {
@@ -1034,6 +1058,8 @@ impl TuiApp {
         // Auto-select first result if none selected
         if self.state.selected_result_index.is_none() && !self.state.search_results.is_empty() {
             self.state.selected_result_index = Some(0);
+            // Update ListState for scrolling
+            self.state.results_list_state.select(self.state.selected_result_index);
         }
         self.needs_redraw = true;
     }
@@ -1047,6 +1073,8 @@ impl TuiApp {
         } else {
             self.state.selected_result_index = None;
         }
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
         self.needs_redraw = true;
     }
 
@@ -1054,6 +1082,8 @@ impl TuiApp {
     pub fn clear_search_results(&mut self) {
         self.state.search_results.clear();
         self.state.selected_result_index = None;
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
         self.needs_redraw = true;
     }
 
@@ -1066,6 +1096,8 @@ impl TuiApp {
         } else {
             self.state.selected_result_index = None;
         }
+        // Update ListState for scrolling
+        self.state.results_list_state.select(self.state.selected_result_index);
         self.needs_redraw = true;
     }
 
@@ -1284,7 +1316,7 @@ fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &s
     f.render_widget(input, area);
 }
 
-/// Render the results box with cursor highlighting
+/// Render the results box with cursor highlighting and automatic scrolling
 fn render_results_box(
     f: &mut Frame,
     area: ratatui::layout::Rect,
@@ -1293,14 +1325,8 @@ fn render_results_box(
 ) {
     let items: Vec<ListItem> = search_results
         .iter()
-        .enumerate()
-        .map(|(i, result)| {
-            let item = ListItem::new(result.as_str());
-            if Some(i) == selected_index {
-                item.style(Style::default().fg(Color::Black).bg(Color::White))
-            } else {
-                item
-            }
+        .map(|result| {
+            ListItem::new(result.as_str())
         })
         .collect();
 
@@ -1312,9 +1338,14 @@ fn render_results_box(
 
     let results_list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::White))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::White));
 
-    f.render_widget(results_list, area);
+    // Create a temporary ListState for rendering with current selection
+    let mut list_state = ListState::default();
+    list_state.select(selected_index);
+
+    f.render_stateful_widget(results_list, area, &mut list_state);
 }
 
 /// Render the status bar with help text on left and index status on right
