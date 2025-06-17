@@ -219,6 +219,13 @@ pub struct TuiState {
 
     // 6. Statistics overlay state
     pub show_stats_overlay: bool,
+
+    // 7. Emacs-style text editing state
+    pub cursor_position: usize,    // Cursor position in search_input
+    pub kill_ring: String,         // Kill/yank buffer (emacs-style)
+    
+    // 8. Result list scroll state
+    pub results_scroll_offset: usize,  // Top visible result index for scrolling
 }
 
 impl TuiState {
@@ -231,6 +238,9 @@ impl TuiState {
             toast_state: ToastState::new(),
             index_status: IndexStatus::new(),
             show_stats_overlay: false,
+            cursor_position: 0,
+            kill_ring: String::new(),
+            results_scroll_offset: 0,
         }
     }
 
@@ -559,28 +569,94 @@ impl TuiApp {
                 }
                 self.needs_redraw = true;
             }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.should_quit = true;
+            // Emacs-style Control key bindings
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                match c {
+                    'c' => self.should_quit = true,
+                    
+                    // Text editing (emacs-style)
+                    'a' => self.move_cursor_to_start(),
+                    'b' => self.move_cursor_left(),
+                    'e' => self.move_cursor_to_end(),
+                    'f' => self.move_cursor_right(),
+                    'h' => self.delete_char_backward(),
+                    'k' => self.kill_line(),
+                    'y' => self.yank(),
+                    
+                    // Search and navigation
+                    'g' => self.abort_search(),
+                    'u' => self.scroll_up_half_page(),
+                    
+                    // Handle Ctrl+D separately based on context
+                    'd' => {
+                        if self.state.search_input.is_empty() || self.state.cursor_position >= self.state.search_input.len() {
+                            // If input is empty or cursor at end, scroll down
+                            self.scroll_down_half_page();
+                        } else {
+                            // Otherwise, delete character forward
+                            self.delete_char_forward();
+                        }
+                    }
+                    
+                    // Result navigation (existing functionality)
+                    'n' => self.move_cursor_down(),
+                    'p' => self.move_cursor_up(),
+                    
+                    _ => return, // Unknown Ctrl combination, don't redraw
+                }
+                self.needs_redraw = true;
+            }
+            
+            // Additional Ctrl combinations that need special handling
+            KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.goto_first_result();
+                self.needs_redraw = true;
+            }
+            KeyCode::Char('.') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.goto_last_result();
+                self.needs_redraw = true;
             }
 
-            // Result navigation
-            KeyCode::Down | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Result navigation (keep arrow key support)
+            KeyCode::Down => {
                 self.move_cursor_down();
                 self.needs_redraw = true;
             }
-            KeyCode::Up | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Up => {
                 self.move_cursor_up();
+                self.needs_redraw = true;
+            }
+            
+            // Text cursor movement (arrow keys and Home/End)
+            KeyCode::Left => {
+                self.move_cursor_left();
+                self.needs_redraw = true;
+            }
+            KeyCode::Right => {
+                self.move_cursor_right();
+                self.needs_redraw = true;
+            }
+            KeyCode::Home => {
+                self.move_cursor_to_start();
+                self.needs_redraw = true;
+            }
+            KeyCode::End => {
+                self.move_cursor_to_end();
+                self.needs_redraw = true;
+            }
+            KeyCode::Delete => {
+                self.delete_char_forward();
                 self.needs_redraw = true;
             }
 
             // Text input with incremental search
             KeyCode::Char(c) => {
-                self.state.search_input.push(c);
+                self.insert_char(c);
                 self.execute_incremental_search();
                 self.needs_redraw = true;
             }
             KeyCode::Backspace => {
-                self.state.search_input.pop();
+                self.delete_char_backward();
                 self.execute_incremental_search();
                 self.needs_redraw = true;
             }
@@ -699,6 +775,141 @@ impl TuiApp {
         self.execute_incremental_search();
     }
 
+    // ===== Emacs-style Text Editing Methods =====
+
+    /// Insert character at cursor position (C-f, Right Arrow)
+    fn insert_char(&mut self, c: char) {
+        self.state.search_input.insert(self.state.cursor_position, c);
+        self.state.cursor_position += 1;
+    }
+
+    /// Move cursor to start of line (C-a, Home)
+    fn move_cursor_to_start(&mut self) {
+        self.state.cursor_position = 0;
+    }
+
+    /// Move cursor to end of line (C-e, End)
+    fn move_cursor_to_end(&mut self) {
+        self.state.cursor_position = self.state.search_input.len();
+    }
+
+    /// Move cursor left one character (C-b, Left Arrow)
+    fn move_cursor_left(&mut self) {
+        if self.state.cursor_position > 0 {
+            self.state.cursor_position -= 1;
+        }
+    }
+
+    /// Move cursor right one character (C-f, Right Arrow)
+    fn move_cursor_right(&mut self) {
+        if self.state.cursor_position < self.state.search_input.len() {
+            self.state.cursor_position += 1;
+        }
+    }
+
+    /// Delete character forward at cursor (C-d, Delete)
+    fn delete_char_forward(&mut self) {
+        if self.state.cursor_position < self.state.search_input.len() {
+            self.state.search_input.remove(self.state.cursor_position);
+        }
+    }
+
+    /// Delete character backward from cursor (C-h, Backspace)
+    fn delete_char_backward(&mut self) {
+        if self.state.cursor_position > 0 {
+            self.state.cursor_position -= 1;
+            self.state.search_input.remove(self.state.cursor_position);
+        }
+    }
+
+    /// Kill text from cursor to end of line (C-k)
+    fn kill_line(&mut self) {
+        if self.state.cursor_position < self.state.search_input.len() {
+            let killed_text = self.state.search_input[self.state.cursor_position..].to_string();
+            self.state.kill_ring = killed_text;
+            self.state.search_input.truncate(self.state.cursor_position);
+        }
+    }
+
+    /// Yank (paste) text from kill ring (C-y)
+    fn yank(&mut self) {
+        if !self.state.kill_ring.is_empty() {
+            let insert_text = self.state.kill_ring.clone();
+            self.state.search_input.insert_str(self.state.cursor_position, &insert_text);
+            self.state.cursor_position += insert_text.len();
+        }
+    }
+
+    // ===== Search and Navigation Methods =====
+
+    /// Abort current search and clear input (C-g)
+    fn abort_search(&mut self) {
+        self.state.search_input.clear();
+        self.state.cursor_position = 0;
+        self.state.search_results.clear();
+        self.state.selected_result_index = None;
+        
+        // Show toast notification
+        self.state.toast_state.show(
+            "Search aborted".to_string(),
+            ToastType::Info,
+            Duration::from_secs(1),
+        );
+        
+        // Clear search via actor system
+        if let Err(e) = self.execute_search(String::new()) {
+            log::error!("Failed to execute clear search: {}", e);
+        }
+    }
+
+    /// Scroll results up half page (C-u)
+    fn scroll_up_half_page(&mut self) {
+        if self.state.search_results.is_empty() {
+            return;
+        }
+        
+        let visible_height = 10; // Approximate visible results
+        let half_page = (visible_height / 2).max(1);
+        
+        if let Some(current_index) = self.state.selected_result_index {
+            let new_index = current_index.saturating_sub(half_page);
+            self.state.selected_result_index = Some(new_index);
+        } else {
+            self.state.selected_result_index = Some(0);
+        }
+    }
+
+    /// Scroll results down half page (C-d when input empty)
+    fn scroll_down_half_page(&mut self) {
+        if self.state.search_results.is_empty() {
+            return;
+        }
+        
+        let visible_height = 10; // Approximate visible results
+        let half_page = (visible_height / 2).max(1);
+        
+        if let Some(current_index) = self.state.selected_result_index {
+            let new_index = (current_index + half_page).min(self.state.search_results.len() - 1);
+            self.state.selected_result_index = Some(new_index);
+        } else {
+            self.state.selected_result_index = Some(0);
+        }
+    }
+
+    /// Jump to first result (C-,)
+    fn goto_first_result(&mut self) {
+        if !self.state.search_results.is_empty() {
+            self.state.selected_result_index = Some(0);
+        }
+    }
+
+    /// Jump to last result (C-.)
+    fn goto_last_result(&mut self) {
+        if !self.state.search_results.is_empty() {
+            self.state.selected_result_index = Some(self.state.search_results.len() - 1);
+        }
+    }
+
     /// Draw the UI
     fn draw(&mut self) -> Result<()> {
         // 🔧 Fix: Remove duplicate toast update logic (now handled in run() method)
@@ -710,6 +921,7 @@ impl TuiApp {
         let toast_state = self.state.toast_state.clone();
         let index_status = self.state.index_status.clone();
         let show_stats_overlay = self.state.show_stats_overlay;
+        let cursor_position = self.state.cursor_position;
 
         self.terminal.draw(|f| {
             let chunks = Layout::default()
@@ -722,7 +934,7 @@ impl TuiApp {
                 .split(f.size());
 
             // 1. Input box
-            render_input_box(f, chunks[0], &search_input);
+            render_input_box(f, chunks[0], &search_input, cursor_position);
 
             // 2. Results box
             render_results_box(f, chunks[1], &search_results, selected_index);
@@ -1033,8 +1245,8 @@ impl StateUpdate {
     }
 }
 
-/// Render the input box with search mode indicator
-fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &str) {
+/// Render the input box with search mode indicator and cursor
+fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &str, cursor_pos: usize) {
     // Detect current search mode
     let (mode, _) = parse_query_with_mode(search_input);
     let mode_name = match mode {
@@ -1047,7 +1259,26 @@ fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &s
 
     let title = format!("Search Input - {} Mode", mode_name);
 
-    let input = Paragraph::new(search_input)
+    // Create input string with visible cursor
+    let display_text = if search_input.is_empty() {
+        if cursor_pos == 0 {
+            "█".to_string() // Block cursor at position 0
+        } else {
+            search_input.to_string()
+        }
+    } else {
+        let mut chars: Vec<char> = search_input.chars().collect();
+        if cursor_pos < chars.len() {
+            // Insert cursor before the character at cursor_pos
+            chars.insert(cursor_pos, '█');
+        } else if cursor_pos == chars.len() {
+            // Cursor at end of string
+            chars.push('█');
+        }
+        chars.into_iter().collect()
+    };
+
+    let input = Paragraph::new(display_text)
         .block(Block::default().borders(Borders::ALL).title(title))
         .style(Style::default().fg(Color::White));
     f.render_widget(input, area);
@@ -1088,8 +1319,8 @@ fn render_results_box(
 
 /// Render the status bar with help text on left and index status on right
 fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, _index_status: &IndexStatus) {
-    // Simple help text only - index status now shown as toast
-    let help_text = "↑↓: Navigate | Enter: Select | Tab: Cycle modes | Shift+Tab: Stats | Esc: Quit";
+    // Updated help text to include emacs-style bindings
+    let help_text = "↑↓/C-p/C-n: Navigate | Enter: Select | Tab: Cycle modes | C-a/e: Start/End | C-k/y: Kill/Yank | C-g: Abort | Esc: Quit";
     let help_status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
@@ -1726,5 +1957,135 @@ mod tests {
 
         assert_eq!(state.search_results.len(), 0);
         assert_eq!(state.selected_result_index, None);
+    }
+
+    #[test]
+    fn test_emacs_text_editing() {
+        // Test emacs-style text editing functionality
+        let mut state = TuiState::new();
+        
+        // Test insert_char functionality
+        state.search_input = "hello".to_string();
+        state.cursor_position = 2; // Position between 'e' and 'l'
+        
+        // Simulate inserting 'X' at cursor
+        state.search_input.insert(state.cursor_position, 'X');
+        state.cursor_position += 1;
+        
+        assert_eq!(state.search_input, "heXllo");
+        assert_eq!(state.cursor_position, 3);
+        
+        // Test move_cursor_to_start
+        state.cursor_position = 0;
+        assert_eq!(state.cursor_position, 0);
+        
+        // Test move_cursor_to_end
+        state.cursor_position = state.search_input.len();
+        assert_eq!(state.cursor_position, 6); // Length of "heXllo"
+        
+        // Test kill_line functionality
+        state.cursor_position = 2; // Position after 'e'
+        let killed_text = state.search_input[state.cursor_position..].to_string();
+        state.kill_ring = killed_text.clone();
+        state.search_input.truncate(state.cursor_position);
+        
+        assert_eq!(state.search_input, "he");
+        assert_eq!(state.kill_ring, "Xllo");
+        
+        // Test yank functionality
+        let insert_text = state.kill_ring.clone();
+        state.search_input.insert_str(state.cursor_position, &insert_text);
+        state.cursor_position += insert_text.len();
+        
+        assert_eq!(state.search_input, "heXllo");
+        assert_eq!(state.cursor_position, 6);
+    }
+
+    #[test]
+    fn test_emacs_cursor_movement() {
+        let mut state = TuiState::new();
+        state.search_input = "test".to_string();
+        state.cursor_position = 2; // Between 'e' and 's'
+        
+        // Test move_cursor_left
+        if state.cursor_position > 0 {
+            state.cursor_position -= 1;
+        }
+        assert_eq!(state.cursor_position, 1);
+        
+        // Test move_cursor_right
+        if state.cursor_position < state.search_input.len() {
+            state.cursor_position += 1;
+        }
+        assert_eq!(state.cursor_position, 2);
+        
+        // Test boundary conditions
+        state.cursor_position = 0;
+        // Try to move left when already at start
+        if state.cursor_position > 0 {
+            state.cursor_position -= 1;
+        }
+        assert_eq!(state.cursor_position, 0); // Should remain at 0
+        
+        state.cursor_position = state.search_input.len();
+        // Try to move right when already at end
+        if state.cursor_position < state.search_input.len() {
+            state.cursor_position += 1;
+        }
+        assert_eq!(state.cursor_position, 4); // Should remain at end
+    }
+
+    #[test]
+    fn test_emacs_delete_operations() {
+        let mut state = TuiState::new();
+        state.search_input = "hello".to_string();
+        state.cursor_position = 2; // Between 'e' and 'l'
+        
+        // Test delete_char_forward (C-d)
+        if state.cursor_position < state.search_input.len() {
+            state.search_input.remove(state.cursor_position);
+        }
+        assert_eq!(state.search_input, "helo");
+        assert_eq!(state.cursor_position, 2); // Cursor stays in place
+        
+        // Test delete_char_backward (C-h, Backspace)
+        if state.cursor_position > 0 {
+            state.cursor_position -= 1;
+            state.search_input.remove(state.cursor_position);
+        }
+        assert_eq!(state.search_input, "hlo");
+        assert_eq!(state.cursor_position, 1); // Cursor moves back
+    }
+
+    #[test]
+    fn test_result_navigation() {
+        let mut state = TuiState::new();
+        state.search_results = vec![
+            "result1".to_string(),
+            "result2".to_string(),
+            "result3".to_string(),
+        ];
+        state.selected_result_index = Some(1); // Start at second result
+        
+        // Test scroll_up_half_page (C-u)
+        let visible_height = 10;
+        let half_page = (visible_height / 2).max(1);
+        if let Some(current_index) = state.selected_result_index {
+            let new_index = current_index.saturating_sub(half_page);
+            state.selected_result_index = Some(new_index);
+        }
+        assert_eq!(state.selected_result_index, Some(0)); // Should go to first result
+        
+        // Test goto_last_result (C-.)
+        if !state.search_results.is_empty() {
+            state.selected_result_index = Some(state.search_results.len() - 1);
+        }
+        assert_eq!(state.selected_result_index, Some(2)); // Should go to last result
+        
+        // Test goto_first_result (C-,)
+        if !state.search_results.is_empty() {
+            state.selected_result_index = Some(0);
+        }
+        assert_eq!(state.selected_result_index, Some(0)); // Should go to first result
     }
 }
