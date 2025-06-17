@@ -360,6 +360,7 @@ impl SymbolIndexHandler {
                         filepath: symbol.filepath.clone(),
                         line: symbol.line,
                         column: symbol.column,
+                        name: symbol.name.clone(),
                         content: symbol.content.clone(),
                         symbol_type: symbol.symbol_type,
                     };

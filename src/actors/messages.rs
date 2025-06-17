@@ -20,6 +20,7 @@ pub enum FaeMessage {
         filepath: String,
         line: u32,
         column: u32,
+        name: String,
         content: String,
         symbol_type: SymbolType,
     },

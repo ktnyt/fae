@@ -64,6 +64,7 @@ pub struct Symbol {
     pub filepath: String,
     pub line: u32,
     pub column: u32,
+    pub name: String,
     pub content: String,
     pub symbol_type: SymbolType,
 }
@@ -74,6 +75,7 @@ impl Symbol {
         filepath: String,
         line: u32,
         column: u32,
+        name: String,
         content: String,
         symbol_type: SymbolType,
     ) -> Self {
@@ -81,6 +83,7 @@ impl Symbol {
             filepath,
             line,
             column,
+            name,
             content,
             symbol_type,
         }
@@ -92,7 +95,7 @@ impl Symbol {
             filename: self.filepath,
             line: self.line,
             column: self.column,
-            content: format!("[{}] {}", self.symbol_type.display_name(), self.content),
+            content: format!("[{}] {}", self.symbol_type.display_name(), self.name),
         }
     }
 }
@@ -165,13 +168,15 @@ mod tests {
             15,
             8,
             "main".to_string(),
+            "fn main() { ... }".to_string(),
             SymbolType::Function,
         );
 
         assert_eq!(symbol.filepath, "src/main.rs");
         assert_eq!(symbol.line, 15);
         assert_eq!(symbol.column, 8);
-        assert_eq!(symbol.content, "main");
+        assert_eq!(symbol.name, "main");
+        assert_eq!(symbol.content, "fn main() { ... }");
         assert_eq!(symbol.symbol_type, SymbolType::Function);
     }
 
@@ -182,6 +187,7 @@ mod tests {
             25,
             4,
             "MyStruct".to_string(),
+            "struct MyStruct { ... }".to_string(),
             SymbolType::Struct,
         );
 
@@ -201,6 +207,7 @@ mod tests {
             1,
             1,
             "test_fn".to_string(),
+            "fn test_fn() { ... }".to_string(),
             SymbolType::Function,
         );
         assert_eq!(function_symbol.into_search_result().content, "[fn] test_fn");
@@ -210,6 +217,7 @@ mod tests {
             2,
             1,
             "test_var".to_string(),
+            "let test_var = ...".to_string(),
             SymbolType::Variable,
         );
         assert_eq!(
@@ -222,6 +230,7 @@ mod tests {
             3,
             1,
             "TEST_CONST".to_string(),
+            "const TEST_CONST: i32 = ...".to_string(),
             SymbolType::Constant,
         );
         assert_eq!(
@@ -269,13 +278,15 @@ mod tests {
             20,
             15,
             "clone_symbol".to_string(),
+            "fn clone_symbol(&self) { ... }".to_string(),
             SymbolType::Method,
         );
         let cloned_symbol = symbol.clone();
         assert_eq!(cloned_symbol.filepath, "clone.rs");
         assert_eq!(cloned_symbol.line, 20);
         assert_eq!(cloned_symbol.column, 15);
-        assert_eq!(cloned_symbol.content, "clone_symbol");
+        assert_eq!(cloned_symbol.name, "clone_symbol");
+        assert_eq!(cloned_symbol.content, "fn clone_symbol(&self) { ... }");
         assert_eq!(cloned_symbol.symbol_type, SymbolType::Method);
     }
 }

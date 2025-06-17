@@ -133,15 +133,15 @@ impl SymbolSearchHandler {
                 filtered_symbols += 1;
                 log::trace!(
                     "Checking symbol: '{}' (type: {:?}) against query: '{}'",
-                    symbol.content,
+                    symbol.name,
                     symbol.symbol_type,
                     query
                 );
 
-                if let Some(score) = self.fuzzy_matcher.fuzzy_match(&symbol.content, query) {
+                if let Some(score) = self.fuzzy_matcher.fuzzy_match(&symbol.name, query) {
                     log::trace!(
                         "Found match: '{}' with score: {} (type: {:?})",
-                        symbol.content,
+                        symbol.name,
                         score,
                         symbol.symbol_type
                     );
@@ -174,14 +174,14 @@ impl SymbolSearchHandler {
                 filename: symbol.filepath.clone(),
                 line: symbol.line,
                 column: symbol.column,
-                content: format!("[{}] {}", symbol.symbol_type.display_name(), symbol.content),
+                content: format!("[{}] {}", symbol.symbol_type.display_name(), symbol.name),
             };
 
             log::trace!(
                 "Sending result {}/{}: '{}' (score: {}, type: {:?})",
                 index + 1,
                 results_to_send,
-                symbol.content,
+                symbol.name,
                 score,
                 symbol.symbol_type
             );
@@ -199,7 +199,7 @@ impl SymbolSearchHandler {
 
             log::trace!(
                 "Successfully sent search result for '{}' (score: {})",
-                symbol.content,
+                symbol.name,
                 score
             );
         }
@@ -278,11 +278,12 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                     filepath,
                     line,
                     column,
+                    name,
                     content,
                     symbol_type,
                 } = message.payload
                 {
-                    let symbol = Symbol::new(filepath, line, column, content, symbol_type);
+                    let symbol = Symbol::new(filepath, line, column, name, content, symbol_type);
                     self.add_symbol(symbol);
                 } else {
                     log::warn!("pushSymbolIndex received unexpected payload");
@@ -377,6 +378,7 @@ mod tests {
             10,
             5,
             "my_function".to_string(),
+            "fn my_function() { ... }".to_string(),
             SymbolType::Function,
         );
         let symbol2 = Symbol::new(
@@ -384,6 +386,7 @@ mod tests {
             20,
             1,
             "MyStruct".to_string(),
+            "struct MyStruct { ... }".to_string(),
             SymbolType::Struct,
         );
 
@@ -436,7 +439,8 @@ mod tests {
                 filepath: "test.rs".to_string(),
                 line: 10,
                 column: 5,
-                content: "my_function".to_string(),
+                name: "my_function".to_string(),
+                content: "fn my_function() { ... }".to_string(),
                 symbol_type: SymbolType::Function,
             },
         );
@@ -450,7 +454,8 @@ mod tests {
                 filepath: "test.rs".to_string(),
                 line: 20,
                 column: 1,
-                content: "MyStruct".to_string(),
+                name: "MyStruct".to_string(),
+                content: "struct MyStruct { ... }".to_string(),
                 symbol_type: SymbolType::Struct,
             },
         );
@@ -488,7 +493,8 @@ mod tests {
                 filepath: "test.rs".to_string(),
                 line: 10,
                 column: 5,
-                content: "my_function".to_string(),
+                name: "my_function".to_string(),
+                content: "fn my_function() { ... }".to_string(),
                 symbol_type: SymbolType::Function,
             },
         );
@@ -502,7 +508,8 @@ mod tests {
                 filepath: "test.rs".to_string(),
                 line: 20,
                 column: 1,
-                content: "MyStruct".to_string(),
+                name: "MyStruct".to_string(),
+                content: "struct MyStruct { ... }".to_string(),
                 symbol_type: SymbolType::Struct,
             },
         );
@@ -591,7 +598,8 @@ mod tests {
                     filepath: "test.rs".to_string(),
                     line: 10,
                     column: 5,
-                    content: content.to_string(),
+                    name: content.to_string(),
+                    content: format!("{:?} {}", symbol_type, content),
                     symbol_type,
                 },
             );
@@ -743,6 +751,7 @@ mod tests {
             10,
             5,
             "test_function".to_string(),
+            "fn test_function() { ... }".to_string(),
             SymbolType::Function,
         );
         let variable_symbol = Symbol::new(
@@ -750,6 +759,7 @@ mod tests {
             20,
             5,
             "test_variable".to_string(),
+            "let test_variable = ...".to_string(),
             SymbolType::Variable,
         );
         let constant_symbol = Symbol::new(
@@ -757,6 +767,7 @@ mod tests {
             30,
             5,
             "TEST_CONSTANT".to_string(),
+            "const TEST_CONSTANT: i32 = ...".to_string(),
             SymbolType::Constant,
         );
         let field_symbol = Symbol::new(
@@ -764,6 +775,7 @@ mod tests {
             40,
             5,
             "test_field".to_string(),
+            "test_field: String".to_string(),
             SymbolType::Field,
         );
 
@@ -828,7 +840,8 @@ mod tests {
                 filepath: "test.rs".to_string(),
                 line: 10,
                 column: 5,
-                content: "my_function".to_string(),
+                name: "my_function".to_string(),
+                content: "fn my_function() { ... }".to_string(),
                 symbol_type: SymbolType::Function,
             },
         );

@@ -90,6 +90,7 @@ pub trait LanguageExtractor: Send + Sync {
                         filepath.to_string(),
                         line,
                         column,
+                        symbol_text.to_string(), // name
                         symbol_content,
                         symbol_type,
                     );
