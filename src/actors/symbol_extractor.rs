@@ -8,6 +8,21 @@ use crate::languages::LanguageRegistry;
 use crate::actors::types::Symbol;
 use std::path::Path;
 use tree_sitter::Parser;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+
+/// Global cache for symbol extraction results based on file content hash
+static SYMBOL_EXTRACTION_CACHE: Lazy<Mutex<HashMap<u64, Vec<Symbol>>>> = 
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Calculate hash of file content for caching
+fn calculate_content_hash(content: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Symbol extractor using tree-sitter with modular language support
 pub struct SymbolExtractor {
@@ -33,30 +48,53 @@ impl SymbolExtractor {
         self.extract_symbols_from_content(&content, file_path.to_string_lossy().to_string())
     }
 
-    /// Extract symbols from source code content
+    /// Extract symbols from source code content with caching
     pub fn extract_symbols_from_content(
         &mut self,
         content: &str,
         filepath: String,
     ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
+        // Calculate content hash for caching
+        let content_hash = calculate_content_hash(content);
+        
+        // Check cache first
+        {
+            let cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
+            if let Some(cached_symbols) = cache.get(&content_hash) {
+                log::debug!("Cache hit for file: {} (hash: {})", filepath, content_hash);
+                return Ok(cached_symbols.clone());
+            }
+        }
+        
+        log::debug!("Cache miss for file: {} (hash: {})", filepath, content_hash);
+        
         // Get the appropriate language extractor for this file
         let path = Path::new(&filepath);
         let extractor = LanguageRegistry::get_extractor_for_path(path);
 
-        match extractor {
+        let symbols = match extractor {
             Some(extractor) => {
                 log::debug!(
                     "Using {} extractor for file: {}",
                     extractor.language_name(),
                     filepath
                 );
-                extractor.extract_symbols(&mut self.parser, content, &filepath)
+                extractor.extract_symbols(&mut self.parser, content, &filepath)?
             }
             None => {
                 log::debug!("No language extractor found for file: {}", filepath);
-                Ok(Vec::new()) // Unsupported language
+                Vec::new() // Unsupported language
             }
+        };
+        
+        // Store result in cache
+        {
+            let mut cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
+            cache.insert(content_hash, symbols.clone());
+            log::debug!("Cached {} symbols for file: {} (hash: {})", symbols.len(), filepath, content_hash);
         }
+        
+        Ok(symbols)
     }
 
     /// Check if a file type is supported for symbol extraction
@@ -71,6 +109,21 @@ impl SymbolExtractor {
     /// Get all supported file extensions
     pub fn supported_extensions() -> Vec<&'static str> {
         LanguageRegistry::supported_extensions()
+    }
+    
+    /// Clear the symbol extraction cache
+    pub fn clear_cache() {
+        let mut cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
+        cache.clear();
+        log::debug!("Symbol extraction cache cleared");
+    }
+    
+    /// Get cache statistics
+    pub fn cache_stats() -> (usize, usize) {
+        let cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
+        let entries = cache.len();
+        let total_symbols: usize = cache.values().map(|symbols| symbols.len()).sum();
+        (entries, total_symbols)
     }
 }
 

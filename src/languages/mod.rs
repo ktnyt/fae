@@ -109,22 +109,21 @@ pub trait LanguageExtractor: Send + Sync {
                 let line = start_position.row as u32 + 1; // 1-indexed
                 let column = start_position.column as u32;
 
-                // Get symbol content
+                // Get symbol content (avoid unnecessary string allocation)
                 let symbol_text = node
                     .utf8_text(content.as_bytes())
-                    .unwrap_or("<unknown>")
-                    .to_string();
+                    .unwrap_or("<unknown>");
 
                 // Determine symbol type based on capture name
                 if let Some(symbol_type) = Self::map_capture_to_symbol_type(capture_name) {
                     // Create symbol with context information
-                    let symbol_content = Self::create_symbol_content(&symbol_text, &lines, line as usize);
+                    let symbol_content = Self::create_symbol_content(symbol_text, &lines, line as usize);
 
                     let symbol = Symbol::new(
                         filepath.to_string(),
                         line,
                         column,
-                        symbol_text.to_string(), // name
+                        symbol_text.to_string(), // name - convert to String only here
                         symbol_content,
                         symbol_type,
                     );

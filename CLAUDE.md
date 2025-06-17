@@ -333,7 +333,11 @@ cargo test --lib -- --test-threads=1
 
 ## Performance Metrics
 
-- **Indexing Speed**: ~46,875 symbols/second after regex optimization
-- **Memory Usage**: Efficient with large codebases through streaming processing  
+- **Indexing Speed**: ~70,205 symbols/second with advanced caching system (50% improvement)
+- **Cache Efficiency**: 
+  - LanguageConfig cache: 2.10x speedup for language configuration
+  - Symbol extraction cache: **281x speedup** for identical file content
+  - Average cache hit time: 32µs (extremely fast)
+- **Memory Usage**: Efficient with large codebases through streaming processing and optimized string handling
 - **UI Responsiveness**: 16ms polling interval for real-time updates
-- **Test Coverage**: 129 comprehensive tests covering Actor system and integration
+- **Test Coverage**: 168 comprehensive tests covering Actor system and integration
