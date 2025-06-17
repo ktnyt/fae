@@ -56,6 +56,13 @@ use std::{
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
+// Import UnifiedSearchSystem and related types
+use crate::cli::parse_query_with_mode;
+use crate::unified_search::UnifiedSearchSystem;
+use crate::actors::types::SearchMode;
+use crate::core::message::Message;
+use crate::actors::messages::FaeMessage;
+
 /// Type alias for TUI state update results to avoid large error types
 pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
 
@@ -302,13 +309,18 @@ pub struct TuiApp {
     // External state updates
     state_receiver: Option<mpsc::UnboundedReceiver<StateUpdate>>,
 
+    // Search system integration
+    search_system: UnifiedSearchSystem,
+    search_result_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+    search_control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+
     // Separated application state
     pub state: TuiState,
 }
 
 impl TuiApp {
     /// Create new TUI application with external control handle
-    pub async fn new(_search_path: &str) -> Result<(Self, TuiHandle)> {
+    pub async fn new(search_path: &str) -> Result<(Self, TuiHandle)> {
         // Setup terminal with error handling
         enable_raw_mode().map_err(|e| {
             eprintln!("Failed to enable raw mode: {}", e);
@@ -334,6 +346,22 @@ impl TuiApp {
         let (state_sender, state_receiver) = mpsc::unbounded_channel();
         let handle = TuiHandle { state_sender };
 
+        // Create channels for search system communication
+        let (search_result_sender, search_result_receiver) = mpsc::unbounded_channel();
+        let (search_control_sender, search_control_receiver) = mpsc::unbounded_channel();
+
+        // Initialize UnifiedSearchSystem with file watching enabled for TUI
+        let search_system = UnifiedSearchSystem::new(
+            search_path, 
+            true, 
+            search_result_sender, 
+            search_control_receiver
+        ).await.map_err(|e| {
+            let _ = disable_raw_mode(); // Cleanup on failure
+            eprintln!("Failed to initialize search system: {}", e);
+            std::io::Error::new(std::io::ErrorKind::Other, e)
+        })?;
+
         let app = TuiApp {
             terminal,
             should_quit: false,
@@ -342,6 +370,9 @@ impl TuiApp {
             last_draw_time: Instant::now(),
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
             state_receiver: Some(state_receiver),
+            search_system,
+            search_result_receiver,
+            search_control_sender,
             state: TuiState::new(),
         };
 
@@ -460,36 +491,40 @@ impl TuiApp {
     }
 
     /// Update search results based on current input
+    /// Trigger search execution - starts async search in background
     fn update_search_results(&mut self) {
         self.state.search_results.clear();
         self.state.selected_result_index = None;
 
         if !self.state.search_input.is_empty() {
-            // Add some mock results for demonstration
-            for i in 1..=5 {
-                self.state.search_results.push(format!(
-                    "src/file_{}.rs:{}:Mock result for '{}'",
-                    i,
-                    i * 10,
-                    self.state.search_input
-                ));
-            }
+            // Parse search input to detect mode
+            let (mode, query) = parse_query_with_mode(&self.state.search_input);
+            
+            // Show search mode in toast
+            let mode_name = match mode {
+                SearchMode::Literal => "Text",
+                SearchMode::Symbol => "Symbol",
+                SearchMode::Variable => "Variable", 
+                SearchMode::Filepath => "File",
+                SearchMode::Regexp => "Regex",
+            };
 
-            // Set cursor to first result if we have results
+            self.state.toast_state.show(
+                format!("Searching {} for '{}'...", mode_name.to_lowercase(), query),
+                ToastType::Info,
+                Duration::from_secs(1),
+            );
+
+            // TODO: Start async search and update results via state channel
+            // For now, add a placeholder indicating the search mode
+            self.state.search_results.push(format!(
+                "[{}] Search for '{}' - Implementation in progress",
+                mode_name, query
+            ));
+            
             if !self.state.search_results.is_empty() {
                 self.state.selected_result_index = Some(0);
             }
-
-            // Show toast with search info
-            self.state.toast_state.show(
-                format!(
-                    "Found {} results for '{}'",
-                    self.state.search_results.len(),
-                    self.state.search_input
-                ),
-                ToastType::Info,
-                Duration::from_secs(2),
-            );
         }
     }
 
@@ -874,10 +909,22 @@ impl StateUpdate {
     }
 }
 
-/// Render the input box
+/// Render the input box with search mode indicator
 fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &str) {
+    // Detect current search mode
+    let (mode, _) = parse_query_with_mode(search_input);
+    let mode_name = match mode {
+        SearchMode::Literal => "Text",
+        SearchMode::Symbol => "Symbol (#)",
+        SearchMode::Variable => "Variable ($)", 
+        SearchMode::Filepath => "File (@)",
+        SearchMode::Regexp => "Regex (/)",
+    };
+
+    let title = format!("Search Input - {} Mode", mode_name);
+    
     let input = Paragraph::new(search_input)
-        .block(Block::default().borders(Borders::ALL).title("Search Input"))
+        .block(Block::default().borders(Borders::ALL).title(title))
         .style(Style::default().fg(Color::White));
     f.render_widget(input, area);
 }
@@ -928,8 +975,8 @@ fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, index_status: &
         ])
         .split(area);
 
-    // Left side: Help text
-    let help_text = "Type to search | ↑↓/Ctrl+P/N: Navigate | Enter: Select | Esc/Ctrl+C: Quit";
+    // Left side: Help text  
+    let help_text = "Modes: text | #symbol | $variable | @file | /regex | ↑↓: Navigate | Enter: Select | Esc: Quit";
     let help_status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
