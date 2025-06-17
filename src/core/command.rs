@@ -208,7 +208,8 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
                     log::info!("Process completed (both stdout and stderr finished)");
                     // Send process completion notification through output channel
                     if let Err(e) = completion_output_sender.send(CommandOutput::ProcessCompleted) {
-                        log::error!("Failed to send ProcessCompleted message: {}", e);
+                        // During shutdown, this is expected behavior - log as debug, not error
+                        log::debug!("ProcessCompleted message not sent (receiver closed): {}", e);
                     }
                     break;
                 }

@@ -15,6 +15,8 @@ pub struct Broadcaster<T: Clone + Send + 'static> {
     thread_handle: Option<JoinHandle<()>>,
     /// Channel for sending shutdown signal
     shutdown_sender: Option<oneshot::Sender<()>>,
+    /// Flag to track if shutdown has been initiated
+    is_shutting_down: bool,
     /// Phantom data to hold the message type
     _phantom: PhantomData<T>,
 }
@@ -42,6 +44,7 @@ impl<T: Clone + Send + 'static> Broadcaster<T> {
         let broadcaster = Self {
             thread_handle: Some(thread_handle),
             shutdown_sender: Some(shutdown_sender),
+            is_shutting_down: false,
             _phantom: PhantomData,
         };
 
@@ -91,7 +94,7 @@ impl<T: Clone + Send + 'static> Broadcaster<T> {
                     log::trace!("Message sent to actor {}", i);
                 }
                 Err(_) => {
-                    log::warn!("Failed to send message to actor {} (channel closed)", i);
+                    log::debug!("Failed to send message to actor {} (channel closed)", i);
                 }
             }
         }
@@ -99,7 +102,13 @@ impl<T: Clone + Send + 'static> Broadcaster<T> {
 
     /// Manually shutdown the broadcaster
     pub fn shutdown(&mut self) {
+        if self.is_shutting_down {
+            log::debug!("Broadcaster already shutting down");
+            return;
+        }
+        
         log::info!("Manual shutdown requested for Broadcaster");
+        self.is_shutting_down = true;
 
         // Send shutdown signal
         if let Some(shutdown_sender) = self.shutdown_sender.take() {
@@ -119,7 +128,7 @@ impl<T: Clone + Send + 'static> Broadcaster<T> {
 
 impl<T: Clone + Send + 'static> Drop for Broadcaster<T> {
     fn drop(&mut self) {
-        if self.shutdown_sender.is_some() || self.thread_handle.is_some() {
+        if !self.is_shutting_down && (self.shutdown_sender.is_some() || self.thread_handle.is_some()) {
             log::debug!("Broadcaster dropped without explicit shutdown, performing cleanup");
             self.shutdown();
         }

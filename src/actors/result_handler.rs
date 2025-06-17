@@ -56,6 +56,12 @@ impl ResultHandler {
         {
             log::error!("Failed to send PushSearchResult message: {}", e);
         }
+        
+        // Check if we've reached max results and auto-complete if so
+        if self.result_count >= self.max_results {
+            log::info!("Max results ({}) reached, triggering search completion", self.max_results);
+            self.handle_search_completion(controller).await;
+        }
     }
 
     /// Handle search completion notification

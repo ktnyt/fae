@@ -102,7 +102,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel();
     
     // Create unified search system (CLI mode doesn't need file watching)
-    let mut search_system = UnifiedSearchSystem::new(&config.search_path, false, result_sender, control_receiver).await?;
+    // Pass search mode for optimization (skip symbol actors for non-symbol searches)
+    let mut search_system = UnifiedSearchSystem::new_with_mode(
+        &config.search_path, 
+        false, 
+        result_sender, 
+        control_receiver, 
+        Some(search_params.mode.clone())
+    ).await?;
 
     // Initialize symbol indexing
     let init_message = Message::new("initialize", FaeMessage::ClearResults); // Dummy payload for initialize
@@ -125,16 +132,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match tokio::time::timeout(timeout, async {
         while let Some(message) = result_receiver.recv().await {
             match &message.payload {
-                FaeMessage::SearchFinished { result_count: count } => {
-                    return *count;
+                FaeMessage::SearchFinished { result_count: _count } => {
+                    // Return the actual number of results we printed, not the total found
+                    log::debug!("Search completed, printed {} results", result_count);
+                    return result_count;
                 }
                 FaeMessage::PushSearchResult(result) => {
                     // Print result immediately for CLI mode
                     println!("{}:{} - {}", result.filename, result.line, result.content.trim());
                     result_count += 1;
-                    if result_count >= config.max_results {
-                        return result_count;
-                    }
+                    // Note: Continue processing until SearchFinished for graceful shutdown
+                    // ResultHandlerActor will automatically trigger completion when max_results is reached
                 }
                 _ => {}
             }

@@ -4,12 +4,14 @@
 //! multiple search actors through a broadcaster pattern.
 
 use crate::actors::messages::FaeMessage;
+use crate::actors::types::SearchMode;
 use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
     SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
 use crate::core::{Broadcaster, Message};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 /// Unified search system that coordinates all search actors
 /// Now designed for external control via message passing
@@ -18,13 +20,16 @@ pub struct UnifiedSearchSystem {
     watch_files: bool,
 
     // Keep actor instances to manage their lifecycle
+    // Symbol actors are optional (optimization for non-symbol searches)
     symbol_index_actor: Option<SymbolIndexActor>,
     symbol_search_actor: Option<SymbolSearchActor>,
     filepath_search_actor: Option<FilepathSearchActor>,
     content_search_actor: Option<ContentSearchActor>,
     result_handler_actor: Option<ResultHandlerActor>,
     watch_actor: Option<WatchActor>,
-
+    
+    // Control message forwarding task handle for graceful shutdown
+    control_forwarding_handle: Option<JoinHandle<()>>,
 }
 
 /// Enum for different content search actors
@@ -53,6 +58,26 @@ impl UnifiedSearchSystem {
         result_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
         control_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_with_mode(search_path, watch_files, result_sender, control_receiver, None).await
+    }
+
+    /// Create a new unified search system with external control channels and optional search mode optimization
+    pub async fn new_with_mode(
+        search_path: &str,
+        watch_files: bool,
+        result_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+        control_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+        search_mode: Option<SearchMode>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+
+        // Determine if symbol-related actors are needed
+        let needs_symbol_actors = search_mode.map_or(true, |mode| {
+            matches!(mode, SearchMode::Symbol | SearchMode::Variable)
+        });
+
+        if !needs_symbol_actors {
+            log::info!("Symbol search not needed for mode {:?}, optimizing by skipping symbol actors", search_mode);
+        }
 
         // Create actor channels
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
@@ -76,15 +101,20 @@ impl UnifiedSearchSystem {
             (None, None)
         };
 
-        // Create broadcaster with all actor senders + result sender (conditionally including watch actor)
+        // Create broadcaster with all actor senders + result sender (conditionally including symbol actors)
         let mut actor_senders = vec![
-            symbol_index_tx,
-            symbol_search_tx,
             filepath_search_tx,
             content_search_tx,
             result_handler_tx,
             result_sender.clone(), // Include result sender for broadcasting
         ];
+        
+        // Only add symbol actors if they are needed
+        if needs_symbol_actors {
+            actor_senders.push(symbol_index_tx);
+            actor_senders.push(symbol_search_tx);
+        }
+        
         if let Some(tx) = watch_tx {
             actor_senders.push(tx);
         }
@@ -92,14 +122,30 @@ impl UnifiedSearchSystem {
         let (broadcaster, shared_sender) = Broadcaster::new(actor_senders);
 
         // Create all actors using the shared sender (via Broadcaster)
-        let symbol_index_actor = SymbolIndexActor::new_symbol_index_actor(
-            symbol_index_rx,
-            shared_sender.clone(),
-            search_path,
-        )?;
+        // Conditionally create symbol actors based on search mode
+        let symbol_index_actor = if needs_symbol_actors {
+            log::debug!("Creating SymbolIndexActor for symbol search");
+            Some(SymbolIndexActor::new_symbol_index_actor(
+                symbol_index_rx,
+                shared_sender.clone(),
+                search_path,
+            )?)
+        } else {
+            log::debug!("Skipping SymbolIndexActor creation for non-symbol search");
+            // Drop the receiver to prevent channel warnings
+            drop(symbol_index_rx);
+            None
+        };
 
-        let symbol_search_actor =
-            SymbolSearchActor::new_symbol_search_actor(symbol_search_rx, shared_sender.clone());
+        let symbol_search_actor = if needs_symbol_actors {
+            log::debug!("Creating SymbolSearchActor for symbol search");
+            Some(SymbolSearchActor::new_symbol_search_actor(symbol_search_rx, shared_sender.clone()))
+        } else {
+            log::debug!("Skipping SymbolSearchActor creation for non-symbol search");
+            // Drop the receiver to prevent channel warnings
+            drop(symbol_search_rx);
+            None
+        };
 
         let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
             filepath_search_rx,
@@ -143,29 +189,38 @@ impl UnifiedSearchSystem {
             // Note: WatchActor starts monitoring automatically when created
         }
 
-        // Start control message forwarding task
+        // Start control message forwarding task with proper handle management
         let shared_sender_clone = shared_sender.clone();
-        tokio::spawn(async move {
+        let control_forwarding_handle = tokio::spawn(async move {
             let mut control_receiver = control_receiver;
             while let Some(message) = control_receiver.recv().await {
                 log::debug!("Forwarding control message: {}", message.method);
+                
+                // Check if shared_sender is still open before sending
+                if shared_sender_clone.is_closed() {
+                    log::debug!("Shared sender closed, stopping control message forwarding");
+                    break;
+                }
+                
                 if let Err(e) = shared_sender_clone.send(message) {
-                    log::error!("Failed to forward control message: {}", e);
+                    // During shutdown, this is expected behavior - log as debug, not error
+                    log::debug!("Control message forwarding stopped (receiver closed): {}", e);
                     break;
                 }
             }
-            log::debug!("Control message forwarding task ended");
+            log::debug!("Control message forwarding task ended gracefully");
         });
 
         Ok(Self {
             broadcaster,
             watch_files,
-            symbol_index_actor: Some(symbol_index_actor),
-            symbol_search_actor: Some(symbol_search_actor),
+            symbol_index_actor,
+            symbol_search_actor,
             filepath_search_actor: Some(filepath_search_actor),
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
             watch_actor,
+            control_forwarding_handle: Some(control_forwarding_handle),
         })
     }
 
@@ -223,11 +278,26 @@ impl UnifiedSearchSystem {
     }
 
 
-    /// Shutdown the unified search system
+    /// Shutdown the unified search system with graceful task termination
     pub fn shutdown(&mut self) {
         log::info!("Shutting down unified search system");
 
-        // Shutdown all actors
+        // Phase 1: Stop control message forwarding first to prevent new messages
+        if let Some(handle) = self.control_forwarding_handle.take() {
+            log::debug!("Terminating control message forwarding task");
+            handle.abort(); // Forcefully abort the task
+            
+            // Note: We use abort() instead of waiting for graceful shutdown here because:
+            // 1. The control_receiver will be dropped when main exits
+            // 2. This will naturally terminate the forwarding loop
+            // 3. Abort ensures immediate termination even if there are pending messages
+        }
+
+        // Phase 2: Shutdown broadcaster to stop message broadcasting  
+        // This prevents WARN logs from actors trying to send to closed channels
+        self.broadcaster.shutdown();
+
+        // Phase 3: Shutdown all actors
         if let Some(mut actor) = self.symbol_index_actor.take() {
             actor.shutdown();
         }
@@ -247,9 +317,8 @@ impl UnifiedSearchSystem {
             log::info!("Shutting down WatchActor");
             actor.shutdown();
         }
-
-        // Shutdown broadcaster
-        self.broadcaster.shutdown();
+        
+        log::info!("Unified search system shutdown completed");
     }
 }
 
