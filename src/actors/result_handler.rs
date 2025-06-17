@@ -36,7 +36,11 @@ impl ResultHandler {
     }
 
     /// Handle a search result
-    async fn handle_search_result(&mut self, result: SearchResult, controller: &ActorController<FaeMessage>) {
+    async fn handle_search_result(
+        &mut self,
+        result: SearchResult,
+        controller: &ActorController<FaeMessage>,
+    ) {
         if self.search_completed || self.result_count >= self.max_results {
             return; // Don't process more results after completion or limit reached
         }
@@ -45,7 +49,7 @@ impl ResultHandler {
         self.result_count += 1;
 
         log::info!("Result #{}: {}", self.result_count, result.content);
-        
+
         // Send result to external consumers (CLI/TUI) via broadcaster
         if let Err(e) = controller
             .send_message(
@@ -56,10 +60,13 @@ impl ResultHandler {
         {
             log::error!("Failed to send PushSearchResult message: {}", e);
         }
-        
+
         // Check if we've reached max results and auto-complete if so
         if self.result_count >= self.max_results {
-            log::info!("Max results ({}) reached, triggering search completion", self.max_results);
+            log::info!(
+                "Max results ({}) reached, triggering search completion",
+                self.max_results
+            );
             self.handle_search_completion(controller).await;
         }
     }
@@ -81,14 +88,14 @@ impl ResultHandler {
         // Send final completion notification to UnifiedSearchSystem
         if let Err(e) = controller
             .send_message(
-                "searchFinished".to_string(),
-                FaeMessage::SearchFinished {
+                "notifySearchReport".to_string(),
+                FaeMessage::NotifySearchReport {
                     result_count: self.result_count,
                 },
             )
             .await
         {
-            log::error!("Failed to send searchFinished message: {}", e);
+            log::error!("Failed to send notifySearchReport message: {}", e);
         } else {
             log::info!("Search finished with {} results", self.result_count);
         }
@@ -116,7 +123,12 @@ impl ResultHandler {
     }
 
     /// Handle symbol index progress report
-    fn handle_symbol_index_report(&self, queued_files: usize, indexed_files: usize, symbols_found: usize) {
+    fn handle_symbol_index_report(
+        &self,
+        queued_files: usize,
+        indexed_files: usize,
+        symbols_found: usize,
+    ) {
         let progress_percentage = if queued_files > 0 {
             (indexed_files as f64 / queued_files as f64 * 100.0).round() as u32
         } else {
@@ -134,10 +146,7 @@ impl ResultHandler {
         // Print progress to stdout for CLI users
         eprintln!(
             "Indexing: {}% ({}/{} files, {} symbols)",
-            progress_percentage,
-            indexed_files,
-            queued_files,
-            symbols_found
+            progress_percentage, indexed_files, queued_files, symbols_found
         );
     }
 }
@@ -172,7 +181,12 @@ impl MessageHandler<FaeMessage> for ResultHandler {
                 }
             }
             "reportSymbolIndex" => {
-                if let FaeMessage::ReportSymbolIndex { queued_files, indexed_files, symbols_found } = message.payload {
+                if let FaeMessage::ReportSymbolIndex {
+                    queued_files,
+                    indexed_files,
+                    symbols_found,
+                } = message.payload
+                {
                     self.handle_symbol_index_report(queued_files, indexed_files, symbols_found);
                 } else {
                     log::warn!("reportSymbolIndex received unexpected payload");
@@ -254,14 +268,14 @@ mod tests {
         // Wait for processing
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Check for searchFinished message
+        // Check for notifySearchReport message
         let mut received_finished = false;
         let mut final_count = 0;
 
         while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
             if let Some(msg) = message {
-                if msg.method == "searchFinished" {
-                    if let FaeMessage::SearchFinished { result_count } = msg.payload {
+                if msg.method == "notifySearchReport" {
+                    if let FaeMessage::NotifySearchReport { result_count } = msg.payload {
                         received_finished = true;
                         final_count = result_count;
                     }
@@ -273,7 +287,7 @@ mod tests {
 
         assert!(
             received_finished,
-            "Should have received searchFinished message"
+            "Should have received notifySearchReport message"
         );
         assert_eq!(final_count, 3, "Should have collected 3 results");
 

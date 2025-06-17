@@ -6,7 +6,7 @@ pub enum FaeMessage {
     ClearResults,
     PushSearchResult(SearchResult),
     CompleteSearch, // Indicates search operation completion
-    SearchFinished {
+    NotifySearchReport {
         result_count: usize,
     }, // Final search completion with result count
     SetMaxResults {
