@@ -69,15 +69,70 @@ fn parse_args() -> Result<Option<FaeConfig>, String> {
     Ok(Some(config))
 }
 
+/// Setup file logging for TUI mode to avoid interfering with terminal UI
+fn setup_file_logging() -> std::path::PathBuf {
+    use std::io::Write;
+
+    // Try temp directory first, fallback to current directory
+    let log_file_path = std::env::temp_dir().join("fae.log");
+    let actual_log_path = if std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+        .is_ok()
+    {
+        log_file_path
+    } else {
+        // Fallback to current directory
+        std::path::PathBuf::from("fae.log")
+    };
+
+    env_logger::Builder::from_default_env()
+        .target(env_logger::Target::Pipe(Box::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&actual_log_path)
+                .expect("Failed to create log file"),
+        )))
+        .format(|buf, record| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            writeln!(
+                buf,
+                "{} [{}] {} - {}",
+                timestamp,
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .init();
+
+    log::info!("TUI mode started - logging to: {:?}", actual_log_path);
+    actual_log_path
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Initialize logging
-    env_logger::init();
-
-    // Parse command line arguments
+    // Parse command line arguments first to determine mode
     let config = match parse_args() {
         Ok(Some(config)) => config,
         Ok(None) => {
+            // TUI mode - setup file logging to avoid interfering with TUI
+            let log_path = setup_file_logging();
+
+            // Show brief message about log file location before starting TUI
+            eprintln!("🔍 Starting fae TUI mode...");
+            eprintln!("📝 Logs will be written to: {}", log_path.display());
+            eprintln!("   (Use 'tail -f {}' to monitor logs)", log_path.display());
+
+            // Small delay to let user see the message
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
             // Launch TUI mode with UnifiedSearchSystem integration
             let (mut app, tui_handle) = TuiApp::new(".")
                 .await
@@ -136,6 +191,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             std::process::exit(1);
         }
     };
+
+    // CLI mode - use standard console logging
+    env_logger::init();
 
     // Parse query and determine search mode
     let search_params = create_search_params(&config.query);

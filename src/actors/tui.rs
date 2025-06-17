@@ -46,34 +46,13 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 indexed_files,
                 symbols_found,
             } => {
-                let progress_message = if *queued_files == 0 {
-                    // Indexing complete
-                    format!(
-                        "Indexing completed: {} files, {} symbols",
-                        indexed_files, symbols_found
-                    )
-                } else {
-                    // Indexing in progress
-                    format!(
-                        "Indexing: {}/{} files, {} symbols found",
-                        indexed_files,
-                        indexed_files + queued_files,
-                        symbols_found
-                    )
-                };
-
-                let toast_type = if *queued_files == 0 {
-                    ToastType::Success
-                } else {
-                    ToastType::Info
-                };
-
-                // Update toast with progress information
-                if let Err(e) =
-                    self.tui_handle
-                        .show_toast(progress_message, toast_type, Duration::from_secs(2))
-                {
-                    log::warn!("Failed to update TUI toast: {}", e);
+                // Update index status in status bar instead of showing toast
+                if let Err(e) = self.tui_handle.update_index_status(
+                    *queued_files,
+                    *indexed_files,
+                    *symbols_found,
+                ) {
+                    log::warn!("Failed to update TUI index status: {}", e);
                 }
             }
 
@@ -201,7 +180,9 @@ mod tests {
     #[tokio::test]
     async fn test_tui_actor_creation() {
         let (tui_tx, _tui_rx) = mpsc::unbounded_channel();
-        let tui_handle = crate::tui::TuiHandle { state_sender: tui_tx };
+        let tui_handle = crate::tui::TuiHandle {
+            state_sender: tui_tx,
+        };
 
         let _tui_actor = TuiActor::new(tui_handle);
         // Just verify it can be created without panic
@@ -216,7 +197,9 @@ mod tests {
             .try_init();
 
         let (tui_tx, mut tui_rx) = mpsc::unbounded_channel();
-        let tui_handle = crate::tui::TuiHandle { state_sender: tui_tx };
+        let tui_handle = crate::tui::TuiHandle {
+            state_sender: tui_tx,
+        };
         let mut tui_actor = TuiActor::new(tui_handle);
 
         let (controller_tx, _controller_rx) = mpsc::unbounded_channel();
@@ -234,12 +217,13 @@ mod tests {
 
         tui_actor.on_message(progress_message, &controller).await;
 
-        // Verify toast was sent
+        // Verify index status was updated
         if let Ok(state_update) = tui_rx.try_recv() {
-            if let Some((toast_msg, toast_type, _duration)) = state_update.toast {
-                assert!(toast_msg.contains("Indexing: 3/8 files"));
-                assert!(toast_msg.contains("120 symbols"));
-                assert_eq!(toast_type, ToastType::Info);
+            if let Some(index_status) = state_update.index_status {
+                assert_eq!(index_status.queued_files, 5);
+                assert_eq!(index_status.indexed_files, 3);
+                assert_eq!(index_status.symbols_found, 120);
+                assert!(index_status.is_active);
             }
         }
 
@@ -255,13 +239,14 @@ mod tests {
 
         tui_actor.on_message(complete_message, &controller).await;
 
-        // Verify completion toast was sent
+        // Verify completion status was updated
         if let Ok(state_update) = tui_rx.try_recv() {
-            if let Some((toast_msg, toast_type, _duration)) = state_update.toast {
-                assert!(toast_msg.contains("Indexing completed"));
-                assert!(toast_msg.contains("8 files"));
-                assert!(toast_msg.contains("240 symbols"));
-                assert_eq!(toast_type, ToastType::Success);
+            if let Some(index_status) = state_update.index_status {
+                assert_eq!(index_status.queued_files, 0);
+                assert_eq!(index_status.indexed_files, 8);
+                assert_eq!(index_status.symbols_found, 240);
+                assert!(!index_status.is_active); // Indexing is complete
+                assert!(index_status.is_complete());
             }
         }
     }
@@ -269,7 +254,9 @@ mod tests {
     #[tokio::test]
     async fn test_search_result_handling() {
         let (tui_tx, mut tui_rx) = mpsc::unbounded_channel();
-        let tui_handle = crate::tui::TuiHandle { state_sender: tui_tx };
+        let tui_handle = crate::tui::TuiHandle {
+            state_sender: tui_tx,
+        };
         let mut tui_actor = TuiActor::new(tui_handle);
 
         let (controller_tx, _controller_rx) = mpsc::unbounded_channel();

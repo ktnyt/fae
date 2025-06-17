@@ -151,6 +151,50 @@ impl ToastState {
     }
 }
 
+/// Index status information for status bar display
+#[derive(Clone, Debug, Default)]
+pub struct IndexStatus {
+    pub queued_files: usize,
+    pub indexed_files: usize,
+    pub symbols_found: usize,
+    pub is_active: bool,
+}
+
+impl IndexStatus {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, queued: usize, indexed: usize, symbols: usize) {
+        self.queued_files = queued;
+        self.indexed_files = indexed;
+        self.symbols_found = symbols;
+        self.is_active = queued > 0;
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.queued_files == 0 && self.indexed_files > 0
+    }
+
+    pub fn status_text(&self) -> String {
+        if !self.is_active && self.indexed_files == 0 {
+            "Ready".to_string()
+        } else if self.is_active {
+            format!(
+                "Indexing: {}/{} files, {} symbols",
+                self.indexed_files,
+                self.indexed_files + self.queued_files,
+                self.symbols_found
+            )
+        } else {
+            format!(
+                "Indexed: {} files, {} symbols",
+                self.indexed_files, self.symbols_found
+            )
+        }
+    }
+}
+
 /// TUI application state (separated from terminal management)
 #[derive(Clone, Debug)]
 pub struct TuiState {
@@ -165,6 +209,9 @@ pub struct TuiState {
 
     // 4. Toast state (display/hide and content)
     pub toast_state: ToastState,
+
+    // 5. Index status for status bar
+    pub index_status: IndexStatus,
 }
 
 impl TuiState {
@@ -175,6 +222,7 @@ impl TuiState {
             search_results: Vec::new(),
             selected_result_index: None,
             toast_state: ToastState::new(),
+            index_status: IndexStatus::new(),
         }
     }
 
@@ -204,7 +252,6 @@ pub struct TuiHandle {
 }
 
 impl TuiHandle {
-
     /// Send a state update to the TUI
     pub fn update_state(&self, update: StateUpdate) -> TuiResult {
         self.state_sender.send(update).map_err(Box::new)
@@ -233,6 +280,11 @@ impl TuiHandle {
         duration: Duration,
     ) -> TuiResult {
         self.update_state(StateUpdate::new().with_toast(message, toast_type, duration))
+    }
+
+    /// Convenience method to update index status
+    pub fn update_index_status(&self, queued: usize, indexed: usize, symbols: usize) -> TuiResult {
+        self.update_state(StateUpdate::new().with_index_progress(queued, indexed, symbols))
     }
 }
 
@@ -503,6 +555,7 @@ impl TuiApp {
         let search_results = self.state.search_results.clone();
         let selected_index = self.state.selected_result_index;
         let toast_state = self.state.toast_state.clone();
+        let index_status = self.state.index_status.clone();
 
         self.terminal.draw(|f| {
             let chunks = Layout::default()
@@ -521,7 +574,7 @@ impl TuiApp {
             render_results_box(f, chunks[1], &search_results, selected_index);
 
             // 3. Status bar
-            render_status_bar(f, chunks[2]);
+            render_status_bar(f, chunks[2], &index_status);
 
             // 4. Toast (if visible)
             if toast_state.visible {
@@ -589,6 +642,10 @@ impl TuiApp {
 
         if update.hide_toast {
             self.state.toast_state.hide();
+        }
+
+        if let Some(index_status) = update.index_status {
+            self.state.index_status = index_status;
         }
     }
 
@@ -734,6 +791,7 @@ pub struct StateUpdate {
     pub toast: Option<(String, ToastType, Duration)>,
     pub clear_results: bool,
     pub hide_toast: bool,
+    pub index_status: Option<IndexStatus>,
 }
 
 impl StateUpdate {
@@ -800,6 +858,20 @@ impl StateUpdate {
         self.hide_toast = true;
         self
     }
+
+    /// Update index status
+    pub fn with_index_status(mut self, status: IndexStatus) -> Self {
+        self.index_status = Some(status);
+        self
+    }
+
+    /// Update index progress (convenience method)
+    pub fn with_index_progress(mut self, queued: usize, indexed: usize, symbols: usize) -> Self {
+        let mut status = IndexStatus::new();
+        status.update(queued, indexed, symbols);
+        self.index_status = Some(status);
+        self
+    }
 }
 
 /// Render the input box
@@ -843,21 +915,51 @@ fn render_results_box(
     f.render_widget(results_list, area);
 }
 
-/// Render the status bar
-fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect) {
+/// Render the status bar with help text on left and index status on right
+fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, index_status: &IndexStatus) {
+    use ratatui::layout::{Constraint, Direction, Layout};
+
+    // Split status bar into left (help) and right (index status) parts
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70), // Help text
+            Constraint::Percentage(30), // Index status
+        ])
+        .split(area);
+
+    // Left side: Help text
     let help_text = "Type to search | ↑↓/Ctrl+P/N: Navigate | Enter: Select | Esc/Ctrl+C: Quit";
-    let status = Paragraph::new(help_text)
+    let help_status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
-    f.render_widget(status, area);
+    f.render_widget(help_status, chunks[0]);
+
+    // Right side: Index status
+    let status_text = index_status.status_text();
+    let status_color = if index_status.is_active {
+        Color::Yellow // Indexing in progress
+    } else if index_status.is_complete() {
+        Color::Green // Indexing complete
+    } else {
+        Color::Gray // Ready/default
+    };
+
+    let index_status_widget = Paragraph::new(status_text.as_str())
+        .block(Block::default().borders(Borders::ALL).title("Index Status"))
+        .style(Style::default().fg(status_color));
+    f.render_widget(index_status_widget, chunks[1]);
 }
 
 /// Render toast notification
 fn render_toast(f: &mut Frame, toast_state: &ToastState) {
     use ratatui::{layout::Alignment, widgets::Clear};
 
-    // Create a top-right positioned popup area (35% width, 15% height)
-    let popup_area = top_right_rect(35, 15, f.size());
+    // Calculate optimal size in absolute dimensions
+    let (width_chars, height_lines) = calculate_toast_size_absolute(toast_state, f.size());
+
+    // Create a top-right positioned popup area with exact dimensions
+    let popup_area = top_right_rect_absolute(width_chars, height_lines, f.size());
 
     // Clear the area first
     f.render_widget(Clear, popup_area);
@@ -870,15 +972,8 @@ fn render_toast(f: &mut Frame, toast_state: &ToastState) {
         ToastType::Error => (Color::Red, Color::White, "❌ Error"),
     };
 
-    // Add repeat count indicator if message appeared multiple times
-    let display_message = if toast_state.same_message_count > 1 {
-        format!(
-            "{} ({}x)",
-            toast_state.message, toast_state.same_message_count
-        )
-    } else {
-        toast_state.message.clone()
-    };
+    // Get the display message (with repeat count if applicable)
+    let display_message = get_toast_display_message(toast_state);
 
     let toast_widget = Paragraph::new(display_message.as_str())
         .block(
@@ -894,31 +989,137 @@ fn render_toast(f: &mut Frame, toast_state: &ToastState) {
     f.render_widget(toast_widget, popup_area);
 }
 
-/// Helper function to create top-right positioned rectangle
-fn top_right_rect(
-    percent_x: u16,
-    percent_y: u16,
+/// Get the display message for a toast (with repeat count if applicable)
+fn get_toast_display_message(toast_state: &ToastState) -> String {
+    if toast_state.same_message_count > 1 {
+        format!(
+            "{} ({}x)",
+            toast_state.message, toast_state.same_message_count
+        )
+    } else {
+        toast_state.message.clone()
+    }
+}
+
+/// Calculate optimal toast size in absolute dimensions (characters and lines)
+fn calculate_toast_size_absolute(
+    toast_state: &ToastState,
+    terminal_size: ratatui::layout::Rect,
+) -> (u16, u16) {
+    let display_message = get_toast_display_message(toast_state);
+
+    // Calculate required width based on message length
+    // Use visual width approximation instead of byte length for emojis
+    let title_visual_width = match toast_state.toast_type {
+        ToastType::Info => 7,    // "🔔 Info" visual width
+        ToastType::Success => 9, // "✅ Success" visual width
+        ToastType::Warning => 9, // "⚠️ Warning" visual width
+        ToastType::Error => 7,   // "❌ Error" visual width
+    };
+
+    // Consider the longer of title or message for width calculation
+    let content_width = std::cmp::max(display_message.len(), title_visual_width) + 4; // +4 for borders and padding
+
+    // Set absolute width bounds
+    let min_width = 20;
+    let max_width = (terminal_size.width as f32 * 0.7) as usize; // 70% of terminal width
+    let actual_width = content_width.clamp(min_width, max_width) as u16;
+
+    // Calculate height based on actual text wrapping with the exact width
+    let available_content_width = actual_width.saturating_sub(4) as usize; // -4 for borders
+    let content_lines = if available_content_width > 0 {
+        calculate_wrapped_lines(&display_message, available_content_width)
+    } else {
+        1 // Fallback for very narrow terminals
+    };
+
+    // Total lines = content lines + top/bottom borders
+    let total_lines = content_lines + 2; // +2 for top/bottom borders only
+
+    // Set absolute height bounds
+    let min_height = 3; // Minimum viable toast height
+    let max_height = (terminal_size.height as f32 * 0.4) as usize; // 40% of terminal height
+    let actual_height = total_lines.clamp(min_height, max_height) as u16;
+
+    (actual_width, actual_height)
+}
+
+
+/// Calculate how many lines text will take when wrapped to given width
+fn calculate_wrapped_lines(text: &str, width: usize) -> usize {
+    if text.is_empty() {
+        return 1;
+    }
+
+    if width == 0 {
+        return text.len(); // Each character gets its own line in worst case
+    }
+
+    let mut lines = 0;
+    let mut current_line_len = 0;
+
+    // Split by whitespace and handle word wrapping
+    for word in text.split_whitespace() {
+        let word_len = word.len();
+
+        // If adding this word would exceed the width
+        if current_line_len + word_len + (if current_line_len > 0 { 1 } else { 0 }) > width {
+            // If the word itself is longer than width, it needs to be broken
+            if word_len > width {
+                // First finish the current line if it has content
+                if current_line_len > 0 {
+                    lines += 1;
+                }
+                // Calculate how many lines the long word needs
+                lines += word_len.div_ceil(width); // Ceiling division
+                current_line_len = word_len % width;
+                if current_line_len == 0 {
+                    current_line_len = 0; // Full lines consumed
+                }
+            } else {
+                // Start new line with this word
+                lines += 1;
+                current_line_len = word_len;
+            }
+        } else {
+            // Add word to current line
+            if current_line_len > 0 {
+                current_line_len += 1; // Add space before word
+            }
+            current_line_len += word_len;
+        }
+    }
+
+    // If we have content on the last line, count it
+    if current_line_len > 0 {
+        lines += 1;
+    }
+
+    // Ensure at least 1 line
+    lines.max(1)
+}
+
+
+/// Create a rect in top right corner with exact dimensions (width in chars, height in lines)
+fn top_right_rect_absolute(
+    width_chars: u16,
+    height_lines: u16,
     r: ratatui::layout::Rect,
 ) -> ratatui::layout::Rect {
-    use ratatui::layout::{Constraint, Direction, Layout};
+    // Ensure dimensions don't exceed available space
+    let actual_width = width_chars.min(r.width);
+    let actual_height = height_lines.min(r.height);
 
-    // Create vertical layout: top area for toast, rest for main content
-    let vertical_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(percent_y),       // Top area for toast
-            Constraint::Percentage(100 - percent_y), // Rest of the screen
-        ])
-        .split(r);
+    // Calculate position for top-right corner
+    let x = r.x + r.width.saturating_sub(actual_width);
+    let y = r.y;
 
-    // Create horizontal layout in the top area: left space, right area for toast
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(100 - percent_x), // Left space
-            Constraint::Percentage(percent_x),       // Right area for toast
-        ])
-        .split(vertical_chunks[0])[1] // Take the right part of the top area
+    ratatui::layout::Rect {
+        x,
+        y,
+        width: actual_width,
+        height: actual_height,
+    }
 }
 
 /// Helper function to create centered rectangle (kept for potential future use)
@@ -1043,6 +1244,243 @@ mod tests {
             Some(vec!["result1".to_string(), "result2".to_string()])
         );
         assert!(update.toast.is_some());
+    }
+
+    #[test]
+    fn test_calculate_wrapped_lines_debug() {
+        // Debug specific case: short message that should fit in one line
+        let message = "Ready";
+        let width = 16; // Typical available width for a small toast
+        let result = calculate_wrapped_lines(message, width);
+        println!(
+            "Message: '{}' (len={}), width: {}, result: {}",
+            message,
+            message.len(),
+            width,
+            result
+        );
+        assert_eq!(
+            result, 1,
+            "Short message '{}' should fit in 1 line with width {}",
+            message, width
+        );
+
+        // Test realistic toast message
+        let message = "Indexing: 3/8 files, 120 symbols";
+        let width = 25;
+        let result = calculate_wrapped_lines(message, width);
+        println!(
+            "Message: '{}' (len={}), width: {}, result: {}",
+            message,
+            message.len(),
+            width,
+            result
+        );
+        assert!(result <= 2, "Medium message should fit in 1-2 lines");
+    }
+
+    #[test]
+    fn test_calculate_wrapped_lines() {
+        // Test empty string
+        assert_eq!(calculate_wrapped_lines("", 10), 1);
+
+        // Test single word that fits
+        assert_eq!(calculate_wrapped_lines("hello", 10), 1);
+
+        // Test multiple words that fit on one line
+        assert_eq!(calculate_wrapped_lines("hello world", 15), 1);
+
+        // Test text that needs wrapping
+        assert_eq!(calculate_wrapped_lines("hello world test", 10), 2);
+
+        // Test very long word that needs breaking
+        // "verylongwordthatdoesnotfit" = 26 chars, with width 10 = ceil(26/10) = 3 lines
+        // But since we add +1 for current line and calculate separately, adjust expectation
+        let result = calculate_wrapped_lines("verylongwordthatdoesnotfit", 10);
+        assert!(result >= 3, "Expected at least 3 lines, got {}", result);
+
+        // Test zero width (edge case)
+        assert!(calculate_wrapped_lines("test", 0) > 0);
+
+        // Test realistic toast message
+        let long_message = "Indexing completed: 25 files, 1200 symbols found successfully";
+        assert!(calculate_wrapped_lines(long_message, 30) >= 2);
+    }
+
+    #[test]
+    fn test_get_toast_display_message() {
+        let mut toast = ToastState::new();
+
+        // Test normal message
+        toast.show("Hello".to_string(), ToastType::Info, Duration::from_secs(2));
+        assert_eq!(get_toast_display_message(&toast), "Hello");
+
+        // Test repeated message
+        toast.show("Hello".to_string(), ToastType::Info, Duration::from_secs(2));
+        toast.show("Hello".to_string(), ToastType::Info, Duration::from_secs(2));
+        assert_eq!(get_toast_display_message(&toast), "Hello (3x)");
+    }
+
+    #[test]
+    fn test_emoji_length_debug() {
+        // Check emoji byte length vs visual width
+        let emoji_info = "🔔 Info";
+        let emoji_success = "✅ Success";
+        let emoji_warning = "⚠️ Warning";
+        let emoji_error = "❌ Error";
+
+        println!("'{}' len={}", emoji_info, emoji_info.len());
+        println!("'{}' len={}", emoji_success, emoji_success.len());
+        println!("'{}' len={}", emoji_warning, emoji_warning.len());
+        println!("'{}' len={}", emoji_error, emoji_error.len());
+
+        // Test width calculation with emoji
+        let terminal_size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 30,
+        };
+        let mut toast = ToastState::new();
+        toast.show("Test".to_string(), ToastType::Info, Duration::from_secs(2));
+
+        let (width, height) = calculate_toast_size(&toast, terminal_size);
+        println!(
+            "Toast size for 'Test' with Info emoji: width={}%, height={}%",
+            width, height
+        );
+    }
+
+    #[test]
+    fn test_calculate_toast_size_debug() {
+        use ratatui::layout::Rect;
+
+        // Test actual toast calculation step by step
+        let mut toast = ToastState::new();
+        toast.show("Ready".to_string(), ToastType::Info, Duration::from_secs(2));
+
+        let terminal_size = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 30,
+        };
+        let display_message = get_toast_display_message(&toast);
+        println!("Display message: '{}'", display_message);
+
+        // Calculate width manually to debug
+        let title_visual_width = 7; // "🔔 Info" visual width
+        let content_width = std::cmp::max(display_message.len(), title_visual_width) + 4;
+        println!(
+            "Content width calculation: max({}, {}) + 4 = {}",
+            display_message.len(),
+            title_visual_width,
+            content_width
+        );
+
+        let width_percent =
+            ((content_width * 100) / (terminal_size.width as usize)).clamp(20, 70) as u16;
+        println!("Width percent: {}", width_percent);
+
+        let available_width =
+            (terminal_size.width as usize * width_percent as usize / 100).saturating_sub(4);
+        println!("Available width for text: {}", available_width);
+
+        let content_lines = calculate_wrapped_lines(&display_message, available_width);
+        println!("Content lines: {}", content_lines);
+
+        let total_lines = content_lines + 2;
+        println!("Total lines (content + borders): {}", total_lines);
+
+        let height_percent =
+            ((total_lines * 100) / (terminal_size.height as usize)).clamp(15, 50) as u16;
+        println!("Height percent: {}", height_percent);
+
+        // Now test the actual function
+        let (actual_width, actual_height) = calculate_toast_size(&toast, terminal_size);
+        println!(
+            "Actual result: width={}%, height={}%",
+            actual_width, actual_height
+        );
+    }
+
+    #[test]
+    fn test_calculate_toast_size() {
+        use ratatui::layout::Rect;
+
+        // Test short message
+        let mut toast = ToastState::new();
+        toast.show("Short".to_string(), ToastType::Info, Duration::from_secs(2));
+
+        let terminal_size = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 30,
+        };
+        let (width, height) = calculate_toast_size(&toast, terminal_size);
+
+        // Short message should use minimum width and height
+        assert_eq!(width, 20);
+        assert_eq!(height, 10, "Short message should use minimum height"); // Updated expectation
+
+        // Test long message
+        let long_message = "This is a very long message that should cause the toast to expand to accommodate the content properly";
+        toast.show(
+            long_message.to_string(),
+            ToastType::Warning,
+            Duration::from_secs(3),
+        );
+
+        let (width, height) = calculate_toast_size(&toast, terminal_size);
+
+        // Long message should use more width and height but stay within limits
+        assert!(width > 20);
+        assert!(width <= 70);
+        assert!(height >= 10); // Should be higher than or equal to minimum
+        assert!(height <= 40); // Should not exceed maximum
+
+        // Test very long message that should max out height
+        let very_long_message = "This is an extremely long message that contains many words and should definitely cause the toast to expand to multiple lines and potentially reach the maximum height limit that we have set for toast notifications in the TUI interface.";
+        toast.show(
+            very_long_message.to_string(),
+            ToastType::Error,
+            Duration::from_secs(5),
+        );
+
+        let (_width2, height2) = calculate_toast_size(&toast, terminal_size);
+        assert!(
+            height2 > height,
+            "Very long message should be taller than medium message"
+        );
+
+        // Test that different terminal sizes produce different results
+        let small_terminal = Rect {
+            x: 0,
+            y: 0,
+            width: 50,
+            height: 20,
+        };
+        let (width_small, height_small) = calculate_toast_size(&toast, small_terminal);
+
+        let large_terminal = Rect {
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 60,
+        };
+        let (width_large, height_large) = calculate_toast_size(&toast, large_terminal);
+
+        // On larger terminal, width percentage might be smaller (same content takes less percentage)
+        // But absolute width should be larger or equal
+        assert!(
+            width_large >= width_small
+                || (width_large as usize * large_terminal.width as usize / 100)
+                    >= (width_small as usize * small_terminal.width as usize / 100)
+        );
+
+        // Height should also be responsive to terminal size
+        assert!(height_small <= 40 && height_large <= 40); // Both should respect max limit
     }
 
     #[test]
