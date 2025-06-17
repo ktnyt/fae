@@ -123,12 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(Some(config)) => config,
         Ok(None) => {
             // TUI mode - setup file logging to avoid interfering with TUI
-            let log_path = setup_file_logging();
-
-            // Show brief message about log file location before starting TUI
-            eprintln!("🔍 Starting fae TUI mode...");
-            eprintln!("📝 Logs will be written to: {}", log_path.display());
-            eprintln!("   (Use 'tail -f {}' to monitor logs)", log_path.display());
+            let _log_path = setup_file_logging();
 
             // Small delay to let user see the message
             std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -140,7 +135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Create channels for UnifiedSearchSystem
             let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel::<fae::core::Message<fae::actors::messages::FaeMessage>>();
+
+            // Set search control sender for dynamic search execution
+            app.set_search_control_sender(control_sender.clone());
 
             // Create TuiActor to handle search system messages
             let (tui_actor_tx, tui_actor_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -148,21 +146,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 tui_actor_rx,
                 tui_actor_tx.clone(),
                 tui_handle,
+                control_sender.clone(), // Pass control_sender for dynamic search
             );
 
             // Connect TuiActor to result stream by forwarding messages
             let tui_message_sender = tui_actor_tx.clone();
             tokio::spawn(async move {
                 while let Some(message) = result_receiver.recv().await {
+                    log::debug!("Forwarding message to TuiActor: {}", message.method);
                     if let Err(e) = tui_message_sender.send(message) {
                         log::warn!("Failed to forward message to TuiActor: {}", e);
                         break;
                     }
                 }
+                log::debug!("Message forwarding to TuiActor ended");
             });
 
             // Create UnifiedSearchSystem with file watching for TUI mode
-            let mut _search_system = UnifiedSearchSystem::new(
+            let mut search_system = UnifiedSearchSystem::new(
                 ".",
                 true, // Enable file watching for TUI mode
                 result_sender,
@@ -180,10 +181,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 std::process::exit(1);
             }
 
-            // Run TUI application
-            return app
-                .run()
-                .await
+            // Run TUI application and handle shutdown properly
+            let app_result = app.run().await;
+            
+            // Shutdown search system when TUI exits
+            search_system.shutdown();
+            
+            return app_result
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
         }
         Err(err) => {

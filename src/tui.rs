@@ -306,6 +306,9 @@ pub struct TuiApp {
     // External state updates
     state_receiver: Option<mpsc::UnboundedReceiver<StateUpdate>>,
 
+    // Search control channel for dynamic search execution
+    search_control_sender: Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
+
     // Separated application state
     pub state: TuiState,
 }
@@ -346,10 +349,58 @@ impl TuiApp {
             last_draw_time: Instant::now(),
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
             state_receiver: Some(state_receiver),
+            search_control_sender: None, // Will be set later via set_search_control_sender
             state: TuiState::new(),
         };
 
         Ok((app, handle))
+    }
+
+    /// Set the search control sender for dynamic search execution
+    pub fn set_search_control_sender(
+        &mut self,
+        sender: mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>,
+    ) {
+        self.search_control_sender = Some(sender);
+    }
+
+    /// Execute a dynamic search by sending a request to the UnifiedSearchSystem
+    pub fn execute_search(&self, query: String) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref sender) = self.search_control_sender {
+            use crate::cli::create_search_params;
+            use crate::core::Message;
+            use crate::actors::messages::FaeMessage;
+            
+            log::debug!("TuiApp executing search: '{}'", query);
+            
+            // Clear previous results first
+            let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
+            if let Err(e) = sender.send(clear_message) {
+                log::warn!("Failed to send clear results message: {}", e);
+            }
+            
+            // Parse the query and determine search mode
+            let search_params = create_search_params(&query);
+            
+            // Send search request
+            let search_message = Message::new(
+                "updateSearchParams",
+                FaeMessage::UpdateSearchParams(search_params),
+            );
+            
+            if let Err(e) = sender.send(search_message) {
+                let error_msg = format!("Failed to send search request: {}", e);
+                log::error!("{}", error_msg);
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_msg)));
+            }
+            
+            log::debug!("Search request sent successfully");
+            Ok(())
+        } else {
+            let error_msg = "Search control sender not initialized";
+            log::error!("{}", error_msg);
+            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_msg)))
+        }
     }
 
     /// Run the TUI application with non-blocking event processing
@@ -384,6 +435,7 @@ impl TuiApp {
                         None => std::future::pending().await,
                     }
                 } => {
+                    log::debug!("TuiApp: Received state update");
                     self.apply_state_update(state_update);
                     self.needs_redraw = true;
                 }
@@ -437,60 +489,60 @@ impl TuiApp {
                 self.needs_redraw = true;
             }
 
-            // Text input
+            // Text input with incremental search
             KeyCode::Char(c) => {
                 self.state.search_input.push(c);
-                self.update_search_results();
+                self.execute_incremental_search();
                 self.needs_redraw = true;
             }
             KeyCode::Backspace => {
                 self.state.search_input.pop();
-                self.update_search_results();
+                self.execute_incremental_search();
                 self.needs_redraw = true;
             }
 
-            // Enter to trigger search or select result
+            // Enter to select result
             KeyCode::Enter => {
                 if self.state.selected_result_index.is_some() {
                     self.handle_result_selection();
-                } else {
-                    self.update_search_results();
+                    self.needs_redraw = true;
                 }
-                self.needs_redraw = true;
             }
 
             _ => {}
         }
     }
 
-    /// Update search results based on current input
-    /// Trigger search execution - shows current search mode and clears results
-    fn update_search_results(&mut self) {
+    /// Execute incremental search as user types
+    fn execute_incremental_search(&mut self) {
+        // Clear previous results and selection
         self.state.search_results.clear();
         self.state.selected_result_index = None;
 
         if !self.state.search_input.is_empty() {
-            // Parse search input to detect mode
-            let (mode, query) = parse_query_with_mode(&self.state.search_input);
+            log::debug!("TuiApp: Incremental search for '{}'", self.state.search_input);
             
-            // Show search mode in toast
-            let mode_name = match mode {
-                SearchMode::Literal => "Text",
-                SearchMode::Symbol => "Symbol",
-                SearchMode::Variable => "Variable", 
-                SearchMode::Filepath => "File",
-                SearchMode::Regexp => "Regex",
-            };
-
-            self.state.toast_state.show(
-                format!("Ready to search {} for '{}'", mode_name.to_lowercase(), query),
-                ToastType::Info,
-                Duration::from_secs(1),
-            );
-
-            // Note: Search execution will be handled by external TuiActor
-            // when the user triggers search (e.g., Enter key or other mechanism)
+            // Execute dynamic search immediately
+            if let Err(e) = self.execute_search(self.state.search_input.clone()) {
+                log::error!("Failed to execute incremental search: {}", e);
+                self.state.toast_state.show(
+                    format!("Search failed: {}", e),
+                    ToastType::Error,
+                    Duration::from_secs(2),
+                );
+            } else {
+                log::debug!("TuiApp: Incremental search request sent successfully");
+            }
+        } else {
+            // Clear results when input is empty
+            log::debug!("TuiApp: Empty search input, clearing results");
         }
+    }
+
+    /// Update search results based on current input (legacy method)
+    /// Trigger search execution - shows current search mode and clears results
+    fn update_search_results(&mut self) {
+        self.execute_incremental_search();
     }
 
     /// Move cursor down to next result

@@ -14,12 +14,44 @@ use tokio::sync::mpsc;
 /// Actor that bridges UnifiedSearchSystem messages to TUI updates
 pub struct TuiActor {
     tui_handle: TuiHandle,
+    control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
 }
 
 impl TuiActor {
-    /// Create a new TUI actor with the given TUI handle
-    pub fn new(tui_handle: TuiHandle) -> Self {
-        Self { tui_handle }
+    /// Create a new TUI actor with the given TUI handle and control sender
+    pub fn new(
+        tui_handle: TuiHandle,
+        control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+    ) -> Self {
+        Self { 
+            tui_handle,
+            control_sender,
+        }
+    }
+
+    /// Execute a search request by sending UpdateSearchParams message
+    pub fn execute_search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use crate::cli::create_search_params;
+        
+        log::debug!("TuiActor executing search: '{}'", query);
+        
+        // Parse the query and determine search mode
+        let search_params = create_search_params(&query);
+        
+        // Send search request via control channel
+        let search_message = Message::new(
+            "updateSearchParams",
+            FaeMessage::UpdateSearchParams(search_params),
+        );
+        
+        if let Err(e) = self.control_sender.send(search_message) {
+            let error_msg = format!("Failed to send search request: {}", e);
+            log::error!("{}", error_msg);
+            return Err(error_msg.into());
+        }
+        
+        log::debug!("Search request sent successfully");
+        Ok(())
     }
 
     /// Create a new TUI actor and spawn it with the given receiver
@@ -27,8 +59,9 @@ impl TuiActor {
         message_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         sender: mpsc::UnboundedSender<Message<FaeMessage>>,
         tui_handle: TuiHandle,
+        control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
     ) -> Actor<FaeMessage, Self> {
-        let handler = Self::new(tui_handle);
+        let handler = Self::new(tui_handle, control_sender);
         Actor::new(message_receiver, sender, handler)
     }
 }
@@ -40,12 +73,14 @@ impl MessageHandler<FaeMessage> for TuiActor {
         message: Message<FaeMessage>,
         _controller: &ActorController<FaeMessage>,
     ) {
+        log::debug!("TuiActor received message: {}", message.method);
         match &message.payload {
             FaeMessage::ReportSymbolIndex {
                 queued_files,
                 indexed_files,
                 symbols_found,
             } => {
+                log::debug!("TuiActor: Updating index status: {}/{} files, {} symbols", indexed_files, queued_files, symbols_found);
                 // Update index status in status bar instead of showing toast
                 if let Err(e) = self.tui_handle.update_index_status(
                     *queued_files,
@@ -53,6 +88,8 @@ impl MessageHandler<FaeMessage> for TuiActor {
                     *symbols_found,
                 ) {
                     log::warn!("Failed to update TUI index status: {}", e);
+                } else {
+                    log::debug!("TuiActor: Index status updated successfully");
                 }
             }
 
@@ -75,12 +112,15 @@ impl MessageHandler<FaeMessage> for TuiActor {
                     result.line,
                     result.content.trim()
                 );
-
+                
+                log::debug!("TuiActor: Adding search result: {}", formatted_result);
                 if let Err(e) = self
                     .tui_handle
                     .append_search_results(vec![formatted_result])
                 {
                     log::warn!("Failed to add search result to TUI: {}", e);
+                } else {
+                    log::debug!("TuiActor: Search result added successfully");
                 }
             }
 
@@ -183,8 +223,9 @@ mod tests {
         let tui_handle = crate::tui::TuiHandle {
             state_sender: tui_tx,
         };
+        let (control_tx, _control_rx) = mpsc::unbounded_channel();
 
-        let _tui_actor = TuiActor::new(tui_handle);
+        let _tui_actor = TuiActor::new(tui_handle, control_tx);
         // Just verify it can be created without panic
         assert!(true);
     }
@@ -200,7 +241,8 @@ mod tests {
         let tui_handle = crate::tui::TuiHandle {
             state_sender: tui_tx,
         };
-        let mut tui_actor = TuiActor::new(tui_handle);
+        let (control_tx, _control_rx) = mpsc::unbounded_channel();
+        let mut tui_actor = TuiActor::new(tui_handle, control_tx);
 
         let (controller_tx, _controller_rx) = mpsc::unbounded_channel();
         let controller = ActorController::new(controller_tx);
@@ -257,7 +299,8 @@ mod tests {
         let tui_handle = crate::tui::TuiHandle {
             state_sender: tui_tx,
         };
-        let mut tui_actor = TuiActor::new(tui_handle);
+        let (control_tx, _control_rx) = mpsc::unbounded_channel();
+        let mut tui_actor = TuiActor::new(tui_handle, control_tx);
 
         let (controller_tx, _controller_rx) = mpsc::unbounded_channel();
         let controller = ActorController::new(controller_tx);

@@ -15,12 +15,14 @@ Lightweight and magical code discovery tool with real-time search capabilities
 ## Features
 
 ### Multi-Mode Search
+
 - **Content Search** (default) - Full-text search within file contents
 - **Symbol Search** (`#prefix`) - Functions, classes, variables by name
-- **File Search** (`>prefix`) - File names and paths
+- **File Search** (`@prefix`) - File names and paths
 - **Regex Search** (`/prefix`) - Advanced pattern matching
 
 ### Key Features
+
 - **Fast Symbol Search** ✅ - Tree-sitter + fuzzy search (4 languages)
 - **Parallel Index Building** ✅ - High-speed indexing with rayon
 - **Smart File Discovery** ✅ - .gitignore support, binary detection, size limits
@@ -68,7 +70,7 @@ cargo install --path .
 ```bash
 # Development commands (with mise)
 mise run setup      # Complete environment setup
-mise run dev        # Start file watching workflow  
+mise run dev        # Start file watching workflow
 mise run test       # Run tests with coverage
 mise run clean      # Clean build artifacts
 
@@ -183,4 +185,4 @@ For detailed technical specifications and development information, see:
 
 ---
 
-*Discover code like a fairy - light, magical, and elegant*
+_Discover code like a fairy - light, magical, and elegant_
