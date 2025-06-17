@@ -113,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         false,
         result_sender,
         control_receiver,
-        Some(search_params.mode.clone()),
+        Some(search_params.mode),
     )
     .await?;
 

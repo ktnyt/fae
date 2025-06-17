@@ -77,9 +77,8 @@ impl UnifiedSearchSystem {
         search_mode: Option<SearchMode>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Determine if symbol-related actors are needed
-        let needs_symbol_actors = search_mode.map_or(true, |mode| {
-            matches!(mode, SearchMode::Symbol | SearchMode::Variable)
-        });
+        let needs_symbol_actors = search_mode
+            .is_none_or(|mode| matches!(mode, SearchMode::Symbol | SearchMode::Variable));
 
         if !needs_symbol_actors {
             log::info!(

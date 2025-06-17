@@ -76,6 +76,12 @@ pub enum ToastType {
     Error,
 }
 
+impl Default for ToastState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToastState {
     /// Create a new hidden toast
     pub fn new() -> Self {
@@ -140,17 +146,9 @@ impl ToastState {
     }
 }
 
-/// Simple TUI application with complete internal state for drawing
-pub struct TuiApp {
-    // Terminal management
-    terminal: Terminal<CrosstermBackend<Stdout>>,
-    should_quit: bool,
-
-    // Rendering control
-    needs_redraw: bool,
-    last_draw_time: Instant,
-    draw_throttle_duration: Duration,
-
+/// TUI application state (separated from terminal management)
+#[derive(Clone, Debug)]
+pub struct TuiState {
     // 1. Input string state
     pub search_input: String,
 
@@ -162,6 +160,51 @@ pub struct TuiApp {
 
     // 4. Toast state (display/hide and content)
     pub toast_state: ToastState,
+}
+
+impl TuiState {
+    /// Create new TUI state with defaults
+    pub fn new() -> Self {
+        Self {
+            search_input: String::new(),
+            search_results: Vec::new(),
+            selected_result_index: None,
+            toast_state: ToastState::new(),
+        }
+    }
+
+    /// Update toast state and return true if redraw is needed
+    pub fn update_toast(&mut self) -> bool {
+        let was_visible = self.toast_state.visible;
+        self.toast_state.update();
+        was_visible != self.toast_state.visible
+    }
+
+    /// Check if any state requires periodic updates
+    pub fn needs_periodic_update(&self) -> bool {
+        self.toast_state.visible || self.toast_state.show_until.is_some()
+    }
+}
+
+impl Default for TuiState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Simple TUI application with separated state management
+pub struct TuiApp {
+    // Terminal management
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    should_quit: bool,
+
+    // Rendering control
+    needs_redraw: bool,
+    last_draw_time: Instant,
+    draw_throttle_duration: Duration,
+
+    // Separated application state
+    pub state: TuiState,
 }
 
 impl TuiApp {
@@ -195,10 +238,7 @@ impl TuiApp {
             needs_redraw: true, // Initial draw needed
             last_draw_time: Instant::now(),
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
-            search_input: String::new(),
-            search_results: Vec::new(),
-            selected_result_index: None,
-            toast_state: ToastState::new(),
+            state: TuiState::new(),
         })
     }
 
@@ -220,6 +260,11 @@ impl TuiApp {
             // Check if we should quit
             if self.should_quit {
                 break;
+            }
+
+            // 🔧 Fix: Update toast state periodically to ensure auto-close works
+            if self.state.update_toast() {
+                self.needs_redraw = true;
             }
 
             // Only redraw if needed and enough time has passed (throttling)
@@ -263,19 +308,19 @@ impl TuiApp {
 
             // Text input
             KeyCode::Char(c) => {
-                self.search_input.push(c);
+                self.state.search_input.push(c);
                 self.update_search_results();
                 self.needs_redraw = true;
             }
             KeyCode::Backspace => {
-                self.search_input.pop();
+                self.state.search_input.pop();
                 self.update_search_results();
                 self.needs_redraw = true;
             }
 
             // Enter to trigger search or select result
             KeyCode::Enter => {
-                if self.selected_result_index.is_some() {
+                if self.state.selected_result_index.is_some() {
                     self.handle_result_selection();
                 } else {
                     self.update_search_results();
@@ -289,31 +334,31 @@ impl TuiApp {
 
     /// Update search results based on current input
     fn update_search_results(&mut self) {
-        self.search_results.clear();
-        self.selected_result_index = None;
+        self.state.search_results.clear();
+        self.state.selected_result_index = None;
 
-        if !self.search_input.is_empty() {
+        if !self.state.search_input.is_empty() {
             // Add some mock results for demonstration
             for i in 1..=5 {
-                self.search_results.push(format!(
+                self.state.search_results.push(format!(
                     "src/file_{}.rs:{}:Mock result for '{}'",
                     i,
                     i * 10,
-                    self.search_input
+                    self.state.search_input
                 ));
             }
 
             // Set cursor to first result if we have results
-            if !self.search_results.is_empty() {
-                self.selected_result_index = Some(0);
+            if !self.state.search_results.is_empty() {
+                self.state.selected_result_index = Some(0);
             }
 
             // Show toast with search info
-            self.toast_state.show(
+            self.state.toast_state.show(
                 format!(
                     "Found {} results for '{}'",
-                    self.search_results.len(),
-                    self.search_input
+                    self.state.search_results.len(),
+                    self.state.search_input
                 ),
                 ToastType::Info,
                 Duration::from_secs(2),
@@ -323,18 +368,18 @@ impl TuiApp {
 
     /// Move cursor down to next result
     fn move_cursor_down(&mut self) {
-        if !self.search_results.is_empty() {
-            match self.selected_result_index {
+        if !self.state.search_results.is_empty() {
+            match self.state.selected_result_index {
                 Some(index) => {
-                    if index + 1 < self.search_results.len() {
-                        self.selected_result_index = Some(index + 1);
+                    if index + 1 < self.state.search_results.len() {
+                        self.state.selected_result_index = Some(index + 1);
                     } else {
                         // Wrap to first result
-                        self.selected_result_index = Some(0);
+                        self.state.selected_result_index = Some(0);
                     }
                 }
                 None => {
-                    self.selected_result_index = Some(0);
+                    self.state.selected_result_index = Some(0);
                 }
             }
         }
@@ -342,18 +387,19 @@ impl TuiApp {
 
     /// Move cursor up to previous result
     fn move_cursor_up(&mut self) {
-        if !self.search_results.is_empty() {
-            match self.selected_result_index {
+        if !self.state.search_results.is_empty() {
+            match self.state.selected_result_index {
                 Some(index) => {
                     if index > 0 {
-                        self.selected_result_index = Some(index - 1);
+                        self.state.selected_result_index = Some(index - 1);
                     } else {
                         // Wrap to last result
-                        self.selected_result_index = Some(self.search_results.len() - 1);
+                        self.state.selected_result_index =
+                            Some(self.state.search_results.len() - 1);
                     }
                 }
                 None => {
-                    self.selected_result_index = Some(self.search_results.len() - 1);
+                    self.state.selected_result_index = Some(self.state.search_results.len() - 1);
                 }
             }
         }
@@ -361,10 +407,10 @@ impl TuiApp {
 
     /// Handle result selection (Enter key on selected result)
     fn handle_result_selection(&mut self) {
-        if let Some(index) = self.selected_result_index {
-            if let Some(result) = self.search_results.get(index) {
+        if let Some(index) = self.state.selected_result_index {
+            if let Some(result) = self.state.search_results.get(index) {
                 // Show toast with selected result info
-                self.toast_state.show(
+                self.state.toast_state.show(
                     format!("Selected: {}", result),
                     ToastType::Success,
                     Duration::from_secs(3),
@@ -375,17 +421,13 @@ impl TuiApp {
 
     /// Draw the UI
     fn draw(&mut self) -> Result<()> {
-        // Update toast state (this might change visibility, so check redraw need)
-        let was_visible = self.toast_state.visible;
-        self.toast_state.update();
-        if was_visible != self.toast_state.visible {
-            self.needs_redraw = true;
-        }
+        // 🔧 Fix: Remove duplicate toast update logic (now handled in run() method)
+        // Toast state is already updated in the main event loop
 
-        let search_input = self.search_input.clone();
-        let search_results = self.search_results.clone();
-        let selected_index = self.selected_result_index;
-        let toast_state = self.toast_state.clone();
+        let search_input = self.state.search_input.clone();
+        let search_results = self.state.search_results.clone();
+        let selected_index = self.state.selected_result_index;
+        let toast_state = self.state.toast_state.clone();
 
         self.terminal.draw(|f| {
             let chunks = Layout::default()
@@ -430,60 +472,60 @@ impl TuiApp {
 
     /// Update search input from external source
     pub fn set_search_input(&mut self, input: String) {
-        self.search_input = input;
+        self.state.search_input = input;
         self.needs_redraw = true;
     }
 
     /// Add a search result from external source
     pub fn add_search_result(&mut self, result: String) {
-        self.search_results.push(result);
+        self.state.search_results.push(result);
         // Auto-select first result if none selected
-        if self.selected_result_index.is_none() && !self.search_results.is_empty() {
-            self.selected_result_index = Some(0);
+        if self.state.selected_result_index.is_none() && !self.state.search_results.is_empty() {
+            self.state.selected_result_index = Some(0);
         }
         self.needs_redraw = true;
     }
 
     /// Set all search results from external source
     pub fn set_search_results(&mut self, results: Vec<String>) {
-        self.search_results = results;
+        self.state.search_results = results;
         // Reset selection to first result if we have results
-        if !self.search_results.is_empty() {
-            self.selected_result_index = Some(0);
+        if !self.state.search_results.is_empty() {
+            self.state.selected_result_index = Some(0);
         } else {
-            self.selected_result_index = None;
+            self.state.selected_result_index = None;
         }
         self.needs_redraw = true;
     }
 
     /// Clear all search results
     pub fn clear_search_results(&mut self) {
-        self.search_results.clear();
-        self.selected_result_index = None;
+        self.state.search_results.clear();
+        self.state.selected_result_index = None;
         self.needs_redraw = true;
     }
 
     /// Set cursor position from external source
     pub fn set_selected_result_index(&mut self, index: Option<usize>) {
         if let Some(idx) = index {
-            if idx < self.search_results.len() {
-                self.selected_result_index = Some(idx);
+            if idx < self.state.search_results.len() {
+                self.state.selected_result_index = Some(idx);
             }
         } else {
-            self.selected_result_index = None;
+            self.state.selected_result_index = None;
         }
         self.needs_redraw = true;
     }
 
     /// Show toast notification from external source
     pub fn show_toast(&mut self, message: String, toast_type: ToastType, duration: Duration) {
-        self.toast_state.show(message, toast_type, duration);
+        self.state.toast_state.show(message, toast_type, duration);
         self.needs_redraw = true;
     }
 
     /// Hide current toast
     pub fn hide_toast(&mut self) {
-        self.toast_state.hide();
+        self.state.toast_state.hide();
         self.needs_redraw = true;
     }
 
@@ -491,23 +533,23 @@ impl TuiApp {
 
     /// Get current search input
     pub fn get_search_input(&self) -> &str {
-        &self.search_input
+        &self.state.search_input
     }
 
     /// Get current search results
     pub fn get_search_results(&self) -> &[String] {
-        &self.search_results
+        &self.state.search_results
     }
 
     /// Get currently selected result index
     pub fn get_selected_result_index(&self) -> Option<usize> {
-        self.selected_result_index
+        self.state.selected_result_index
     }
 
     /// Get currently selected result
     pub fn get_selected_result(&self) -> Option<&str> {
-        if let Some(index) = self.selected_result_index {
-            self.search_results.get(index).map(|s| s.as_str())
+        if let Some(index) = self.state.selected_result_index {
+            self.state.search_results.get(index).map(|s| s.as_str())
         } else {
             None
         }
@@ -515,7 +557,7 @@ impl TuiApp {
 
     /// Check if toast is currently visible
     pub fn is_toast_visible(&self) -> bool {
-        self.toast_state.visible
+        self.state.toast_state.visible
     }
 
     /// Force a UI redraw (useful after external state updates)
