@@ -20,6 +20,8 @@ pub struct SymbolSearchHandler {
     fuzzy_matcher: SkimMatcherV2,
     /// Current search parameters
     current_search: Option<SearchParams>,
+    /// Current request ID for active search
+    current_request_id: Option<String>,
     /// Whether initial indexing has been completed
     initial_indexing_complete: bool,
 }
@@ -37,6 +39,7 @@ impl SymbolSearchHandler {
             symbol_index: HashMap::new(),
             fuzzy_matcher: SkimMatcherV2::default(),
             current_search: None,
+            current_request_id: None,
             initial_indexing_complete: false,
         }
     }
@@ -186,10 +189,17 @@ impl SymbolSearchHandler {
                 symbol.symbol_type
             );
 
+            let request_id = self
+                .current_request_id
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
             if let Err(e) = controller
                 .send_message(
                     "pushSearchResult".to_string(),
-                    FaeMessage::PushSearchResult(search_result),
+                    FaeMessage::PushSearchResult {
+                        result: search_result,
+                        request_id,
+                    },
                 )
                 .await
             {
@@ -313,14 +323,20 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                 }
             }
             "updateSearchParams" => {
-                if let FaeMessage::UpdateSearchParams(search_params) = message.payload {
+                if let FaeMessage::UpdateSearchParams {
+                    params: search_params,
+                    request_id,
+                } = message.payload
+                {
                     log::trace!(
-                        "Updated search params: query='{}', mode={:?}",
+                        "Updated search params: query='{}', mode={:?}, request_id='{}'",
                         search_params.query,
-                        search_params.mode
+                        search_params.mode,
+                        request_id
                     );
 
                     self.current_search = Some(search_params.clone());
+                    self.current_request_id = Some(request_id);
                     self.perform_search(&search_params, controller).await;
                 } else {
                     log::warn!("updateSearchParams received unexpected payload");
@@ -535,10 +551,13 @@ mod tests {
         // Perform search
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(SearchParams {
-                query: "func".to_string(),
-                mode: SearchMode::Symbol,
-            }),
+            FaeMessage::UpdateSearchParams {
+                params: SearchParams {
+                    query: "func".to_string(),
+                    mode: SearchMode::Symbol,
+                },
+                request_id: "test-request-1".to_string(),
+            },
         );
         actor_tx
             .send(search_message)
@@ -552,7 +571,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         println!("Received search result: {}", result.content);
                         if result.content.contains("my_function") {
                             received_results = true;
@@ -626,10 +649,13 @@ mod tests {
         // Test Symbol search (should exclude variables and constants)
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(SearchParams {
-                query: "my".to_string(),
-                mode: SearchMode::Symbol,
-            }),
+            FaeMessage::UpdateSearchParams {
+                params: SearchParams {
+                    query: "my".to_string(),
+                    mode: SearchMode::Symbol,
+                },
+                request_id: "test-request-2".to_string(),
+            },
         );
         actor_tx
             .send(search_message)
@@ -643,7 +669,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         symbol_results.push(result.content.clone());
                     }
                 }
@@ -683,10 +713,13 @@ mod tests {
         // Test Variable search (should only include variables, constants, and fields)
         let variable_search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(SearchParams {
-                query: "my".to_string(),
-                mode: SearchMode::Variable,
-            }),
+            FaeMessage::UpdateSearchParams {
+                params: SearchParams {
+                    query: "my".to_string(),
+                    mode: SearchMode::Variable,
+                },
+                request_id: "test-request-3".to_string(),
+            },
         );
         actor_tx
             .send(variable_search_message)
@@ -700,7 +733,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         variable_results.push(result.content.clone());
                     }
                 }
@@ -855,10 +892,13 @@ mod tests {
         // Try to search BEFORE initial indexing completion - should be skipped
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(SearchParams {
-                query: "func".to_string(),
-                mode: SearchMode::Symbol,
-            }),
+            FaeMessage::UpdateSearchParams {
+                params: SearchParams {
+                    query: "func".to_string(),
+                    mode: SearchMode::Symbol,
+                },
+                request_id: "test-request-4".to_string(),
+            },
         );
         actor_tx
             .send(search_message)
@@ -902,7 +942,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         if result.content.contains("my_function") {
                             received_results_after = true;
                             break;

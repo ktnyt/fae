@@ -32,7 +32,10 @@ async fn demonstrate_search_actor<T>(
     };
     let search_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_query),
+        FaeMessage::UpdateSearchParams {
+            params: search_query,
+            request_id: "example-request-1".to_string(),
+        },
     );
 
     if let Err(e) = actor_tx.send(search_message) {
@@ -51,7 +54,11 @@ async fn demonstrate_search_actor<T>(
         match timeout(Duration::from_millis(300), external_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         result_count += 1;
                         println!(
                             "  {}. {}:{}:{} | {}",

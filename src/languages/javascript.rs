@@ -101,7 +101,10 @@ mod tests {
     #[test]
     fn test_javascript_extractor_config_creation() {
         let config = JavaScriptExtractor::create_config();
-        assert!(config.is_ok(), "Should create JavaScript config successfully");
+        assert!(
+            config.is_ok(),
+            "Should create JavaScript config successfully"
+        );
     }
 
     #[test]
@@ -258,12 +261,12 @@ import defaultExport from './module';
         println!("Extracted JavaScript symbols: {:?}", symbol_names);
 
         // Verify we have some expected function and class names
-        let has_greet_function = symbols.iter().any(|s| 
-            s.symbol_type == SymbolType::Function && s.content.contains("greet")
-        );
-        let has_user_class = symbols.iter().any(|s| 
-            s.symbol_type == SymbolType::Class && s.content.contains("User")
-        );
+        let has_greet_function = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Function && s.content.contains("greet"));
+        let has_user_class = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Class && s.content.contains("User"));
         assert!(has_greet_function, "Should find greet function");
         assert!(has_user_class, "Should find User class");
     }
@@ -298,11 +301,17 @@ function testFunction() {
     fn test_javascript_create_symbol_content() {
         let lines = vec!["", "function testFunction() {", "    return \"test\";", "}"];
         let content = JavaScriptExtractor::create_symbol_content("testFunction", &lines, 2);
-        assert_eq!(content, "function testFunction() {", "Should return line content");
+        assert_eq!(
+            content, "function testFunction() {",
+            "Should return line content"
+        );
 
         // Test with class declaration
         let lines = vec!["class TestClass {", "    constructor() {}", "}"];
         let content = JavaScriptExtractor::create_symbol_content("TestClass", &lines, 1);
-        assert_eq!(content, "class TestClass {", "Should return class line content");
+        assert_eq!(
+            content, "class TestClass {",
+            "Should return class line content"
+        );
     }
 }

@@ -221,11 +221,11 @@ pub struct TuiState {
     pub show_stats_overlay: bool,
 
     // 7. Emacs-style text editing state
-    pub cursor_position: usize,    // Cursor position in search_input
-    pub kill_ring: String,         // Kill/yank buffer (emacs-style)
-    
+    pub cursor_position: usize, // Cursor position in search_input
+    pub kill_ring: String,      // Kill/yank buffer (emacs-style)
+
     // 8. Result list scroll state
-    pub results_list_state: ListState,  // StatefulList state for scrolling
+    pub results_list_state: ListState, // StatefulList state for scrolling
 }
 
 impl TuiState {
@@ -436,10 +436,14 @@ impl TuiApp {
                 log::warn!("Failed to send clear results message: {}", e);
             }
 
-            // Send search request
+            // Generate request ID and send search request
+            let request_id = tiny_id::ShortCodeGenerator::new_alphanumeric(8).next_string();
             let search_message = Message::new(
                 "updateSearchParams",
-                FaeMessage::UpdateSearchParams(search_params),
+                FaeMessage::UpdateSearchParams {
+                    params: search_params,
+                    request_id,
+                },
             );
 
             if let Err(e) = sender.send(search_message) {
@@ -573,7 +577,7 @@ impl TuiApp {
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 match c {
                     'c' => self.should_quit = true,
-                    
+
                     // Text editing (emacs-style)
                     'a' => self.move_cursor_to_start(),
                     'b' => self.move_cursor_left(),
@@ -582,14 +586,16 @@ impl TuiApp {
                     'h' => self.delete_char_backward(),
                     'k' => self.kill_line(),
                     'y' => self.yank(),
-                    
+
                     // Search and navigation
                     'g' => self.abort_search(),
                     'u' => self.scroll_up_half_page(),
-                    
+
                     // Handle Ctrl+D separately based on context
                     'd' => {
-                        if self.state.search_input.is_empty() || self.state.cursor_position >= self.state.search_input.len() {
+                        if self.state.search_input.is_empty()
+                            || self.state.cursor_position >= self.state.search_input.len()
+                        {
                             // If input is empty or cursor at end, scroll down
                             self.scroll_down_half_page();
                         } else {
@@ -597,16 +603,16 @@ impl TuiApp {
                             self.delete_char_forward();
                         }
                     }
-                    
+
                     // Result navigation (existing functionality)
                     'n' => self.move_cursor_down(),
                     'p' => self.move_cursor_up(),
-                    
+
                     _ => return, // Unknown Ctrl combination, don't redraw
                 }
                 self.needs_redraw = true;
             }
-            
+
             // Additional Ctrl combinations that need special handling
             KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.goto_first_result();
@@ -626,7 +632,7 @@ impl TuiApp {
                 self.move_cursor_up();
                 self.needs_redraw = true;
             }
-            
+
             // Text cursor movement (arrow keys and Home/End)
             KeyCode::Left => {
                 self.move_cursor_left();
@@ -679,7 +685,9 @@ impl TuiApp {
         self.state.search_results.clear();
         self.state.selected_result_index = None;
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
 
         if !self.state.search_input.is_empty() {
             log::debug!(
@@ -722,7 +730,9 @@ impl TuiApp {
                 }
             }
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
     }
 
@@ -744,7 +754,9 @@ impl TuiApp {
                 }
             }
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
     }
 
@@ -765,18 +777,18 @@ impl TuiApp {
     /// Cycle through search modes: none -> # -> $ -> @ -> / -> none
     fn cycle_search_mode(&mut self) {
         let (current_mode, base_query) = parse_query_with_mode(&self.state.search_input);
-        
+
         let next_prefix = match current_mode {
-            SearchMode::Literal => "#",   // none -> #symbol
-            SearchMode::Symbol => "$",    // # -> $variable
-            SearchMode::Variable => "@",  // $ -> @file
-            SearchMode::Filepath => "/",  // @ -> /regex
-            SearchMode::Regexp => "",     // / -> none (literal)
+            SearchMode::Literal => "#",  // none -> #symbol
+            SearchMode::Symbol => "$",   // # -> $variable
+            SearchMode::Variable => "@", // $ -> @file
+            SearchMode::Filepath => "/", // @ -> /regex
+            SearchMode::Regexp => "",    // / -> none (literal)
         };
-        
+
         // Update search input with new prefix
         self.state.search_input = format!("{}{}", next_prefix, base_query);
-        
+
         // Execute search with new mode
         self.execute_incremental_search();
     }
@@ -785,7 +797,9 @@ impl TuiApp {
 
     /// Insert character at cursor position (C-f, Right Arrow)
     fn insert_char(&mut self, c: char) {
-        self.state.search_input.insert(self.state.cursor_position, c);
+        self.state
+            .search_input
+            .insert(self.state.cursor_position, c);
         self.state.cursor_position += 1;
     }
 
@@ -841,7 +855,9 @@ impl TuiApp {
     fn yank(&mut self) {
         if !self.state.kill_ring.is_empty() {
             let insert_text = self.state.kill_ring.clone();
-            self.state.search_input.insert_str(self.state.cursor_position, &insert_text);
+            self.state
+                .search_input
+                .insert_str(self.state.cursor_position, &insert_text);
             self.state.cursor_position += insert_text.len();
         }
     }
@@ -855,15 +871,17 @@ impl TuiApp {
         self.state.search_results.clear();
         self.state.selected_result_index = None;
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
-        
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
+
         // Show toast notification
         self.state.toast_state.show(
             "Search aborted".to_string(),
             ToastType::Info,
             Duration::from_secs(1),
         );
-        
+
         // Clear search via actor system
         if let Err(e) = self.execute_search(String::new()) {
             log::error!("Failed to execute clear search: {}", e);
@@ -879,13 +897,15 @@ impl TuiApp {
             width: 80,
             height: 24,
         });
-        
+
         // Layout calculation: Input box (3) + Status bar (3) + borders
         // Results box gets the remaining height
         let input_height = 3;
         let status_height = 3;
-        let available_height = terminal_size.height.saturating_sub(input_height + status_height);
-        
+        let available_height = terminal_size
+            .height
+            .saturating_sub(input_height + status_height);
+
         // Box border takes 2 lines (top + bottom), so actual content height is area.height - 2
         available_height.saturating_sub(2) as usize
     }
@@ -895,10 +915,10 @@ impl TuiApp {
         if self.state.search_results.is_empty() {
             return;
         }
-        
+
         let visible_height = self.get_results_box_height();
         let half_page = (visible_height / 2).max(1);
-        
+
         if let Some(current_index) = self.state.selected_result_index {
             let new_index = current_index.saturating_sub(half_page);
             self.state.selected_result_index = Some(new_index);
@@ -906,7 +926,9 @@ impl TuiApp {
             self.state.selected_result_index = Some(0);
         }
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
     }
 
     /// Scroll results down half page (C-d when input empty)
@@ -914,10 +936,10 @@ impl TuiApp {
         if self.state.search_results.is_empty() {
             return;
         }
-        
+
         let visible_height = self.get_results_box_height();
         let half_page = (visible_height / 2).max(1);
-        
+
         if let Some(current_index) = self.state.selected_result_index {
             let new_index = (current_index + half_page).min(self.state.search_results.len() - 1);
             self.state.selected_result_index = Some(new_index);
@@ -925,7 +947,9 @@ impl TuiApp {
             self.state.selected_result_index = Some(0);
         }
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
     }
 
     /// Jump to first result (C-,)
@@ -933,7 +957,9 @@ impl TuiApp {
         if !self.state.search_results.is_empty() {
             self.state.selected_result_index = Some(0);
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
     }
 
@@ -942,7 +968,9 @@ impl TuiApp {
         if !self.state.search_results.is_empty() {
             self.state.selected_result_index = Some(self.state.search_results.len() - 1);
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
     }
 
@@ -972,7 +1000,7 @@ impl TuiApp {
             // 1. Input box
             render_input_box(f, chunks[0], &search_input, cursor_position);
 
-            // 2. Results box  
+            // 2. Results box
             render_results_box(f, chunks[1], &search_results, selected_index);
 
             // 3. Status bar
@@ -1018,7 +1046,9 @@ impl TuiApp {
                 self.state.selected_result_index = None;
             }
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
 
         if let Some(append_results) = update.append_results {
@@ -1028,7 +1058,9 @@ impl TuiApp {
             if was_empty && !self.state.search_results.is_empty() {
                 self.state.selected_result_index = Some(0);
                 // Update ListState for scrolling
-                self.state.results_list_state.select(self.state.selected_result_index);
+                self.state
+                    .results_list_state
+                    .select(self.state.selected_result_index);
             }
         }
 
@@ -1041,7 +1073,9 @@ impl TuiApp {
                 self.state.selected_result_index = None;
             }
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
 
         if let Some((message, toast_type, duration)) = update.toast {
@@ -1052,7 +1086,9 @@ impl TuiApp {
             self.state.search_results.clear();
             self.state.selected_result_index = None;
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
 
         if update.hide_toast {
@@ -1079,7 +1115,9 @@ impl TuiApp {
         if self.state.selected_result_index.is_none() && !self.state.search_results.is_empty() {
             self.state.selected_result_index = Some(0);
             // Update ListState for scrolling
-            self.state.results_list_state.select(self.state.selected_result_index);
+            self.state
+                .results_list_state
+                .select(self.state.selected_result_index);
         }
         self.needs_redraw = true;
     }
@@ -1094,7 +1132,9 @@ impl TuiApp {
             self.state.selected_result_index = None;
         }
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
         self.needs_redraw = true;
     }
 
@@ -1103,7 +1143,9 @@ impl TuiApp {
         self.state.search_results.clear();
         self.state.selected_result_index = None;
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
         self.needs_redraw = true;
     }
 
@@ -1117,7 +1159,9 @@ impl TuiApp {
             self.state.selected_result_index = None;
         }
         // Update ListState for scrolling
-        self.state.results_list_state.select(self.state.selected_result_index);
+        self.state
+            .results_list_state
+            .select(self.state.selected_result_index);
         self.needs_redraw = true;
     }
 
@@ -1298,7 +1342,12 @@ impl StateUpdate {
 }
 
 /// Render the input box with search mode indicator and cursor
-fn render_input_box(f: &mut Frame, area: ratatui::layout::Rect, search_input: &str, cursor_pos: usize) {
+fn render_input_box(
+    f: &mut Frame,
+    area: ratatui::layout::Rect,
+    search_input: &str,
+    cursor_pos: usize,
+) {
     // Detect current search mode
     let (mode, _) = parse_query_with_mode(search_input);
     let mode_name = match mode {
@@ -1345,9 +1394,7 @@ fn render_results_box(
 ) {
     let items: Vec<ListItem> = search_results
         .iter()
-        .map(|result| {
-            ListItem::new(result.as_str())
-        })
+        .map(|result| ListItem::new(result.as_str()))
         .collect();
 
     let title = if let Some(index) = selected_index {
@@ -2014,40 +2061,42 @@ mod tests {
     fn test_emacs_text_editing() {
         // Test emacs-style text editing functionality
         let mut state = TuiState::new();
-        
+
         // Test insert_char functionality
         state.search_input = "hello".to_string();
         state.cursor_position = 2; // Position between 'e' and 'l'
-        
+
         // Simulate inserting 'X' at cursor
         state.search_input.insert(state.cursor_position, 'X');
         state.cursor_position += 1;
-        
+
         assert_eq!(state.search_input, "heXllo");
         assert_eq!(state.cursor_position, 3);
-        
+
         // Test move_cursor_to_start
         state.cursor_position = 0;
         assert_eq!(state.cursor_position, 0);
-        
+
         // Test move_cursor_to_end
         state.cursor_position = state.search_input.len();
         assert_eq!(state.cursor_position, 6); // Length of "heXllo"
-        
+
         // Test kill_line functionality
         state.cursor_position = 2; // Position after 'e'
         let killed_text = state.search_input[state.cursor_position..].to_string();
         state.kill_ring = killed_text.clone();
         state.search_input.truncate(state.cursor_position);
-        
+
         assert_eq!(state.search_input, "he");
         assert_eq!(state.kill_ring, "Xllo");
-        
+
         // Test yank functionality
         let insert_text = state.kill_ring.clone();
-        state.search_input.insert_str(state.cursor_position, &insert_text);
+        state
+            .search_input
+            .insert_str(state.cursor_position, &insert_text);
         state.cursor_position += insert_text.len();
-        
+
         assert_eq!(state.search_input, "heXllo");
         assert_eq!(state.cursor_position, 6);
     }
@@ -2057,19 +2106,19 @@ mod tests {
         let mut state = TuiState::new();
         state.search_input = "test".to_string();
         state.cursor_position = 2; // Between 'e' and 's'
-        
+
         // Test move_cursor_left
         if state.cursor_position > 0 {
             state.cursor_position -= 1;
         }
         assert_eq!(state.cursor_position, 1);
-        
+
         // Test move_cursor_right
         if state.cursor_position < state.search_input.len() {
             state.cursor_position += 1;
         }
         assert_eq!(state.cursor_position, 2);
-        
+
         // Test boundary conditions
         state.cursor_position = 0;
         // Try to move left when already at start
@@ -2077,7 +2126,7 @@ mod tests {
             state.cursor_position -= 1;
         }
         assert_eq!(state.cursor_position, 0); // Should remain at 0
-        
+
         state.cursor_position = state.search_input.len();
         // Try to move right when already at end
         if state.cursor_position < state.search_input.len() {
@@ -2091,14 +2140,14 @@ mod tests {
         let mut state = TuiState::new();
         state.search_input = "hello".to_string();
         state.cursor_position = 2; // Between 'e' and 'l'
-        
+
         // Test delete_char_forward (C-d)
         if state.cursor_position < state.search_input.len() {
             state.search_input.remove(state.cursor_position);
         }
         assert_eq!(state.search_input, "helo");
         assert_eq!(state.cursor_position, 2); // Cursor stays in place
-        
+
         // Test delete_char_backward (C-h, Backspace)
         if state.cursor_position > 0 {
             state.cursor_position -= 1;
@@ -2117,7 +2166,7 @@ mod tests {
             "result3".to_string(),
         ];
         state.selected_result_index = Some(1); // Start at second result
-        
+
         // Test scroll_up_half_page (C-u)
         let visible_height = 10;
         let half_page = (visible_height / 2).max(1);
@@ -2126,13 +2175,13 @@ mod tests {
             state.selected_result_index = Some(new_index);
         }
         assert_eq!(state.selected_result_index, Some(0)); // Should go to first result
-        
+
         // Test goto_last_result (C-.)
         if !state.search_results.is_empty() {
             state.selected_result_index = Some(state.search_results.len() - 1);
         }
         assert_eq!(state.selected_result_index, Some(2)); // Should go to last result
-        
+
         // Test goto_first_result (C-,)
         if !state.search_results.is_empty() {
             state.selected_result_index = Some(0);

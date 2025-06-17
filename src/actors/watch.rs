@@ -32,8 +32,6 @@ impl WatchHandler {
         })
     }
 
-
-
     /// Start watching the file system
     async fn start_watching(
         &mut self,
@@ -195,7 +193,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::{sleep, timeout};
 
-
     #[tokio::test]
     async fn test_watch_actor_creation() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -209,8 +206,6 @@ mod tests {
         let mut actor = result.unwrap();
         actor.shutdown();
     }
-
-
 
     #[tokio::test]
     async fn test_watch_start_stop() {

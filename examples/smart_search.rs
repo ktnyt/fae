@@ -117,7 +117,10 @@ async fn search_with_tool(
     };
     let search_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_query),
+        FaeMessage::UpdateSearchParams {
+            params: search_query,
+            request_id: "example-request-1".to_string(),
+        },
     );
 
     actor_tx
@@ -133,7 +136,11 @@ async fn search_with_tool(
         match timeout(Duration::from_millis(100), external_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         results.push((result.filename, result.line, result.column, result.content));
                     }
                 } else if message.method == "clearResults" {

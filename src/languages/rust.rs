@@ -237,9 +237,17 @@ impl User {
 
     #[test]
     fn test_rust_create_symbol_content() {
-        let lines = vec!["", "pub fn test_function() {", "    println!(\"test\");", "}"];
+        let lines = vec![
+            "",
+            "pub fn test_function() {",
+            "    println!(\"test\");",
+            "}",
+        ];
         let content = RustExtractor::create_symbol_content("test_function", &lines, 2);
-        assert_eq!(content, "pub fn test_function() {", "Should return line content");
+        assert_eq!(
+            content, "pub fn test_function() {",
+            "Should return line content"
+        );
 
         // Test with empty line
         let lines = vec![""];

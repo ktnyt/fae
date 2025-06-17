@@ -94,7 +94,7 @@ impl LanguageExtractor for PythonExtractor {
             "parameter.name" => Some(SymbolType::Parameter),
             "import.name" => Some(SymbolType::Module),
             "decorator.name" => Some(SymbolType::Function), // Decorators are function-like
-            _ => None, // Skip unknown captures
+            _ => None,                                      // Skip unknown captures
         }
     }
 }
@@ -227,7 +227,10 @@ def main():
     fn test_python_create_symbol_content() {
         let lines = vec!["", "def test_function():", "    print('test')", ""];
         let content = PythonExtractor::create_symbol_content("test_function", &lines, 2);
-        assert_eq!(content, "def test_function():", "Should return line content");
+        assert_eq!(
+            content, "def test_function():",
+            "Should return line content"
+        );
 
         // Test with empty line
         let lines = vec![""];

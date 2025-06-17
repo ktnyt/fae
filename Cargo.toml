@@ -28,6 +28,7 @@ walkdir = "2.4"
 ratatui = "0.26"      # Terminal UI framework
 crossterm = { version = "0.27", features = ["event-stream"] }    # Cross-platform terminal functionality
 arboard = "3.3"       # Clipboard access
+tiny_id = "0.1"       # ID generation for request tracking
 
 [dev-dependencies]
 # For tests and examples only

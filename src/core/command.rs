@@ -675,7 +675,6 @@ mod tests {
         fn get_stdout_count(&self) -> usize {
             self.stdout_lines.lock().unwrap().len()
         }
-
     }
 
     #[async_trait]

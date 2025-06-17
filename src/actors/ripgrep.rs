@@ -39,7 +39,9 @@ pub fn create_ripgrep_command_factory(search_path: String) -> impl CommandFactor
 }
 
 /// Ripgrep actor handler
-pub struct RipgrepHandler;
+pub struct RipgrepHandler {
+    current_request_id: Option<String>,
+}
 
 impl Default for RipgrepHandler {
     fn default() -> Self {
@@ -49,7 +51,9 @@ impl Default for RipgrepHandler {
 
 impl RipgrepHandler {
     pub fn new() -> Self {
-        Self
+        Self {
+            current_request_id: None,
+        }
     }
 
     /// Parse ripgrep output line into SearchResult
@@ -84,11 +88,16 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
     ) {
         match message.method.as_str() {
             "updateSearchParams" => {
-                if let FaeMessage::UpdateSearchParams(query) = message.payload {
+                if let FaeMessage::UpdateSearchParams {
+                    params: query,
+                    request_id,
+                } = message.payload
+                {
                     log::info!(
-                        "Starting ripgrep search: {} (mode: {:?})",
+                        "Starting ripgrep search: {} (mode: {:?}) with request_id: {}",
                         query.query,
-                        query.mode
+                        query.mode,
+                        request_id
                     );
                     let _ = controller
                         .send_message("clearResults".to_string(), FaeMessage::ClearResults)
@@ -114,6 +123,9 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
                         log::warn!("RipgrepActor: Query is less than 2 characters");
                         return;
                     }
+
+                    // Store request_id for this search
+                    self.current_request_id = Some(request_id);
 
                     if let Err(e) = controller.spawn(query).await {
                         log::error!("Failed to spawn ripgrep command: {}", e);
@@ -149,12 +161,19 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
         controller: &CommandController<FaeMessage, SearchParams>,
     ) {
         if let Some(result) = self.parse_ripgrep_line(&line) {
-            let message = FaeMessage::PushSearchResult(result);
-            if let Err(e) = controller
-                .send_message("pushSearchResult".to_string(), message)
-                .await
-            {
-                log::error!("Failed to send search result: {}", e);
+            if let Some(request_id) = &self.current_request_id {
+                let message = FaeMessage::PushSearchResult {
+                    result,
+                    request_id: request_id.clone(),
+                };
+                if let Err(e) = controller
+                    .send_message("pushSearchResult".to_string(), message)
+                    .await
+                {
+                    log::error!("Failed to send search result: {}", e);
+                }
+            } else {
+                log::warn!("No request_id available for search result");
             }
         } else {
             log::debug!("Failed to parse ripgrep output: {}", line);
@@ -174,6 +193,9 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
         controller: &CommandController<FaeMessage, SearchParams>,
     ) {
         log::info!("Ripgrep process completed");
+        // Clear current request_id when process completes
+        self.current_request_id = None;
+
         // Send completion notification
         let _ = controller
             .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
@@ -346,7 +368,10 @@ mod tests {
         };
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(search_query),
+            FaeMessage::UpdateSearchParams {
+                params: search_query,
+                request_id: "test-request-1".to_string(),
+            },
         );
 
         actor_tx
@@ -361,7 +386,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(100), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         println!(
                             "Found match: {}:{}:{} - {}",
                             result.filename, result.line, result.column, result.content
@@ -399,7 +428,10 @@ mod tests {
         };
         let filepath_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(filepath_query),
+            FaeMessage::UpdateSearchParams {
+                params: filepath_query,
+                request_id: "test-request-2".to_string(),
+            },
         );
         actor_tx
             .send(filepath_message)
@@ -412,7 +444,10 @@ mod tests {
         };
         let symbol_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(symbol_query),
+            FaeMessage::UpdateSearchParams {
+                params: symbol_query,
+                request_id: "test-request-3".to_string(),
+            },
         );
         actor_tx.send(symbol_message).expect("Should send message");
 

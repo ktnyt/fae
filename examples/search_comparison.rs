@@ -112,7 +112,10 @@ async fn run_search_test(
     };
     let search_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_query),
+        FaeMessage::UpdateSearchParams {
+            params: search_query,
+            request_id: "example-request-1".to_string(),
+        },
     );
 
     if let Err(e) = actor_tx.send(search_message) {
@@ -128,7 +131,11 @@ async fn run_search_test(
         match timeout(Duration::from_millis(100), external_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         if first_result_time.is_none() {
                             first_result_time = Some(start_time.elapsed());
                         }

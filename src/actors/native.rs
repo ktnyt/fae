@@ -26,7 +26,12 @@ impl NativeSearchHandler {
     }
 
     /// Perform file discovery and content search
-    async fn perform_search(&self, params: SearchParams, controller: &ActorController<FaeMessage>) {
+    async fn perform_search(
+        &self,
+        params: SearchParams,
+        request_id: String,
+        controller: &ActorController<FaeMessage>,
+    ) {
         log::info!(
             "Starting native search: {} (mode: {:?}) in {}",
             params.query,
@@ -56,7 +61,10 @@ impl NativeSearchHandler {
             Ok(Ok(results)) => {
                 log::info!("Native search found {} results", results.len());
                 for result in results {
-                    let message = FaeMessage::PushSearchResult(result);
+                    let message = FaeMessage::PushSearchResult {
+                        result,
+                        request_id: request_id.clone(),
+                    };
                     if let Err(e) = controller
                         .send_message("pushSearchResult".to_string(), message)
                         .await
@@ -205,11 +213,16 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
     ) {
         match message.method.as_str() {
             "updateSearchParams" => {
-                if let FaeMessage::UpdateSearchParams(query) = message.payload {
+                if let FaeMessage::UpdateSearchParams {
+                    params: query,
+                    request_id,
+                } = message.payload
+                {
                     log::info!(
-                        "Starting native search: {} (mode: {:?})",
+                        "Starting native search: {} (mode: {:?}) with request_id: {}",
                         query.query,
-                        query.mode
+                        query.mode,
+                        request_id
                     );
                     let _ = controller
                         .send_message("clearResults".to_string(), FaeMessage::ClearResults)
@@ -231,7 +244,7 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
                     }
 
                     // Perform the search without spawning external command
-                    self.perform_search(query, controller).await;
+                    self.perform_search(query, request_id, controller).await;
                 } else {
                     log::warn!("updateSearchParams received non-SearchQuery payload");
                 }
@@ -303,7 +316,10 @@ mod tests {
         };
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(search_query),
+            FaeMessage::UpdateSearchParams {
+                params: search_query,
+                request_id: "test-request-1".to_string(),
+            },
         );
 
         actor_tx
@@ -318,7 +334,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(100), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         println!(
                             "Found match: {}:{}:{} - {}",
                             result.filename, result.line, result.column, result.content
@@ -526,7 +546,10 @@ mod tests {
         };
         let filepath_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(filepath_query),
+            FaeMessage::UpdateSearchParams {
+                params: filepath_query,
+                request_id: "test-request-2".to_string(),
+            },
         );
         actor_tx
             .send(filepath_message)
@@ -539,7 +562,10 @@ mod tests {
         };
         let symbol_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(symbol_query),
+            FaeMessage::UpdateSearchParams {
+                params: symbol_query,
+                request_id: "test-request-3".to_string(),
+            },
         );
         actor_tx.send(symbol_message).expect("Should send message");
 

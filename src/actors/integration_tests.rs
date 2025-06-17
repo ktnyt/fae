@@ -926,7 +926,10 @@ pub enum SearchEnum {
         };
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(search_params),
+            FaeMessage::UpdateSearchParams {
+                params: search_params,
+                request_id: "test-request-1".to_string(),
+            },
         );
         shared_sender
             .send(search_message)
@@ -940,7 +943,11 @@ pub enum SearchEnum {
         while let Ok(message) = timeout(Duration::from_millis(100), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         search_results.push(result.content.clone());
                         println!("Search result: {}", result.content);
                     }
@@ -977,7 +984,10 @@ pub enum SearchEnum {
         };
         let search_message2 = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(search_params2),
+            FaeMessage::UpdateSearchParams {
+                params: search_params2,
+                request_id: "test-request-2".to_string(),
+            },
         );
         shared_sender
             .send(search_message2)
@@ -990,7 +1000,11 @@ pub enum SearchEnum {
         while let Ok(message) = timeout(Duration::from_millis(50), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         method_results.push(result.content.clone());
                     }
                 }

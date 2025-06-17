@@ -126,7 +126,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Create channels for UnifiedSearchSystem
             let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel::<fae::core::Message<fae::actors::messages::FaeMessage>>();
+            let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel::<
+                fae::core::Message<fae::actors::messages::FaeMessage>,
+            >();
 
             // Set search control sender for dynamic search execution
             app.set_search_control_sender(control_sender.clone());
@@ -174,12 +176,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Run TUI application and handle shutdown properly
             let app_result = app.run().await;
-            
+
             // Shutdown search system when TUI exits
             search_system.shutdown();
-            
-            return app_result
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
+
+            return app_result.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>);
         }
         Err(err) => {
             eprintln!("{}", err);
@@ -221,10 +222,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::process::exit(1);
     }
 
-    // Send search request
+    // Generate request ID and send search request
+    let request_id = tiny_id::ShortCodeGenerator::new_alphanumeric(8).next_string();
     let search_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_params),
+        FaeMessage::UpdateSearchParams {
+            params: search_params,
+            request_id,
+        },
     );
     if let Err(e) = control_sender.send(search_message) {
         eprintln!("Failed to send search message: {}", e);
@@ -245,7 +250,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     log::debug!("Search completed, printed {} results", result_count);
                     return result_count;
                 }
-                FaeMessage::PushSearchResult(result) => {
+                FaeMessage::PushSearchResult {
+                    result,
+                    request_id: _,
+                } => {
                     // Print result immediately for CLI mode
                     println!(
                         "{}:{} - {}",

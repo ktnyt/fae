@@ -4,17 +4,17 @@
 //! from source code files using tree-sitter AST parsing. Language-specific logic
 //! is implemented in separate modules for better maintainability and extensibility.
 
-use crate::languages::LanguageRegistry;
 use crate::actors::types::Symbol;
-use std::path::Path;
-use tree_sitter::Parser;
+use crate::languages::LanguageRegistry;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::path::Path;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
+use tree_sitter::Parser;
 
 /// Global cache for symbol extraction results based on file content hash
-static SYMBOL_EXTRACTION_CACHE: Lazy<Mutex<HashMap<u64, Vec<Symbol>>>> = 
+static SYMBOL_EXTRACTION_CACHE: Lazy<Mutex<HashMap<u64, Vec<Symbol>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Calculate hash of file content for caching
@@ -56,7 +56,7 @@ impl SymbolExtractor {
     ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
         // Calculate content hash for caching
         let content_hash = calculate_content_hash(content);
-        
+
         // Check cache first
         {
             let cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
@@ -65,9 +65,9 @@ impl SymbolExtractor {
                 return Ok(cached_symbols.clone());
             }
         }
-        
+
         log::debug!("Cache miss for file: {} (hash: {})", filepath, content_hash);
-        
+
         // Get the appropriate language extractor for this file
         let path = Path::new(&filepath);
         let extractor = LanguageRegistry::get_extractor_for_path(path);
@@ -86,14 +86,19 @@ impl SymbolExtractor {
                 Vec::new() // Unsupported language
             }
         };
-        
+
         // Store result in cache
         {
             let mut cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
             cache.insert(content_hash, symbols.clone());
-            log::debug!("Cached {} symbols for file: {} (hash: {})", symbols.len(), filepath, content_hash);
+            log::debug!(
+                "Cached {} symbols for file: {} (hash: {})",
+                symbols.len(),
+                filepath,
+                content_hash
+            );
         }
-        
+
         Ok(symbols)
     }
 
@@ -110,14 +115,14 @@ impl SymbolExtractor {
     pub fn supported_extensions() -> Vec<&'static str> {
         LanguageRegistry::supported_extensions()
     }
-    
+
     /// Clear the symbol extraction cache
     pub fn clear_cache() {
         let mut cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
         cache.clear();
         log::debug!("Symbol extraction cache cleared");
     }
-    
+
     /// Get cache statistics
     pub fn cache_stats() -> (usize, usize) {
         let cache = SYMBOL_EXTRACTION_CACHE.lock().unwrap();
@@ -141,25 +146,30 @@ mod tests {
     #[test]
     fn test_symbol_extractor_creation() {
         let extractor = SymbolExtractor::new();
-        assert!(extractor.is_ok(), "Should create SymbolExtractor successfully");
+        assert!(
+            extractor.is_ok(),
+            "Should create SymbolExtractor successfully"
+        );
     }
 
     #[test]
     fn test_is_supported_file() {
         // Rust files
         assert!(SymbolExtractor::is_supported_file(Path::new("test.rs")));
-        assert!(SymbolExtractor::is_supported_file(Path::new("/path/to/main.rs")));
-        
+        assert!(SymbolExtractor::is_supported_file(Path::new(
+            "/path/to/main.rs"
+        )));
+
         // JavaScript files
         assert!(SymbolExtractor::is_supported_file(Path::new("test.js")));
         assert!(SymbolExtractor::is_supported_file(Path::new("module.mjs")));
         assert!(SymbolExtractor::is_supported_file(Path::new("config.cjs")));
-        
+
         // Python files (now supported)
         assert!(SymbolExtractor::is_supported_file(Path::new("test.py")));
         assert!(SymbolExtractor::is_supported_file(Path::new("script.pyw")));
         assert!(SymbolExtractor::is_supported_file(Path::new("types.pyi")));
-        
+
         // Unsupported files
         assert!(!SymbolExtractor::is_supported_file(Path::new("README.md")));
         assert!(!SymbolExtractor::is_supported_file(Path::new("Cargo.toml")));
@@ -169,8 +179,14 @@ mod tests {
     fn test_supported_extensions() {
         let extensions = SymbolExtractor::supported_extensions();
         assert!(extensions.contains(&"rs"), "Should support Rust files");
-        assert!(extensions.contains(&"js"), "Should support JavaScript files");
-        assert!(extensions.contains(&"mjs"), "Should support ES6 module files");
+        assert!(
+            extensions.contains(&"js"),
+            "Should support JavaScript files"
+        );
+        assert!(
+            extensions.contains(&"mjs"),
+            "Should support ES6 module files"
+        );
         assert!(extensions.contains(&"cjs"), "Should support CommonJS files");
     }
 
@@ -276,7 +292,10 @@ class User {
             .extract_symbols_from_content(javascript_code, "test.js".to_string())
             .expect("Failed to extract JavaScript symbols");
 
-        assert!(!symbols.is_empty(), "Should extract some JavaScript symbols");
+        assert!(
+            !symbols.is_empty(),
+            "Should extract some JavaScript symbols"
+        );
 
         // Check that we found the expected symbol types
         let symbol_names: Vec<String> = symbols.iter().map(|s| s.content.clone()).collect();
@@ -286,9 +305,7 @@ class User {
         let has_function = symbols
             .iter()
             .any(|s| s.symbol_type == SymbolType::Function);
-        let has_class = symbols
-            .iter()
-            .any(|s| s.symbol_type == SymbolType::Class);
+        let has_class = symbols.iter().any(|s| s.symbol_type == SymbolType::Class);
         let has_variable = symbols
             .iter()
             .any(|s| s.symbol_type == SymbolType::Variable);
@@ -351,11 +368,17 @@ class MyClass:
             !symbols.is_empty(),
             "Should extract symbols from Python code"
         );
-        
+
         // Check that we found the expected symbols
         let symbol_names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
-        assert!(symbol_names.contains(&"hello"), "Should find 'hello' function");
-        assert!(symbol_names.contains(&"MyClass"), "Should find 'MyClass' class");
+        assert!(
+            symbol_names.contains(&"hello"),
+            "Should find 'hello' function"
+        );
+        assert!(
+            symbol_names.contains(&"MyClass"),
+            "Should find 'MyClass' class"
+        );
     }
 
     #[test]

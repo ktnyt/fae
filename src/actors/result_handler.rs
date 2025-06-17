@@ -36,6 +36,7 @@ impl ResultHandler {
     async fn handle_search_result(
         &mut self,
         result: SearchResult,
+        request_id: String,
         controller: &ActorController<FaeMessage>,
     ) {
         if self.search_completed {
@@ -51,7 +52,7 @@ impl ResultHandler {
         if let Err(e) = controller
             .send_message(
                 "pushSearchResult".to_string(),
-                FaeMessage::PushSearchResult(result),
+                FaeMessage::PushSearchResult { result, request_id },
             )
             .await
         {
@@ -104,7 +105,6 @@ impl ResultHandler {
         self.search_started
     }
 
-
     /// Handle symbol index progress report
     fn handle_symbol_index_report(
         &self,
@@ -147,8 +147,9 @@ impl MessageHandler<FaeMessage> for ResultHandler {
     ) {
         match message.method.as_str() {
             "pushSearchResult" => {
-                if let FaeMessage::PushSearchResult(result) = message.payload {
-                    self.handle_search_result(result, controller).await;
+                if let FaeMessage::PushSearchResult { result, request_id } = message.payload {
+                    self.handle_search_result(result, request_id, controller)
+                        .await;
                 } else {
                     log::warn!("pushSearchResult received unexpected payload");
                 }
@@ -167,7 +168,11 @@ impl MessageHandler<FaeMessage> for ResultHandler {
                     symbols_found,
                 } = message.payload
                 {
-                    self.handle_symbol_index_report(remaining_files, processed_files, symbols_found);
+                    self.handle_symbol_index_report(
+                        remaining_files,
+                        processed_files,
+                        symbols_found,
+                    );
                 } else {
                     log::warn!("reportSymbolIndex received unexpected payload");
                 }
@@ -234,7 +239,13 @@ mod tests {
                 column: 5,
                 content: format!("result {}", i),
             };
-            let message = Message::new("pushSearchResult", FaeMessage::PushSearchResult(result));
+            let message = Message::new(
+                "pushSearchResult",
+                FaeMessage::PushSearchResult {
+                    result,
+                    request_id: format!("test-request-{}", i),
+                },
+            );
             actor_tx.send(message).expect("Failed to send result");
         }
 
@@ -289,7 +300,13 @@ mod tests {
                 column: 5,
                 content: format!("result {}", i),
             };
-            let message = Message::new("pushSearchResult", FaeMessage::PushSearchResult(result));
+            let message = Message::new(
+                "pushSearchResult",
+                FaeMessage::PushSearchResult {
+                    result,
+                    request_id: format!("test-request-{}", i),
+                },
+            );
             actor_tx.send(message).expect("Failed to send result");
         }
 

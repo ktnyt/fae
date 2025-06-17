@@ -41,7 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let search_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(search_query),
+        FaeMessage::UpdateSearchParams {
+            params: search_query,
+            request_id: "example-request-1".to_string(),
+        },
     );
 
     actor_tx.send(search_message)?;
@@ -55,7 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match timeout(Duration::from_millis(100), result_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         results.push(result);
                     }
                 }
@@ -86,7 +93,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rust_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(rust_search),
+        FaeMessage::UpdateSearchParams {
+            params: rust_search,
+            request_id: "example-request-2".to_string(),
+        },
     );
 
     actor_tx.send(rust_message)?;
@@ -99,7 +109,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match timeout(Duration::from_millis(100), result_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         rust_results.push(result);
                     }
                 }
@@ -129,7 +143,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pattern_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(pattern_search),
+        FaeMessage::UpdateSearchParams {
+            params: pattern_search,
+            request_id: "example-request-3".to_string(),
+        },
     );
 
     actor_tx.send(pattern_message)?;
@@ -142,7 +159,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match timeout(Duration::from_millis(100), result_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         pattern_results.push(result);
                     }
                 }
@@ -172,7 +193,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let dir_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(dir_search),
+        FaeMessage::UpdateSearchParams {
+            params: dir_search,
+            request_id: "example-request-4".to_string(),
+        },
     );
 
     actor_tx.send(dir_message)?;
@@ -185,7 +209,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match timeout(Duration::from_millis(100), result_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         // Only show directories
                         if result.content.contains("[DIR]") {
                             dir_results.push(result);
@@ -220,7 +248,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let fuzzy_message = Message::new(
         "updateSearchParams",
-        FaeMessage::UpdateSearchParams(fuzzy_search),
+        FaeMessage::UpdateSearchParams {
+            params: fuzzy_search,
+            request_id: "example-request-5".to_string(),
+        },
     );
 
     actor_tx.send(fuzzy_message)?;
@@ -233,7 +264,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match timeout(Duration::from_millis(100), result_rx.recv()).await {
             Ok(Some(message)) => {
                 if message.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = message.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = message.payload
+                    {
                         fuzzy_results.push(result);
                     }
                 }

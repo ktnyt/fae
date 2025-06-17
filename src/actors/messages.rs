@@ -1,11 +1,19 @@
 use crate::actors::types::{SearchParams, SearchResult, SymbolType};
 
+pub type RequestId = String;
+
 #[derive(Clone)]
 pub enum FaeMessage {
-    UpdateSearchParams(SearchParams),
+    UpdateSearchParams {
+        params: SearchParams,
+        request_id: RequestId,
+    },
     AbortSearch, // Request to abort current search operation
     ClearResults,
-    PushSearchResult(SearchResult),
+    PushSearchResult {
+        result: SearchResult,
+        request_id: RequestId,
+    },
     CompleteSearch, // Indicates search operation completion
     NotifySearchReport {
         result_count: usize,

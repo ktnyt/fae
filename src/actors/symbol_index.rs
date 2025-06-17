@@ -152,7 +152,7 @@ impl SymbolIndexHandler {
     /// Check if file should be processed (ignore rules + file type support)
     fn should_process_file(filepath: &str, search_path: &str) -> bool {
         let path = Path::new(filepath);
-        
+
         // First check if file type is supported
         if !Self::is_supported_file(path) {
             return false;
@@ -168,7 +168,7 @@ impl SymbolIndexHandler {
         // Create a simpler ignore checker using GitignoreBuilder
         let search_path_buf = Path::new(search_path);
         let mut builder = ignore::gitignore::GitignoreBuilder::new(search_path_buf);
-        
+
         // Add .gitignore file if it exists
         let gitignore_path = search_path_buf.join(".gitignore");
         if gitignore_path.exists() {
@@ -198,7 +198,7 @@ impl SymbolIndexHandler {
         // Check if file is ignored
         match gitignore.matched(relative_path, path.is_dir()) {
             ignore::Match::Ignore(_) => false, // File is ignored, don't process
-            _ => true, // File should be processed
+            _ => true,                         // File should be processed
         }
     }
 
@@ -480,7 +480,10 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
                             self.process_next_from_queue(controller).await;
                         }
                     } else {
-                        log::debug!("Skipping file create for ignored/unsupported file: {}", filepath);
+                        log::debug!(
+                            "Skipping file create for ignored/unsupported file: {}",
+                            filepath
+                        );
                     }
                 } else {
                     log::warn!("detectFileCreate received non-filepath payload");
@@ -497,7 +500,10 @@ impl MessageHandler<FaeMessage> for SymbolIndexHandler {
                             self.process_next_from_queue(controller).await;
                         }
                     } else {
-                        log::debug!("Skipping file update for ignored/unsupported file: {}", filepath);
+                        log::debug!(
+                            "Skipping file update for ignored/unsupported file: {}",
+                            filepath
+                        );
                     }
                 } else {
                     log::warn!("detectFileUpdate received non-filepath payload");
@@ -553,17 +559,25 @@ mod tests {
         assert!(SymbolIndexHandler::is_supported_file(Path::new(
             "/path/to/main.rs"
         )));
-        
+
         // JavaScript files
         assert!(SymbolIndexHandler::is_supported_file(Path::new("test.js")));
-        assert!(SymbolIndexHandler::is_supported_file(Path::new("module.mjs")));
-        assert!(SymbolIndexHandler::is_supported_file(Path::new("config.cjs")));
-        
+        assert!(SymbolIndexHandler::is_supported_file(Path::new(
+            "module.mjs"
+        )));
+        assert!(SymbolIndexHandler::is_supported_file(Path::new(
+            "config.cjs"
+        )));
+
         // Python files (now supported)
         assert!(SymbolIndexHandler::is_supported_file(Path::new("test.py")));
-        assert!(SymbolIndexHandler::is_supported_file(Path::new("script.pyw")));
-        assert!(SymbolIndexHandler::is_supported_file(Path::new("types.pyi")));
-        
+        assert!(SymbolIndexHandler::is_supported_file(Path::new(
+            "script.pyw"
+        )));
+        assert!(SymbolIndexHandler::is_supported_file(Path::new(
+            "types.pyi"
+        )));
+
         // Unsupported files
         assert!(!SymbolIndexHandler::is_supported_file(Path::new(
             "README.md"

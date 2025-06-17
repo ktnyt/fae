@@ -3,9 +3,9 @@
 //! This module provides a common interface for symbol extraction across different
 //! programming languages using tree-sitter AST parsing.
 
-pub mod rust;
 pub mod javascript;
 pub mod python;
+pub mod rust;
 
 use crate::actors::types::{Symbol, SymbolType};
 use once_cell::sync::Lazy;
@@ -21,7 +21,7 @@ pub struct LanguageConfig {
 }
 
 /// Global registry for language configurations to avoid recreation overhead
-static LANGUAGE_CONFIG_REGISTRY: Lazy<Mutex<HashMap<String, Arc<LanguageConfig>>>> = 
+static LANGUAGE_CONFIG_REGISTRY: Lazy<Mutex<HashMap<String, Arc<LanguageConfig>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Common trait for language-specific symbol extractors
@@ -36,9 +36,10 @@ pub trait LanguageExtractor: Send + Sync {
     fn language_name() -> &'static str;
 
     /// Get cached language configuration, creating it if necessary
-    fn get_config_for_language() -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_config_for_language(
+    ) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>> {
         let language_name = Self::language_name();
-        
+
         // Try to get from registry first
         {
             let registry = LANGUAGE_CONFIG_REGISTRY.lock().unwrap();
@@ -46,17 +47,17 @@ pub trait LanguageExtractor: Send + Sync {
                 return Ok(config.clone());
             }
         }
-        
+
         // Not found, create new config
         let config = Self::create_config()?;
         let arc_config = Arc::new(config);
-        
+
         // Store in registry for future use
         {
             let mut registry = LANGUAGE_CONFIG_REGISTRY.lock().unwrap();
             registry.insert(language_name.to_string(), arc_config.clone());
         }
-        
+
         Ok(arc_config)
     }
 
@@ -68,11 +69,15 @@ pub trait LanguageExtractor: Send + Sync {
     ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
         // Get cached config
         let config = Self::get_config_for_language()?;
-        
+
         // Set parser language
-        parser
-            .set_language(&config.language)
-            .map_err(|e| format!("Failed to set parser language for {}: {}", Self::language_name(), e))?;
+        parser.set_language(&config.language).map_err(|e| {
+            format!(
+                "Failed to set parser language for {}: {}",
+                Self::language_name(),
+                e
+            )
+        })?;
 
         // Parse the content
         let tree = parser
@@ -110,14 +115,13 @@ pub trait LanguageExtractor: Send + Sync {
                 let column = start_position.column as u32;
 
                 // Get symbol content (avoid unnecessary string allocation)
-                let symbol_text = node
-                    .utf8_text(content.as_bytes())
-                    .unwrap_or("<unknown>");
+                let symbol_text = node.utf8_text(content.as_bytes()).unwrap_or("<unknown>");
 
                 // Determine symbol type based on capture name
                 if let Some(symbol_type) = Self::map_capture_to_symbol_type(capture_name) {
                     // Create symbol with context information
-                    let symbol_content = Self::create_symbol_content(symbol_text, &lines, line as usize);
+                    let symbol_content =
+                        Self::create_symbol_content(symbol_text, &lines, line as usize);
 
                     let symbol = Symbol::new(
                         filepath.to_string(),
@@ -197,7 +201,9 @@ impl LanguageRegistry {
 /// Dynamic trait object interface for language extractors
 pub trait LanguageExtractorDyn: Send + Sync {
     fn create_config(&self) -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>>;
-    fn get_config_for_language(&self) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>>;
+    fn get_config_for_language(
+        &self,
+    ) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>>;
     fn language_name(&self) -> &'static str;
     fn extract_symbols(
         &self,
@@ -213,7 +219,9 @@ impl<T: LanguageExtractor> LanguageExtractorDyn for T {
         T::create_config()
     }
 
-    fn get_config_for_language(&self) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_config_for_language(
+        &self,
+    ) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>> {
         T::get_config_for_language()
     }
 

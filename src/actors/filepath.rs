@@ -16,15 +16,24 @@ use tokio::sync::mpsc;
 /// Filepath search actor handler
 pub struct FilepathSearchHandler {
     search_path: String,
+    current_request_id: Option<String>,
 }
 
 impl FilepathSearchHandler {
     pub fn new(search_path: String) -> Self {
-        Self { search_path }
+        Self {
+            search_path,
+            current_request_id: None,
+        }
     }
 
     /// Perform filepath discovery and fuzzy matching with streaming results
-    async fn perform_search(&self, params: SearchParams, controller: &ActorController<FaeMessage>) {
+    async fn perform_search(
+        &self,
+        params: SearchParams,
+        request_id: String,
+        controller: &ActorController<FaeMessage>,
+    ) {
         log::info!(
             "Starting filepath search: {} (mode: {:?}) in {}",
             params.query,
@@ -40,7 +49,7 @@ impl FilepathSearchHandler {
 
         // Perform streaming search in a blocking task
         let result = tokio::task::spawn_blocking(move || {
-            Self::search_filepaths(&search_path, &query, mode, controller_clone)
+            Self::search_filepaths(&search_path, &query, mode, request_id, controller_clone)
         })
         .await;
 
@@ -74,6 +83,7 @@ impl FilepathSearchHandler {
         search_path: &str,
         query: &str,
         mode: SearchMode,
+        request_id: String,
         controller: ActorController<FaeMessage>,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let mut result_count = 0;
@@ -130,7 +140,10 @@ impl FilepathSearchHandler {
 
         // Stream results in order of relevance
         for result in scored_results {
-            let message = FaeMessage::PushSearchResult(result);
+            let message = FaeMessage::PushSearchResult {
+                result,
+                request_id: request_id.clone(),
+            };
 
             // Use blocking send since we're in a blocking context
             let send_result = tokio::runtime::Handle::current().block_on(async {
@@ -191,11 +204,16 @@ impl MessageHandler<FaeMessage> for FilepathSearchHandler {
     ) {
         match message.method.as_str() {
             "updateSearchParams" => {
-                if let FaeMessage::UpdateSearchParams(query) = message.payload {
+                if let FaeMessage::UpdateSearchParams {
+                    params: query,
+                    request_id,
+                } = message.payload
+                {
                     log::info!(
-                        "Starting filepath search: {} (mode: {:?})",
+                        "Starting filepath search: {} (mode: {:?}) with request_id: {}",
                         query.query,
-                        query.mode
+                        query.mode,
+                        request_id
                     );
                     let _ = controller
                         .send_message("clearResults".to_string(), FaeMessage::ClearResults)
@@ -215,8 +233,9 @@ impl MessageHandler<FaeMessage> for FilepathSearchHandler {
                         }
                     }
 
-                    // Perform the filepath search
-                    self.perform_search(query, controller).await;
+                    // Store request_id and perform the filepath search
+                    self.current_request_id = Some(request_id.clone());
+                    self.perform_search(query, request_id, controller).await;
                 } else {
                     log::warn!("updateSearchParams received non-SearchQuery payload");
                 }
@@ -290,7 +309,10 @@ mod tests {
         };
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(search_query),
+            FaeMessage::UpdateSearchParams {
+                params: search_query,
+                request_id: "test-request-1".to_string(),
+            },
         );
 
         actor_tx
@@ -305,7 +327,11 @@ mod tests {
         while let Ok(message) = timeout(Duration::from_millis(100), external_rx.recv()).await {
             if let Some(msg) = message {
                 if msg.method == "pushSearchResult" {
-                    if let FaeMessage::PushSearchResult(result) = msg.payload {
+                    if let FaeMessage::PushSearchResult {
+                        result,
+                        request_id: _,
+                    } = msg.payload
+                    {
                         println!("Found match: {} - {}", result.filename, result.content);
                         result_count += 1;
                     }
@@ -342,7 +368,10 @@ mod tests {
         };
         let literal_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(literal_query),
+            FaeMessage::UpdateSearchParams {
+                params: literal_query,
+                request_id: "test-request-2".to_string(),
+            },
         );
         actor_tx.send(literal_message).expect("Should send message");
 
@@ -353,7 +382,10 @@ mod tests {
         };
         let symbol_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(symbol_query),
+            FaeMessage::UpdateSearchParams {
+                params: symbol_query,
+                request_id: "test-request-3".to_string(),
+            },
         );
         actor_tx.send(symbol_message).expect("Should send message");
 
@@ -391,7 +423,13 @@ mod tests {
         let controller = ActorController::new(tx);
 
         let result_count = tokio::task::spawn_blocking(move || {
-            FilepathSearchHandler::search_filepaths("./src", "rs", SearchMode::Filepath, controller)
+            FilepathSearchHandler::search_filepaths(
+                "./src",
+                "rs",
+                SearchMode::Filepath,
+                "test-request-1".to_string(),
+                controller,
+            )
         })
         .await
         .expect("Task should not panic")
@@ -407,7 +445,11 @@ mod tests {
         let mut received_results = Vec::new();
         while let Ok(message) = rx.try_recv() {
             if message.method == "pushSearchResult" {
-                if let FaeMessage::PushSearchResult(result) = message.payload {
+                if let FaeMessage::PushSearchResult {
+                    result,
+                    request_id: _,
+                } = message.payload
+                {
                     received_results.push(result);
                 }
             }
@@ -441,6 +483,7 @@ mod tests {
                 "./src",
                 "test",
                 SearchMode::Literal,
+                "test-request-2".to_string(),
                 controller,
             )
         })

@@ -4,7 +4,7 @@
 //! the TUI state accordingly, particularly converting system events
 //! into appropriate toast notifications and state updates.
 
-use crate::actors::messages::FaeMessage;
+use crate::actors::messages::{FaeMessage, RequestId};
 use crate::core::{Actor, ActorController, Message, MessageHandler};
 use crate::tui::{ToastType, TuiHandle};
 use async_trait::async_trait;
@@ -17,6 +17,7 @@ pub struct TuiActor {
     control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
     current_search_result_count: usize,
     max_search_results: usize,
+    current_request_id: Option<RequestId>,
 }
 
 impl TuiActor {
@@ -25,35 +26,46 @@ impl TuiActor {
         tui_handle: TuiHandle,
         control_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
     ) -> Self {
-        Self { 
+        Self {
             tui_handle,
             control_sender,
             current_search_result_count: 0,
             max_search_results: 9999,
+            current_request_id: None,
         }
     }
 
     /// Execute a search request by sending UpdateSearchParams message
-    pub fn execute_search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn execute_search(
+        &mut self,
+        query: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use crate::cli::create_search_params;
-        
+
         log::debug!("TuiActor executing search: '{}'", query);
-        
+
+        // Generate a new request ID for this search
+        let request_id = tiny_id::ShortCodeGenerator::new_alphanumeric(8).next_string();
+        self.current_request_id = Some(request_id.clone());
+
         // Parse the query and determine search mode
         let search_params = create_search_params(&query);
-        
+
         // Send search request via control channel
         let search_message = Message::new(
             "updateSearchParams",
-            FaeMessage::UpdateSearchParams(search_params),
+            FaeMessage::UpdateSearchParams {
+                params: search_params,
+                request_id,
+            },
         );
-        
+
         if let Err(e) = self.control_sender.send(search_message) {
             let error_msg = format!("Failed to send search request: {}", e);
             log::error!("{}", error_msg);
             return Err(error_msg.into());
         }
-        
+
         log::debug!("Search request sent successfully");
         Ok(())
     }
@@ -85,24 +97,30 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 symbols_found,
             } => {
                 let total_files = remaining_files + processed_files;
-                log::debug!("TuiActor: Updating index status: {}/{} files, {} symbols", processed_files, total_files, symbols_found);
-                
+                log::debug!(
+                    "TuiActor: Updating index status: {}/{} files, {} symbols",
+                    processed_files,
+                    total_files,
+                    symbols_found
+                );
+
                 // Update TUI index status for F1 statistics overlay
                 use crate::tui::StateUpdate;
-                let state_update = StateUpdate::new()
-                    .with_index_progress(total_files, *processed_files, *symbols_found);
-                    
+                let state_update = StateUpdate::new().with_index_progress(
+                    total_files,
+                    *processed_files,
+                    *symbols_found,
+                );
+
                 if let Err(e) = self.tui_handle.update_state(state_update) {
                     log::warn!("Failed to update TUI index status: {}", e);
                 }
-                
+
                 // Show indexing progress as toast
                 if *remaining_files > 0 {
                     let progress_message = format!(
                         "Indexing: {}/{} files, {} symbols",
-                        processed_files,
-                        total_files,
-                        symbols_found
+                        processed_files, total_files, symbols_found
                     );
                     if let Err(e) = self.tui_handle.show_toast(
                         progress_message,
@@ -125,32 +143,53 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 }
             }
 
-            FaeMessage::PushSearchResult(result) => {
+            FaeMessage::PushSearchResult { result, request_id } => {
+                // Check if this result is for the current search request
+                if let Some(current_id) = &self.current_request_id {
+                    if request_id != current_id.as_str() {
+                        log::debug!(
+                            "TuiActor: Ignoring search result from old request: {} (current: {})",
+                            request_id,
+                            current_id
+                        );
+                        return;
+                    }
+                } else {
+                    log::warn!(
+                        "TuiActor: No current request_id, ignoring result from request: {}",
+                        request_id
+                    );
+                    return;
+                }
+
                 // Check if we've reached the maximum result limit
                 if self.current_search_result_count >= self.max_search_results {
                     log::warn!(
                         "TuiActor: Maximum search results ({}) reached, aborting search",
                         self.max_search_results
                     );
-                    
+
                     // Send abort search message to stop all ongoing searches
                     let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
                     if let Err(e) = self.control_sender.send(abort_message) {
                         log::error!("Failed to send abort search message: {}", e);
                     }
-                    
+
                     // Show toast notification about hitting the limit
                     if let Err(e) = self.tui_handle.show_toast(
-                        format!("Search stopped: {} results limit reached", self.max_search_results),
+                        format!(
+                            "Search stopped: {} results limit reached",
+                            self.max_search_results
+                        ),
                         ToastType::Warning,
                         Duration::from_secs(5),
                     ) {
                         log::warn!("Failed to show search limit toast: {}", e);
                     }
-                    
+
                     return; // Don't process this result
                 }
-                
+
                 // Add search result to TUI
                 let formatted_result = format!(
                     "{}:{} - {}",
@@ -158,7 +197,7 @@ impl MessageHandler<FaeMessage> for TuiActor {
                     result.line,
                     result.content.trim()
                 );
-                
+
                 log::debug!("TuiActor: Adding search result: {}", formatted_result);
                 if let Err(e) = self
                     .tui_handle
@@ -177,10 +216,7 @@ impl MessageHandler<FaeMessage> for TuiActor {
 
             FaeMessage::NotifySearchReport { result_count } => {
                 // Log search completion but don't show toast for search operations
-                log::debug!(
-                    "Search completed: {} results found",
-                    result_count
-                );
+                log::debug!("Search completed: {} results found", result_count);
             }
 
             FaeMessage::ClearResults => {
@@ -191,16 +227,20 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 {
                     log::warn!("Failed to clear TUI results: {}", e);
                 }
-                
+
                 // Reset search result counter
                 self.current_search_result_count = 0;
                 log::debug!("TuiActor: Search result counter reset");
             }
 
-            FaeMessage::UpdateSearchParams(params) => {
-                // Don't update TUI search input - it should remain user-controlled
-                log::debug!("Search started for: '{}'", params.query);
-                
+            FaeMessage::UpdateSearchParams {
+                params,
+                request_id,
+            } => {
+                // Update the current request ID to match the search being executed
+                self.current_request_id = Some(request_id.clone());
+                log::debug!("Search started for: '{}' with request_id: {}", params.query, self.current_request_id.as_ref().unwrap());
+
                 // Reset search result counter for new search
                 self.current_search_result_count = 0;
                 log::debug!("TuiActor: Search result counter reset for new search");
@@ -347,9 +387,16 @@ mod tests {
             content: "fn test_function() {".to_string(),
         };
 
+        // Set current request ID
+        let request_id = "test-request-id".to_string();
+        tui_actor.current_request_id = Some(request_id.clone());
+
         let result_message = Message::new(
             "pushSearchResult",
-            FaeMessage::PushSearchResult(search_result),
+            FaeMessage::PushSearchResult {
+                result: search_result,
+                request_id,
+            },
         );
 
         tui_actor.on_message(result_message, &controller).await;
@@ -379,6 +426,10 @@ mod tests {
         // Set a lower limit for testing (instead of 9999)
         tui_actor.max_search_results = 3;
 
+        // Set current request ID
+        let request_id = "test-request-id".to_string();
+        tui_actor.current_request_id = Some(request_id.clone());
+
         // Add results up to the limit
         for i in 1..=3 {
             let search_result = SearchResult {
@@ -390,7 +441,10 @@ mod tests {
 
             let result_message = Message::new(
                 "pushSearchResult",
-                FaeMessage::PushSearchResult(search_result),
+                FaeMessage::PushSearchResult {
+                    result: search_result,
+                    request_id: request_id.clone(),
+                },
             );
 
             tui_actor.on_message(result_message, &controller).await;
@@ -409,7 +463,10 @@ mod tests {
 
         let overflow_message = Message::new(
             "pushSearchResult",
-            FaeMessage::PushSearchResult(overflow_result),
+            FaeMessage::PushSearchResult {
+                result: overflow_result,
+                request_id: request_id.clone(),
+            },
         );
 
         tui_actor.on_message(overflow_message, &controller).await;
@@ -439,6 +496,88 @@ mod tests {
                 }
             }
         }
-        assert!(toast_found, "Expected toast notification about search limit");
+        assert!(
+            toast_found,
+            "Expected toast notification about search limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_request_id_filtering() {
+        let (tui_tx, mut tui_rx) = mpsc::unbounded_channel();
+        let tui_handle = crate::tui::TuiHandle {
+            state_sender: tui_tx,
+        };
+        let (control_tx, _control_rx) = mpsc::unbounded_channel();
+        let mut tui_actor = TuiActor::new(tui_handle, control_tx);
+
+        let (controller_tx, _controller_rx) = mpsc::unbounded_channel();
+        let controller = ActorController::new(controller_tx);
+
+        // Set current request ID
+        let current_request_id = "current-request-123".to_string();
+        tui_actor.current_request_id = Some(current_request_id.clone());
+
+        // Send a result with matching request ID (should be accepted)
+        let valid_result = SearchResult {
+            filename: "valid.rs".to_string(),
+            line: 1,
+            column: 1,
+            content: "valid content".to_string(),
+        };
+
+        let valid_message = Message::new(
+            "pushSearchResult",
+            FaeMessage::PushSearchResult {
+                result: valid_result,
+                request_id: current_request_id.clone(),
+            },
+        );
+
+        tui_actor.on_message(valid_message, &controller).await;
+
+        // Verify the valid result was added
+        assert_eq!(tui_actor.current_search_result_count, 1);
+
+        // Send a result with different request ID (should be ignored)
+        let old_result = SearchResult {
+            filename: "old.rs".to_string(),
+            line: 2,
+            column: 1,
+            content: "old content".to_string(),
+        };
+
+        let old_message = Message::new(
+            "pushSearchResult",
+            FaeMessage::PushSearchResult {
+                result: old_result,
+                request_id: "old-request-456".to_string(),
+            },
+        );
+
+        tui_actor.on_message(old_message, &controller).await;
+
+        // Verify the old result was ignored (count should still be 1)
+        assert_eq!(tui_actor.current_search_result_count, 1);
+
+        // Verify only the valid result appears in TUI state
+        let mut found_valid = false;
+        let mut found_old = false;
+
+        while let Ok(state_update) = tui_rx.try_recv() {
+            if let Some(results) = state_update.append_results {
+                for result_str in results {
+                    if result_str.contains("valid.rs") {
+                        found_valid = true;
+                    }
+                    if result_str.contains("old.rs") {
+                        found_old = true;
+                    }
+                }
+            }
+        }
+
+        assert!(found_valid, "Valid result should be added to TUI");
+        assert!(!found_old, "Old result should be ignored");
     }
 }
