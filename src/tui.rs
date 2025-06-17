@@ -1122,33 +1122,6 @@ fn top_right_rect_absolute(
     }
 }
 
-/// Helper function to create centered rectangle (kept for potential future use)
-#[allow(dead_code)]
-fn centered_rect(
-    percent_x: u16,
-    percent_y: u16,
-    r: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    use ratatui::layout::{Constraint, Direction, Layout};
-
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
 
 #[cfg(test)]
 mod tests {
@@ -1211,7 +1184,7 @@ mod tests {
             height: 100,
         };
 
-        let top_right = top_right_rect(30, 20, full_rect);
+        let top_right = top_right_rect_absolute(30, 20, full_rect);
 
         // Should be in the top-right corner
         assert!(top_right.x > 50); // Right side
@@ -1344,7 +1317,7 @@ mod tests {
         let mut toast = ToastState::new();
         toast.show("Test".to_string(), ToastType::Info, Duration::from_secs(2));
 
-        let (width, height) = calculate_toast_size(&toast, terminal_size);
+        let (width, height) = calculate_toast_size_absolute(&toast, terminal_size);
         println!(
             "Toast size for 'Test' with Info emoji: width={}%, height={}%",
             width, height
@@ -1397,7 +1370,7 @@ mod tests {
         println!("Height percent: {}", height_percent);
 
         // Now test the actual function
-        let (actual_width, actual_height) = calculate_toast_size(&toast, terminal_size);
+        let (actual_width, actual_height) = calculate_toast_size_absolute(&toast, terminal_size);
         println!(
             "Actual result: width={}%, height={}%",
             actual_width, actual_height
@@ -1418,11 +1391,11 @@ mod tests {
             width: 100,
             height: 30,
         };
-        let (width, height) = calculate_toast_size(&toast, terminal_size);
+        let (width, height) = calculate_toast_size_absolute(&toast, terminal_size);
 
         // Short message should use minimum width and height
         assert_eq!(width, 20);
-        assert_eq!(height, 10, "Short message should use minimum height"); // Updated expectation
+        assert_eq!(height, 3, "Short message should use minimum height"); // Updated expectation
 
         // Test long message
         let long_message = "This is a very long message that should cause the toast to expand to accommodate the content properly";
@@ -1432,12 +1405,12 @@ mod tests {
             Duration::from_secs(3),
         );
 
-        let (width, height) = calculate_toast_size(&toast, terminal_size);
+        let (width, height) = calculate_toast_size_absolute(&toast, terminal_size);
 
         // Long message should use more width and height but stay within limits
         assert!(width > 20);
         assert!(width <= 70);
-        assert!(height >= 10); // Should be higher than or equal to minimum
+        assert!(height >= 3); // Should be higher than or equal to minimum
         assert!(height <= 40); // Should not exceed maximum
 
         // Test very long message that should max out height
@@ -1448,7 +1421,7 @@ mod tests {
             Duration::from_secs(5),
         );
 
-        let (_width2, height2) = calculate_toast_size(&toast, terminal_size);
+        let (_width2, height2) = calculate_toast_size_absolute(&toast, terminal_size);
         assert!(
             height2 > height,
             "Very long message should be taller than medium message"
@@ -1461,7 +1434,7 @@ mod tests {
             width: 50,
             height: 20,
         };
-        let (width_small, height_small) = calculate_toast_size(&toast, small_terminal);
+        let (width_small, height_small) = calculate_toast_size_absolute(&toast, small_terminal);
 
         let large_terminal = Rect {
             x: 0,
@@ -1469,7 +1442,7 @@ mod tests {
             width: 200,
             height: 60,
         };
-        let (width_large, height_large) = calculate_toast_size(&toast, large_terminal);
+        let (width_large, height_large) = calculate_toast_size_absolute(&toast, large_terminal);
 
         // On larger terminal, width percentage might be smaller (same content takes less percentage)
         // But absolute width should be larger or equal

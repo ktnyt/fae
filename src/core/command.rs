@@ -665,10 +665,6 @@ mod tests {
             self.stdout_lines.lock().unwrap().len()
         }
 
-        #[allow(dead_code)]
-        fn get_stderr_count(&self) -> usize {
-            self.stderr_lines.lock().unwrap().len()
-        }
     }
 
     #[async_trait]
