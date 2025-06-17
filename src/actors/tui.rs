@@ -85,6 +85,16 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 symbols_found,
             } => {
                 log::debug!("TuiActor: Updating index status: {}/{} files, {} symbols", indexed_files, queued_files, symbols_found);
+                
+                // Update TUI index status for F1 statistics overlay
+                use crate::tui::StateUpdate;
+                let state_update = StateUpdate::new()
+                    .with_index_progress(*queued_files, *indexed_files, *symbols_found);
+                    
+                if let Err(e) = self.tui_handle.update_state(state_update) {
+                    log::warn!("Failed to update TUI index status: {}", e);
+                }
+                
                 // Show indexing progress as toast
                 if *queued_files > 0 {
                     let progress_message = format!(

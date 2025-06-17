@@ -44,7 +44,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
@@ -216,6 +216,9 @@ pub struct TuiState {
 
     // 5. Index status for status bar
     pub index_status: IndexStatus,
+
+    // 6. Statistics overlay state
+    pub show_stats_overlay: bool,
 }
 
 impl TuiState {
@@ -227,6 +230,7 @@ impl TuiState {
             selected_result_index: None,
             toast_state: ToastState::new(),
             index_status: IndexStatus::new(),
+            show_stats_overlay: false,
         }
     }
 
@@ -541,8 +545,13 @@ impl TuiApp {
     fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
         match key.code {
             // Quit commands
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc => {
                 self.should_quit = true;
+            }
+            // Toggle statistics overlay with Tab
+            KeyCode::Tab => {
+                self.state.show_stats_overlay = !self.state.show_stats_overlay;
+                self.needs_redraw = true;
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
@@ -675,6 +684,7 @@ impl TuiApp {
         let selected_index = self.state.selected_result_index;
         let toast_state = self.state.toast_state.clone();
         let index_status = self.state.index_status.clone();
+        let show_stats_overlay = self.state.show_stats_overlay;
 
         self.terminal.draw(|f| {
             let chunks = Layout::default()
@@ -698,6 +708,11 @@ impl TuiApp {
             // 4. Toast (if visible)
             if toast_state.visible {
                 render_toast(f, &toast_state);
+            }
+
+            // 5. Statistics overlay (if visible)
+            if show_stats_overlay {
+                render_stats_overlay(f, &index_status);
             }
         })?;
         Ok(())
@@ -1049,7 +1064,7 @@ fn render_results_box(
 /// Render the status bar with help text on left and index status on right
 fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, _index_status: &IndexStatus) {
     // Simple help text only - index status now shown as toast
-    let help_text = "Modes: text | #symbol | $variable | @file | /regex | ↑↓: Navigate | Enter: Select | Esc: Quit";
+    let help_text = "Modes: text | #symbol | $variable | @file | /regex | ↑↓: Navigate | Enter: Select | Tab: Stats | Esc: Quit";
     let help_status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
@@ -1092,6 +1107,83 @@ fn render_toast(f: &mut Frame, toast_state: &ToastState) {
         .wrap(ratatui::widgets::Wrap { trim: true });
 
     f.render_widget(toast_widget, popup_area);
+}
+
+/// Render statistics overlay in the center of the screen
+fn render_stats_overlay(f: &mut Frame, index_status: &IndexStatus) {
+    // Calculate the size for the stats overlay
+    let area = f.size();
+    let popup_area = centered_rect(60, 40, area);
+
+    // Create stats content
+    let stats_text = format!(
+        "📊 Index Statistics\n\n\
+        📁 Files indexed: {}\n\
+        🔍 Symbols found: {}\n\
+        📋 Queued files: {}\n\
+        ✅ Status: {}\n\n\
+        Press Tab to close",
+        index_status.indexed_files,
+        index_status.symbols_found,
+        index_status.queued_files,
+        if index_status.is_complete() {
+            "Complete"
+        } else if index_status.is_active {
+            "Indexing..."
+        } else {
+            "Idle"
+        }
+    );
+
+    // Create the overlay widget
+    let stats_widget = Paragraph::new(stats_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("📊 Statistics")
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .alignment(Alignment::Left)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    // Clear the background area
+    f.render_widget(
+        Block::default()
+            .style(Style::default().bg(Color::Black))
+            .borders(Borders::NONE),
+        popup_area,
+    );
+
+    // Render the stats overlay
+    f.render_widget(stats_widget, popup_area);
+}
+
+/// Create a centered rectangle with the given percentage of the parent area
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    r: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
+    use ratatui::layout::{Constraint, Direction, Layout};
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 /// Get the display message for a toast (with repeat count if applicable)
