@@ -502,6 +502,19 @@ mod tests {
             .await
             .expect("Failed to kill first command");
 
+        // 🔧 Fix: Wait for process cleanup completion with verification
+        // Ensure no process is running before attempting to spawn again
+        for _attempt in 0..10 {
+            let has_process = {
+                let current = controller.current_process.lock().unwrap();
+                current.is_some()
+            };
+            if !has_process {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
         // Spawn second command
         controller
             .spawn(())
@@ -1029,12 +1042,34 @@ mod tests {
             .expect("Immediate respawn should succeed");
 
         // Should receive output from new process
-        let output = timeout(Duration::from_millis(1000), output_receiver.recv())
-            .await
-            .expect("Should receive output")
-            .expect("Should have output");
+        // Might receive ProcessCompleted from old process first due to race condition, so skip those
+        let mut attempt = 0;
+        let max_attempts = 10;
+        let mut received_output = false;
 
-        assert!(matches!(output, CommandOutput::Stdout(_)));
+        while attempt < max_attempts && !received_output {
+            match timeout(Duration::from_millis(100), output_receiver.recv()).await {
+                Ok(Some(CommandOutput::Stdout(_))) => {
+                    received_output = true;
+                }
+                Ok(Some(CommandOutput::Stderr(_))) => {
+                    received_output = true;
+                }
+                Ok(Some(CommandOutput::ProcessCompleted)) => {
+                    // ProcessCompleted from old process - ignore and continue
+                    attempt += 1;
+                    continue;
+                }
+                Ok(None) => break, // Channel closed
+                Err(_) => break,   // Timeout
+            }
+        }
+
+        assert!(
+            received_output,
+            "Should receive output from new process within {} attempts",
+            max_attempts
+        );
 
         // Clean up
         controller

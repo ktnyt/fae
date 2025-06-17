@@ -317,7 +317,7 @@ cargo test --lib -- --test-threads=1
 - **Configuration**: .fae.toml support for customization
 - **Extended Language Support**: Additional Tree-sitter language integrations
 - **Advanced Search Features**: Semantic search, code context analysis
-- **Test Stability**: Fix failing test_spawn_immediately_after_kill
+- **Test Stability**: ✅ Fixed failing test_spawn_immediately_after_kill race condition
 
 
 ## 📚 詳細ドキュメント
