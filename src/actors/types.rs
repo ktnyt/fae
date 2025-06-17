@@ -13,7 +13,7 @@ pub struct SearchParams {
     pub mode: SearchMode,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SearchResult {
     pub filename: String,
     pub line: u32,
