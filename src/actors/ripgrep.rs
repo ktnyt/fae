@@ -126,6 +126,11 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
                     .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
                     .await;
             }
+            "abortSearch" => {
+                // Abort current search operation
+                log::debug!("RipgrepActor: Aborting current search");
+                let _ = controller.kill().await;
+            }
             _ => {
                 log::trace!("Unknown message method: {}", message.method);
             }

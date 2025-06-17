@@ -3,6 +3,7 @@ use crate::actors::types::{SearchParams, SearchResult, SymbolType};
 #[derive(Clone)]
 pub enum FaeMessage {
     UpdateSearchParams(SearchParams),
+    AbortSearch, // Request to abort current search operation
     ClearResults,
     PushSearchResult(SearchResult),
     CompleteSearch, // Indicates search operation completion

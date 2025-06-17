@@ -221,6 +221,13 @@ impl MessageHandler<FaeMessage> for FilepathSearchHandler {
                     log::warn!("updateSearchParams received non-SearchQuery payload");
                 }
             }
+            "abortSearch" => {
+                // Abort current search operation
+                log::debug!("FilepathSearchActor: Aborting current search");
+                // Filepath search runs synchronously in perform_search
+                // The abort will be handled naturally when the next search starts
+                // and clears results, or when the task completes
+            }
             _ => {
                 log::trace!("Unknown message method: {}", message.method);
             }

@@ -325,6 +325,12 @@ impl MessageHandler<FaeMessage> for SymbolSearchHandler {
                     log::warn!("updateSearchParams received unexpected payload");
                 }
             }
+            "abortSearch" => {
+                // Abort current search operation
+                log::debug!("SymbolSearchActor: Aborting current search");
+                // Symbol search runs in memory, so abort is mainly about clearing current search state
+                self.current_search = None;
+            }
             _ => {
                 log::trace!("Unknown message method: {}", message.method);
             }

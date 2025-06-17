@@ -125,6 +125,11 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                     .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
                     .await;
             }
+            "abortSearch" => {
+                // Abort current search operation
+                log::debug!("AgActor: Aborting current search");
+                let _ = controller.kill().await;
+            }
             _ => {
                 log::trace!("Unknown message method: {}", message.method);
             }

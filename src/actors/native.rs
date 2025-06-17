@@ -230,6 +230,13 @@ impl MessageHandler<FaeMessage> for NativeSearchHandler {
                     log::warn!("updateSearchParams received non-SearchQuery payload");
                 }
             }
+            "abortSearch" => {
+                // Abort current search operation
+                log::debug!("NativeSearchActor: Aborting current search");
+                // Native search runs synchronously in spawn_blocking
+                // The abort will be handled naturally when the next search starts
+                // and clears results, or when the task completes
+            }
             _ => {
                 log::trace!("Unknown message method: {}", message.method);
             }

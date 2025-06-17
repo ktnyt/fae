@@ -378,7 +378,13 @@ impl TuiApp {
             
             // Skip search if query is empty or just a prefix
             if search_params.query.trim().is_empty() {
-                log::debug!("Skipping search for empty or prefix-only query: '{}'", query);
+                log::debug!("Aborting search for empty or prefix-only query: '{}'", query);
+                
+                // Send abort search message to stop any ongoing searches
+                let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
+                if let Err(e) = sender.send(abort_message) {
+                    log::warn!("Failed to send abort search message: {}", e);
+                }
                 
                 // Clear previous results for empty queries
                 let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
@@ -386,6 +392,12 @@ impl TuiApp {
                     log::warn!("Failed to send clear results message: {}", e);
                 }
                 return Ok(());
+            }
+            
+            // Abort any ongoing search before starting new one
+            let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
+            if let Err(e) = sender.send(abort_message) {
+                log::warn!("Failed to send abort search message: {}", e);
             }
             
             // Clear previous results first
