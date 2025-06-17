@@ -9,6 +9,7 @@ pub mod ripgrep;
 pub mod symbol_extractor;
 pub mod symbol_index;
 pub mod symbol_search;
+pub mod tui;
 pub mod types;
 pub mod watch;
 
@@ -23,4 +24,5 @@ pub use ripgrep::{create_ripgrep_command_factory, RipgrepActor, RipgrepHandler};
 pub use symbol_extractor::SymbolExtractor;
 pub use symbol_index::{SymbolIndexActor, SymbolIndexHandler};
 pub use symbol_search::{SymbolSearchActor, SymbolSearchHandler};
+pub use tui::TuiActor;
 pub use watch::{WatchActor, WatchHandler};

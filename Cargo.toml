@@ -16,13 +16,14 @@ notify = "6.1"        # ファイルシステム監視
 regex = "1.10"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
+tokio-stream = "0.1"   # Stream utilities for tokio
 tree-sitter = "0.22"  # AST解析
 tree-sitter-rust = "0.21"  # Rust言語サポート
 walkdir = "2.4"
 
 # TUI dependencies
 ratatui = "0.26"      # Terminal UI framework
-crossterm = "0.27"    # Cross-platform terminal functionality
+crossterm = { version = "0.27", features = ["event-stream"] }    # Cross-platform terminal functionality
 arboard = "3.3"       # Clipboard access
 
 [dev-dependencies]

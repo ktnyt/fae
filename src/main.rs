@@ -78,10 +78,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = match parse_args() {
         Ok(Some(config)) => config,
         Ok(None) => {
-            // Launch TUI mode
-            let mut app = TuiApp::new(".")
+            // Launch TUI mode with UnifiedSearchSystem integration
+            let (mut app, tui_handle) = TuiApp::new(".")
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+            // Create channels for UnifiedSearchSystem
+            let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel();
+
+            // Create TuiActor to handle search system messages
+            let (tui_actor_tx, tui_actor_rx) = tokio::sync::mpsc::unbounded_channel();
+            let _tui_actor = fae::actors::TuiActor::new_tui_actor(
+                tui_actor_rx,
+                tui_actor_tx.clone(),
+                tui_handle,
+            );
+
+            // Connect TuiActor to result stream by forwarding messages
+            let tui_message_sender = tui_actor_tx.clone();
+            tokio::spawn(async move {
+                while let Some(message) = result_receiver.recv().await {
+                    if let Err(e) = tui_message_sender.send(message) {
+                        log::warn!("Failed to forward message to TuiActor: {}", e);
+                        break;
+                    }
+                }
+            });
+
+            // Create UnifiedSearchSystem with file watching for TUI mode
+            let mut _search_system = UnifiedSearchSystem::new(
+                ".",
+                true, // Enable file watching for TUI mode
+                result_sender,
+                control_receiver,
+            )
+            .await?;
+
+            // Initialize symbol indexing
+            let init_message = fae::core::Message::new(
+                "initialize",
+                fae::actors::messages::FaeMessage::ClearResults,
+            );
+            if let Err(e) = control_sender.send(init_message) {
+                eprintln!("Failed to send initialize message: {}", e);
+                std::process::exit(1);
+            }
+
+            // Run TUI application
             return app
                 .run()
                 .await

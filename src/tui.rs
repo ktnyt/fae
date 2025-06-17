@@ -38,7 +38,7 @@
 //! ```
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -53,6 +53,11 @@ use std::{
     io::{stdout, Result, Stdout},
     time::{Duration, Instant},
 };
+use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
+
+/// Type alias for TUI state update results to avoid large error types
+pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
 
 /// Toast notification state and content
 #[derive(Clone, Debug)]
@@ -192,6 +197,45 @@ impl Default for TuiState {
     }
 }
 
+/// Handle for external TUI control
+#[derive(Clone)]
+pub struct TuiHandle {
+    pub state_sender: mpsc::UnboundedSender<StateUpdate>,
+}
+
+impl TuiHandle {
+
+    /// Send a state update to the TUI
+    pub fn update_state(&self, update: StateUpdate) -> TuiResult {
+        self.state_sender.send(update).map_err(Box::new)
+    }
+
+    /// Convenience method to set search results (replaces existing)
+    pub fn set_search_results(&self, results: Vec<String>) -> TuiResult {
+        self.update_state(StateUpdate::new().with_search_results(results))
+    }
+
+    /// Convenience method to set search input
+    pub fn set_search_input(&self, input: String) -> TuiResult {
+        self.update_state(StateUpdate::new().with_search_input(input))
+    }
+
+    /// Convenience method to append search results (for streaming)
+    pub fn append_search_results(&self, results: Vec<String>) -> TuiResult {
+        self.update_state(StateUpdate::new().with_append_results(results))
+    }
+
+    /// Convenience method to show toast
+    pub fn show_toast(
+        &self,
+        message: String,
+        toast_type: ToastType,
+        duration: Duration,
+    ) -> TuiResult {
+        self.update_state(StateUpdate::new().with_toast(message, toast_type, duration))
+    }
+}
+
 /// Simple TUI application with separated state management
 pub struct TuiApp {
     // Terminal management
@@ -203,13 +247,16 @@ pub struct TuiApp {
     last_draw_time: Instant,
     draw_throttle_duration: Duration,
 
+    // External state updates
+    state_receiver: Option<mpsc::UnboundedReceiver<StateUpdate>>,
+
     // Separated application state
     pub state: TuiState,
 }
 
 impl TuiApp {
-    /// Create new TUI application
-    pub async fn new(_search_path: &str) -> Result<Self> {
+    /// Create new TUI application with external control handle
+    pub async fn new(_search_path: &str) -> Result<(Self, TuiHandle)> {
         // Setup terminal with error handling
         enable_raw_mode().map_err(|e| {
             eprintln!("Failed to enable raw mode: {}", e);
@@ -231,40 +278,71 @@ impl TuiApp {
             e
         })?;
 
-        Ok(TuiApp {
+        // Create external state update channel
+        let (state_sender, state_receiver) = mpsc::unbounded_channel();
+        let handle = TuiHandle { state_sender };
+
+        let app = TuiApp {
             terminal,
             should_quit: false,
             // Rendering control (60 FPS = ~16.67ms)
             needs_redraw: true, // Initial draw needed
             last_draw_time: Instant::now(),
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
+            state_receiver: Some(state_receiver),
             state: TuiState::new(),
-        })
+        };
+
+        Ok((app, handle))
     }
 
-    /// Run the TUI application
+    /// Run the TUI application with non-blocking event processing
     pub async fn run(&mut self) -> Result<()> {
         // Initial render
         self.draw()?;
         self.needs_redraw = false;
 
-        // Main event loop
+        // Take the state receiver for the event loop
+        let mut state_receiver = self.state_receiver.take();
+
+        // Create event stream for non-blocking keyboard input
+        let mut events = EventStream::new();
+
+        // Main non-blocking event loop using tokio::select!
         loop {
-            // Handle input events
-            if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key_event(key);
+            tokio::select! {
+                // Handle keyboard input events
+                Some(Ok(event)) = events.next() => {
+                    if let Event::Key(key) = event {
+                        self.handle_key_event(key);
+                        if self.should_quit {
+                            break;
+                        }
+                    }
+                }
+
+                // Handle external state updates
+                Some(state_update) = async {
+                    match &mut state_receiver {
+                        Some(receiver) => receiver.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.apply_state_update(state_update);
+                    self.needs_redraw = true;
+                }
+
+                // Periodic updates (toast expiration, etc.)
+                _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                    if self.state.update_toast() {
+                        self.needs_redraw = true;
+                    }
                 }
             }
 
             // Check if we should quit
             if self.should_quit {
                 break;
-            }
-
-            // 🔧 Fix: Update toast state periodically to ensure auto-close works
-            if self.state.update_toast() {
-                self.needs_redraw = true;
             }
 
             // Only redraw if needed and enough time has passed (throttling)
@@ -276,9 +354,6 @@ impl TuiApp {
                     self.last_draw_time = now;
                 }
             }
-
-            // Small delay to prevent busy waiting
-            std::thread::sleep(Duration::from_millis(16));
         }
 
         self.cleanup()?;
@@ -468,6 +543,55 @@ impl TuiApp {
         Ok(())
     }
 
+    /// Apply external state update to the TUI state
+    fn apply_state_update(&mut self, update: StateUpdate) {
+        if let Some(input) = update.search_input {
+            self.state.search_input = input;
+        }
+
+        if let Some(results) = update.search_results {
+            self.state.search_results = results;
+            // Reset selection to first result if we have results
+            if !self.state.search_results.is_empty() {
+                self.state.selected_result_index = Some(0);
+            } else {
+                self.state.selected_result_index = None;
+            }
+        }
+
+        if let Some(append_results) = update.append_results {
+            let was_empty = self.state.search_results.is_empty();
+            self.state.search_results.extend(append_results);
+            // Set cursor to first result if this was the first addition
+            if was_empty && !self.state.search_results.is_empty() {
+                self.state.selected_result_index = Some(0);
+            }
+        }
+
+        if let Some(index) = update.selected_index {
+            if let Some(idx) = index {
+                if idx < self.state.search_results.len() {
+                    self.state.selected_result_index = Some(idx);
+                }
+            } else {
+                self.state.selected_result_index = None;
+            }
+        }
+
+        if let Some((message, toast_type, duration)) = update.toast {
+            self.state.toast_state.show(message, toast_type, duration);
+        }
+
+        if update.clear_results {
+            self.state.search_results.clear();
+            self.state.selected_result_index = None;
+        }
+
+        if update.hide_toast {
+            self.state.toast_state.hide();
+        }
+    }
+
     // ===== External State Update API =====
 
     /// Update search input from external source
@@ -605,6 +729,7 @@ impl TuiApp {
 pub struct StateUpdate {
     pub search_input: Option<String>,
     pub search_results: Option<Vec<String>>,
+    pub append_results: Option<Vec<String>>, // New: append to existing results
     pub selected_index: Option<Option<usize>>,
     pub toast: Option<(String, ToastType, Duration)>,
     pub clear_results: bool,
@@ -623,9 +748,15 @@ impl StateUpdate {
         self
     }
 
-    /// Set search results
+    /// Set search results (replace existing)
     pub fn with_search_results(mut self, results: Vec<String>) -> Self {
         self.search_results = Some(results);
+        self
+    }
+
+    /// Append to search results
+    pub fn with_append_results(mut self, results: Vec<String>) -> Self {
+        self.append_results = Some(results);
         self
     }
 
@@ -886,5 +1017,84 @@ mod tests {
         assert_eq!(top_right.y, 0); // Top
         assert_eq!(top_right.width, 30); // 30% of width
         assert_eq!(top_right.height, 20); // 20% of height
+    }
+
+    #[test]
+    fn test_tui_handle_creation() {
+        // Create TUI handle
+        let (state_sender, _state_receiver) = mpsc::unbounded_channel();
+        let handle = TuiHandle { state_sender };
+
+        // Test basic operations don't panic
+        let result = handle.set_search_input("test query".to_string());
+        assert!(result.is_ok(), "Should be able to send state updates");
+    }
+
+    #[test]
+    fn test_state_update_with_append() {
+        let update = StateUpdate::new()
+            .with_search_input("test".to_string())
+            .with_append_results(vec!["result1".to_string(), "result2".to_string()])
+            .with_info_toast("Test message".to_string());
+
+        assert_eq!(update.search_input, Some("test".to_string()));
+        assert_eq!(
+            update.append_results,
+            Some(vec!["result1".to_string(), "result2".to_string()])
+        );
+        assert!(update.toast.is_some());
+    }
+
+    #[test]
+    fn test_apply_state_update_logic() {
+        // Test the apply_state_update logic without creating TUI
+        let mut state = TuiState::new();
+
+        // Test basic state update
+        let update = StateUpdate::new()
+            .with_search_input("test query".to_string())
+            .with_search_results(vec!["result1".to_string(), "result2".to_string()]);
+
+        // Simulate the logic from apply_state_update
+        if let Some(input) = update.search_input {
+            state.search_input = input;
+        }
+        if let Some(results) = update.search_results {
+            state.search_results = results;
+            if !state.search_results.is_empty() {
+                state.selected_result_index = Some(0);
+            } else {
+                state.selected_result_index = None;
+            }
+        }
+
+        assert_eq!(state.search_input, "test query");
+        assert_eq!(state.search_results.len(), 2);
+        assert_eq!(state.selected_result_index, Some(0));
+
+        // Test append functionality
+        let append_update = StateUpdate::new().with_append_results(vec!["result3".to_string()]);
+
+        if let Some(append_results) = append_update.append_results {
+            let was_empty = state.search_results.is_empty();
+            state.search_results.extend(append_results);
+            if was_empty && !state.search_results.is_empty() {
+                state.selected_result_index = Some(0);
+            }
+        }
+
+        assert_eq!(state.search_results.len(), 3);
+        assert_eq!(state.search_results[2], "result3");
+        assert_eq!(state.selected_result_index, Some(0)); // Should remain unchanged
+
+        // Test clear results
+        let clear_update = StateUpdate::new().with_clear_results();
+        if clear_update.clear_results {
+            state.search_results.clear();
+            state.selected_result_index = None;
+        }
+
+        assert_eq!(state.search_results.len(), 0);
+        assert_eq!(state.selected_result_index, None);
     }
 }
