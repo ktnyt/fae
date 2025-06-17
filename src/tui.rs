@@ -389,33 +389,57 @@ fn render_toast(f: &mut Frame, toast_state: &ToastState) {
         widgets::Clear,
     };
     
-    // Create a centered popup area (30% width, 15% height)
-    let popup_area = centered_rect(30, 15, f.size());
+    // Create a top-right positioned popup area (35% width, 15% height)
+    let popup_area = top_right_rect(35, 15, f.size());
     
     // Clear the area first
     f.render_widget(Clear, popup_area);
     
-    // Choose color based on toast type
-    let (border_color, text_color) = match toast_state.toast_type {
-        ToastType::Info => (Color::Blue, Color::White),
-        ToastType::Success => (Color::Green, Color::White),
-        ToastType::Warning => (Color::Yellow, Color::Black),
-        ToastType::Error => (Color::Red, Color::White),
+    // Choose color and title based on toast type
+    let (border_color, text_color, title) = match toast_state.toast_type {
+        ToastType::Info => (Color::Blue, Color::White, "🔔 Info"),
+        ToastType::Success => (Color::Green, Color::White, "✅ Success"),
+        ToastType::Warning => (Color::Yellow, Color::Black, "⚠️ Warning"),
+        ToastType::Error => (Color::Red, Color::White, "❌ Error"),
     };
     
     let toast_widget = Paragraph::new(toast_state.message.as_str())
         .block(Block::default()
             .borders(Borders::ALL)
-            .title("Notification")
+            .title(title)
             .border_style(Style::default().fg(border_color)))
         .style(Style::default().fg(text_color))
-        .alignment(Alignment::Center)
+        .alignment(Alignment::Left)
         .wrap(ratatui::widgets::Wrap { trim: true });
     
     f.render_widget(toast_widget, popup_area);
 }
 
-/// Helper function to create centered rectangle
+/// Helper function to create top-right positioned rectangle
+fn top_right_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    use ratatui::layout::{Constraint, Direction, Layout};
+    
+    // Create vertical layout: top area for toast, rest for main content
+    let vertical_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(percent_y),  // Top area for toast
+            Constraint::Percentage(100 - percent_y), // Rest of the screen
+        ])
+        .split(r);
+
+    // Create horizontal layout in the top area: left space, right area for toast
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(100 - percent_x), // Left space
+            Constraint::Percentage(percent_x),       // Right area for toast
+        ])
+        .split(vertical_chunks[0])[1] // Take the right part of the top area
+}
+
+/// Helper function to create centered rectangle (kept for potential future use)
+#[allow(dead_code)]
 fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
     use ratatui::layout::{Constraint, Direction, Layout};
     
