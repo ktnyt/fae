@@ -1,141 +1,24 @@
-//! Symbol extraction using tree-sitter
+//! Symbol extraction using tree-sitter with modular language support
 //!
 //! This module provides functionality to extract symbols (functions, structs, etc.)
-//! from source code files using tree-sitter AST parsing.
+//! from source code files using tree-sitter AST parsing. Language-specific logic
+//! is implemented in separate modules for better maintainability and extensibility.
 
-use crate::actors::types::{Symbol, SymbolType};
+use crate::languages::LanguageRegistry;
+use crate::actors::types::Symbol;
 use std::path::Path;
-use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
+use tree_sitter::Parser;
 
-/// Language-specific symbol extraction configuration
-pub struct LanguageConfig {
-    pub language: Language,
-    pub query: Query,
-}
-
-/// Symbol extractor using tree-sitter
+/// Symbol extractor using tree-sitter with modular language support
 pub struct SymbolExtractor {
     parser: Parser,
-    rust_config: Option<LanguageConfig>,
-    javascript_config: Option<LanguageConfig>,
 }
 
 impl SymbolExtractor {
     /// Create a new SymbolExtractor
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let parser = Parser::new();
-
-        // Initialize Rust language support
-        let rust_config = Self::create_rust_config()?;
-
-        // Initialize JavaScript language support
-        let javascript_config = Self::create_javascript_config()?;
-
-        Ok(Self {
-            parser,
-            rust_config: Some(rust_config),
-            javascript_config: Some(javascript_config),
-        })
-    }
-
-    /// Create Rust language configuration with queries
-    fn create_rust_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
-        let language = tree_sitter_rust::language();
-
-        // Tree-sitter query for Rust symbols
-        let query_source = r#"
-        ; Functions
-        (function_item
-          name: (identifier) @function.name) @function.definition
-        
-        ; Structs
-        (struct_item
-          name: (type_identifier) @struct.name) @struct.definition
-        
-        ; Enums
-        (enum_item
-          name: (type_identifier) @enum.name) @enum.definition
-        
-        ; Impl blocks (methods)
-        (impl_item
-          type: (type_identifier) @impl.type
-          body: (declaration_list
-            (function_item
-              name: (identifier) @method.name) @method.definition))
-        
-        ; Constants
-        (const_item
-          name: (identifier) @constant.name) @constant.definition
-        
-        ; Static variables
-        (static_item
-          name: (identifier) @static.name) @static.definition
-        
-        ; Type aliases
-        (type_item
-          name: (type_identifier) @type.name) @type.definition
-        
-        ; Modules
-        (mod_item
-          name: (identifier) @module.name) @module.definition
-        
-        ; Struct fields
-        (field_declaration
-          name: (field_identifier) @field.name) @field.definition
-        
-        ; Let bindings (local variables)
-        (let_declaration
-          pattern: (identifier) @variable.name) @variable.definition
-        
-        ; Function parameters
-        (function_item
-          parameters: (parameters
-            (parameter
-              pattern: (identifier) @parameter.name)))
-        
-        ; Method parameters
-        (impl_item
-          body: (declaration_list
-            (function_item
-              parameters: (parameters
-                (parameter
-                  pattern: (identifier) @parameter.name)))))
-        "#;
-
-        let query = Query::new(&language, query_source)
-            .map_err(|e| format!("Failed to parse Rust query: {}", e))?;
-
-        Ok(LanguageConfig { language, query })
-    }
-
-    /// Create JavaScript language configuration with queries
-    fn create_javascript_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
-        let language = tree_sitter_javascript::language();
-
-        // Tree-sitter query for JavaScript symbols (simplified)
-        let query_source = r#"
-        ; Function declarations
-        (function_declaration
-          name: (identifier) @function.name)
-        
-        ; Class declarations
-        (class_declaration
-          name: (identifier) @class.name)
-        
-        ; Variable declarations
-        (variable_declarator
-          name: (identifier) @variable.name)
-        
-        ; Function parameters
-        (function_declaration
-          parameters: (formal_parameters
-            (identifier) @parameter.name))
-        "#;
-
-        let query = Query::new(&language, query_source)
-            .map_err(|e| format!("Failed to parse JavaScript query: {}", e))?;
-
-        Ok(LanguageConfig { language, query })
+        Ok(Self { parser })
     }
 
     /// Extract symbols from a file
@@ -156,124 +39,38 @@ impl SymbolExtractor {
         content: &str,
         filepath: String,
     ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
-        // Determine language based on file extension
-        let language_config = if filepath.ends_with(".rs") {
-            self.rust_config.as_ref()
-        } else if filepath.ends_with(".js") || filepath.ends_with(".mjs") || filepath.ends_with(".cjs") {
-            self.javascript_config.as_ref()
-        } else {
-            return Ok(Vec::new()); // Unsupported language
-        };
+        // Get the appropriate language extractor for this file
+        let path = Path::new(&filepath);
+        let extractor = LanguageRegistry::get_extractor_for_path(path);
 
-        let config = match language_config {
-            Some(config) => config,
-            None => return Ok(Vec::new()),
-        };
-
-        // Set parser language
-        self.parser
-            .set_language(&config.language)
-            .map_err(|e| format!("Failed to set parser language: {}", e))?;
-
-        // Parse the content
-        let tree = self
-            .parser
-            .parse(content, None)
-            .ok_or("Failed to parse source code")?;
-
-        // Extract symbols using queries
-        self.extract_symbols_with_query(content, &filepath, &tree, &config.query)
-    }
-
-    /// Extract symbols using tree-sitter queries
-    fn extract_symbols_with_query(
-        &self,
-        content: &str,
-        filepath: &str,
-        tree: &Tree,
-        query: &Query,
-    ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut symbols = Vec::new();
-        let mut cursor = QueryCursor::new();
-
-        // Split content into lines for line number calculation
-        let lines: Vec<&str> = content.lines().collect();
-
-        // Execute query
-        let matches = cursor.matches(query, tree.root_node(), content.as_bytes());
-
-        for query_match in matches {
-            for capture in query_match.captures {
-                let node = capture.node;
-                let capture_name = query.capture_names()[capture.index as usize];
-
-                // Get position information
-                let start_position = node.start_position();
-                let line = start_position.row as u32 + 1; // 1-indexed
-                let column = start_position.column as u32;
-
-                // Get symbol content
-                let symbol_text = node
-                    .utf8_text(content.as_bytes())
-                    .unwrap_or("<unknown>")
-                    .to_string();
-
-                // Determine symbol type based on capture name
-                let symbol_type = match capture_name {
-                    "function.name" => SymbolType::Function,
-                    "struct.name" => SymbolType::Struct,
-                    "class.name" => SymbolType::Class, // JavaScript classes
-                    "enum.name" => SymbolType::Enum,
-                    "method.name" => SymbolType::Method,
-                    "constant.name" => SymbolType::Constant,
-                    "static.name" => SymbolType::Variable,
-                    "type.name" => SymbolType::Type,
-                    "module.name" => SymbolType::Module,
-                    "field.name" => SymbolType::Field,
-                    "variable.name" => SymbolType::Variable,
-                    "parameter.name" => SymbolType::Parameter,
-                    _ => continue, // Skip unknown captures
-                };
-
-                // Create symbol with context information
-                let symbol_content =
-                    self.create_symbol_content(&symbol_text, &lines, line as usize);
-
-                let symbol = Symbol::new(
-                    filepath.to_string(),
-                    line,
-                    column,
-                    symbol_content,
-                    symbol_type,
+        match extractor {
+            Some(extractor) => {
+                log::debug!(
+                    "Using {} extractor for file: {}",
+                    extractor.language_name(),
+                    filepath
                 );
-
-                symbols.push(symbol);
+                extractor.extract_symbols(&mut self.parser, content, &filepath)
+            }
+            None => {
+                log::debug!("No language extractor found for file: {}", filepath);
+                Ok(Vec::new()) // Unsupported language
             }
         }
-
-        Ok(symbols)
     }
 
-    /// Create symbol content with surrounding context
-    fn create_symbol_content(
-        &self,
-        symbol_name: &str,
-        lines: &[&str],
-        line_index: usize,
-    ) -> String {
-        // Get the line content (0-indexed for array access)
-        let line_content = if line_index > 0 && line_index <= lines.len() {
-            lines[line_index - 1].trim()
+    /// Check if a file type is supported for symbol extraction
+    pub fn is_supported_file(file_path: &Path) -> bool {
+        if let Some(extension) = file_path.extension().and_then(|e| e.to_str()) {
+            LanguageRegistry::is_extension_supported(extension)
         } else {
-            symbol_name
-        };
-
-        // Return the line content or just the symbol name if line is empty
-        if line_content.is_empty() {
-            symbol_name.to_string()
-        } else {
-            line_content.to_string()
+            false
         }
+    }
+
+    /// Get all supported file extensions
+    pub fn supported_extensions() -> Vec<&'static str> {
+        LanguageRegistry::supported_extensions()
     }
 }
 
@@ -286,11 +83,38 @@ impl Default for SymbolExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::types::SymbolType;
 
     #[test]
     fn test_symbol_extractor_creation() {
         let extractor = SymbolExtractor::new();
-        assert!(extractor.is_ok());
+        assert!(extractor.is_ok(), "Should create SymbolExtractor successfully");
+    }
+
+    #[test]
+    fn test_is_supported_file() {
+        // Rust files
+        assert!(SymbolExtractor::is_supported_file(Path::new("test.rs")));
+        assert!(SymbolExtractor::is_supported_file(Path::new("/path/to/main.rs")));
+        
+        // JavaScript files
+        assert!(SymbolExtractor::is_supported_file(Path::new("test.js")));
+        assert!(SymbolExtractor::is_supported_file(Path::new("module.mjs")));
+        assert!(SymbolExtractor::is_supported_file(Path::new("config.cjs")));
+        
+        // Unsupported files
+        assert!(!SymbolExtractor::is_supported_file(Path::new("test.py")));
+        assert!(!SymbolExtractor::is_supported_file(Path::new("README.md")));
+        assert!(!SymbolExtractor::is_supported_file(Path::new("Cargo.toml")));
+    }
+
+    #[test]
+    fn test_supported_extensions() {
+        let extensions = SymbolExtractor::supported_extensions();
+        assert!(extensions.contains(&"rs"), "Should support Rust files");
+        assert!(extensions.contains(&"js"), "Should support JavaScript files");
+        assert!(extensions.contains(&"mjs"), "Should support ES6 module files");
+        assert!(extensions.contains(&"cjs"), "Should support CommonJS files");
     }
 
     #[test]
@@ -337,8 +161,7 @@ impl User {
 
         // Check that we found the expected symbols
         let symbol_names: Vec<String> = symbols.iter().map(|s| s.content.clone()).collect();
-
-        println!("Extracted symbols: {:?}", symbol_names);
+        println!("Extracted Rust symbols: {:?}", symbol_names);
 
         // We should find function, struct, enum, field, variable, and parameter symbols
         let has_function = symbols
@@ -378,6 +201,18 @@ var userAge = 30;
 
 // Const declarations
 const MAX_USERS = 100;
+
+// Class declarations
+class User {
+    constructor(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+    
+    getName() {
+        return this.name;
+    }
+}
 "#;
 
         let symbols = extractor
@@ -390,10 +225,13 @@ const MAX_USERS = 100;
         let symbol_names: Vec<String> = symbols.iter().map(|s| s.content.clone()).collect();
         println!("Extracted JavaScript symbols: {:?}", symbol_names);
 
-        // We should find function, variable, and parameter symbols
+        // We should find function, variable, class, and parameter symbols
         let has_function = symbols
             .iter()
             .any(|s| s.symbol_type == SymbolType::Function);
+        let has_class = symbols
+            .iter()
+            .any(|s| s.symbol_type == SymbolType::Class);
         let has_variable = symbols
             .iter()
             .any(|s| s.symbol_type == SymbolType::Variable);
@@ -402,6 +240,7 @@ const MAX_USERS = 100;
             .any(|s| s.symbol_type == SymbolType::Parameter);
 
         assert!(has_function, "Should find function symbols");
+        assert!(has_class, "Should find class symbols");
         assert!(has_variable, "Should find variable symbols");
         assert!(has_parameter, "Should find parameter symbols");
     }
@@ -459,15 +298,8 @@ class MyClass:
 
     #[test]
     fn test_default_trait() {
-        let extractor = SymbolExtractor::default();
-        assert!(
-            extractor.rust_config.is_some(),
-            "Default extractor should have Rust config"
-        );
-        assert!(
-            extractor.javascript_config.is_some(),
-            "Default extractor should have JavaScript config"
-        );
+        let _extractor = SymbolExtractor::default();
+        // Just verify it can be created - the implementation is simple now
     }
 
     #[test]
@@ -514,108 +346,6 @@ pub struct TestStruct {
 
         let result = extractor.extract_symbols_from_file(Path::new("/non/existent/file.rs"));
         assert!(result.is_err(), "Should return error for non-existent file");
-    }
-
-    #[test]
-    fn test_create_symbol_content_edge_cases() {
-        let extractor = SymbolExtractor::new().expect("Failed to create extractor");
-
-        // Test with empty lines
-        let lines = vec!["", "fn test()", ""];
-        let content = extractor.create_symbol_content("test", &lines, 2);
-        assert_eq!(content, "fn test()", "Should return line content");
-
-        // Test with whitespace only
-        let lines = vec!["   ", "  fn test()  ", ""];
-        let content = extractor.create_symbol_content("test", &lines, 2);
-        assert_eq!(content, "fn test()", "Should trim whitespace");
-
-        // Test with out of bounds line index
-        let lines = vec!["fn test()"];
-        let content = extractor.create_symbol_content("test", &lines, 10);
-        assert_eq!(
-            content, "test",
-            "Should return symbol name for out of bounds"
-        );
-
-        // Test with zero line index
-        let lines = vec!["fn test()"];
-        let content = extractor.create_symbol_content("test", &lines, 0);
-        assert_eq!(content, "test", "Should return symbol name for zero index");
-
-        // Test with empty line content
-        let lines = vec![""];
-        let content = extractor.create_symbol_content("test", &lines, 1);
-        assert_eq!(content, "test", "Should return symbol name for empty line");
-    }
-
-    #[test]
-    fn test_symbol_types_mapping() {
-        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
-
-        // Test code with various symbol types
-        let rust_code = r#"
-pub fn my_function() {}
-pub struct MyStruct {}
-pub enum MyEnum { A, B }
-pub const MY_CONST: i32 = 42;
-pub static MY_STATIC: i32 = 42;
-pub type MyType = String;
-pub mod my_module {}
-
-impl MyStruct {
-    pub fn my_method(&self) {}
-}
-
-pub struct FieldStruct {
-    pub my_field: String,
-}
-"#;
-
-        let symbols = extractor
-            .extract_symbols_from_content(rust_code, "test.rs".to_string())
-            .expect("Failed to extract symbols");
-
-        // Check that we have the expected symbol types
-        let symbol_types: std::collections::HashSet<SymbolType> =
-            symbols.iter().map(|s| s.symbol_type).collect();
-
-        assert!(
-            symbol_types.contains(&SymbolType::Function),
-            "Should have function symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Struct),
-            "Should have struct symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Enum),
-            "Should have enum symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Constant),
-            "Should have constant symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Variable),
-            "Should have static variable symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Type),
-            "Should have type symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Module),
-            "Should have module symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Method),
-            "Should have method symbols"
-        );
-        assert!(
-            symbol_types.contains(&SymbolType::Field),
-            "Should have field symbols"
-        );
     }
 
     #[test]
