@@ -10,14 +10,16 @@ This document tracks the current status and planned support for programming lang
   - File extensions: `.rs`
   - Cargo dependency: `tree-sitter-rust = "0.20"`
 
+- [x] **JavaScript** (`tree-sitter-javascript`)
+  - Status: ✅ Fully implemented
+  - Symbols: Functions (declarations, expressions, arrow functions), Classes, Variables (let/var/const), Parameters, Modules (imports)
+  - File extensions: `.js`, `.mjs`, `.cjs`
+  - Cargo dependency: `tree-sitter-javascript = "0.20"`
+  - Features: Named function expressions, arrow functions, ES6 imports, default imports
+
 ## High Priority Languages 🎯
 
 ### Web Development
-- [ ] **JavaScript** (`tree-sitter-javascript`)
-  - Symbols: Functions, Classes, Variables, Constants, Methods, Properties
-  - File extensions: `.js`, `.mjs`, `.cjs`
-  - Cargo dependency: `tree-sitter-javascript = "0.20"`
-
 - [ ] **TypeScript** (`tree-sitter-typescript`)
   - Symbols: Functions, Classes, Interfaces, Types, Variables, Constants, Methods, Properties
   - File extensions: `.ts`, `.tsx`
@@ -209,6 +211,21 @@ Each language requires specific tree-sitter queries to extract symbols. Here are
   name: (identifier) @variable.name) @variable.definition
 ```
 
+**JavaScript-specific examples:**
+```scheme
+; Arrow functions assigned to variables
+(variable_declarator
+  name: (identifier) @function.name
+  value: (arrow_function))
+
+; Import specifiers
+(import_statement
+  (import_clause
+    (named_imports
+      (import_specifier
+        name: (identifier) @module.name))))
+```
+
 ### File Extension Mapping
 
 The language detection system should map file extensions to appropriate tree-sitter parsers. Multiple extensions per language are supported.
@@ -230,7 +247,7 @@ Each language's symbols should be mapped to fae's `SymbolType` enum:
 
 ## Implementation Priority
 
-1. **Phase 1** (High Priority): JavaScript, TypeScript, Python, C, C++, Go
+1. **Phase 1** (High Priority): ✅ JavaScript, TypeScript, Python, C, C++, Go
 2. **Phase 2** (Medium Priority): Java, C#, PHP, Ruby, Swift, Kotlin
 3. **Phase 3** (Lower Priority): Remaining languages based on user demand
 
@@ -244,4 +261,4 @@ Each language's symbols should be mapped to fae's `SymbolType` enum:
 ---
 
 **Last updated:** 2025-06-17
-**Total languages:** 1 implemented, 37+ planned
+**Total languages:** 2 implemented, 36+ planned

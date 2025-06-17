@@ -13,17 +13,26 @@ impl LanguageExtractor for JavaScriptExtractor {
     fn get_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
         let language = tree_sitter_javascript::language();
 
-        // Tree-sitter query for JavaScript symbols (simplified)
+        // Tree-sitter query for JavaScript symbols (enhanced)
         let query_source = r#"
         ; Function declarations
         (function_declaration
           name: (identifier) @function.name)
         
+        ; Function expressions with names
+        (function_expression
+          name: (identifier) @function.name)
+        
+        ; Arrow functions assigned to variables (treated as functions)
+        (variable_declarator
+          name: (identifier) @function.name
+          value: (arrow_function))
+        
         ; Class declarations
         (class_declaration
           name: (identifier) @class.name)
         
-        ; Variable declarations
+        ; Variable declarations (let, var, const all as variables for now)
         (variable_declarator
           name: (identifier) @variable.name)
         
@@ -31,6 +40,23 @@ impl LanguageExtractor for JavaScriptExtractor {
         (function_declaration
           parameters: (formal_parameters
             (identifier) @parameter.name))
+        
+        ; Arrow function parameters
+        (arrow_function
+          parameters: (formal_parameters
+            (identifier) @parameter.name))
+        
+        ; Import specifiers (as modules)
+        (import_statement
+          (import_clause
+            (named_imports
+              (import_specifier
+                name: (identifier) @module.name))))
+        
+        ; Default imports (as modules)
+        (import_statement
+          (import_clause
+            (identifier) @module.name))
         "#;
 
         let query = Query::new(&language, query_source)
@@ -53,6 +79,7 @@ impl LanguageExtractor for JavaScriptExtractor {
             "class.name" => Some(SymbolType::Class),
             "variable.name" => Some(SymbolType::Variable),
             "parameter.name" => Some(SymbolType::Parameter),
+            "module.name" => Some(SymbolType::Module),
             _ => None, // Skip unknown captures
         }
     }
@@ -110,6 +137,10 @@ mod tests {
             Some(SymbolType::Parameter)
         );
         assert_eq!(
+            JavaScriptExtractor::map_capture_to_symbol_type("module.name"),
+            Some(SymbolType::Module)
+        );
+        assert_eq!(
             JavaScriptExtractor::map_capture_to_symbol_type("unknown.capture"),
             None
         );
@@ -126,27 +157,51 @@ function greet(name) {
     return "Hello " + name;
 }
 
+// Function expressions
+const namedFunc = function myFunction() {
+    return "named function";
+};
+
+// Arrow functions
+const arrowFunc = (x, y) => x + y;
+
 // Variable declarations
 let userName = "John";
 var userAge = 30;
 
 // Const declarations
 const MAX_USERS = 100;
+const API_URL = "https://api.example.com";
 
 // Class declarations
 class User {
+    // Class fields
+    name = "";
+    age = 0;
+    
     constructor(name, age) {
         this.name = name;
         this.age = age;
     }
     
+    // Methods
     getName() {
         return this.name;
     }
+    
+    setAge(newAge) {
+        this.age = newAge;
+    }
 }
 
-// Arrow functions
-const arrowFunc = (x, y) => x + y;
+// Object with methods
+const utils = {
+    format: function(text) {
+        return text.toUpperCase();
+    },
+    
+    parse: (data) => JSON.parse(data)
+};
 
 // Export functions
 export function exportedFunction() {
@@ -159,6 +214,13 @@ export class ExportedClass {
         return "method";
     }
 }
+
+// Export constants
+export const CONFIG = { debug: true };
+
+// Import statements
+import { useState, useEffect } from 'react';
+import defaultExport from './module';
 "#;
 
         let symbols = JavaScriptExtractor::extract_symbols(&mut parser, &config, javascript_code, "test.js")
@@ -170,6 +232,7 @@ export class ExportedClass {
         let symbol_types: std::collections::HashSet<SymbolType> =
             symbols.iter().map(|s| s.symbol_type).collect();
 
+        // Check for expected symbol types
         assert!(
             symbol_types.contains(&SymbolType::Function),
             "Should have function symbols"
@@ -186,6 +249,10 @@ export class ExportedClass {
             symbol_types.contains(&SymbolType::Parameter),
             "Should have parameter symbols"
         );
+        assert!(
+            symbol_types.contains(&SymbolType::Module),
+            "Should have module symbols"
+        );
 
         // Check specific symbols
         let symbol_names: Vec<String> = symbols.iter().map(|s| s.content.clone()).collect();
@@ -198,7 +265,6 @@ export class ExportedClass {
         let has_user_class = symbols.iter().any(|s| 
             s.symbol_type == SymbolType::Class && s.content.contains("User")
         );
-
         assert!(has_greet_function, "Should find greet function");
         assert!(has_user_class, "Should find User class");
     }
