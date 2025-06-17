@@ -373,14 +373,26 @@ impl TuiApp {
             
             log::debug!("TuiApp executing search: '{}'", query);
             
+            // Parse the query and determine search mode
+            let search_params = create_search_params(&query);
+            
+            // Skip search if query is empty or just a prefix
+            if search_params.query.trim().is_empty() {
+                log::debug!("Skipping search for empty or prefix-only query: '{}'", query);
+                
+                // Clear previous results for empty queries
+                let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
+                if let Err(e) = sender.send(clear_message) {
+                    log::warn!("Failed to send clear results message: {}", e);
+                }
+                return Ok(());
+            }
+            
             // Clear previous results first
             let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
             if let Err(e) = sender.send(clear_message) {
                 log::warn!("Failed to send clear results message: {}", e);
             }
-            
-            // Parse the query and determine search mode
-            let search_params = create_search_params(&query);
             
             // Send search request
             let search_message = Message::new(
@@ -515,7 +527,7 @@ impl TuiApp {
 
     /// Execute incremental search as user types
     fn execute_incremental_search(&mut self) {
-        // Clear previous results and selection
+        // Clear previous results and selection (but keep search input intact)
         self.state.search_results.clear();
         self.state.selected_result_index = None;
 

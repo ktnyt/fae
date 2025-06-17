@@ -149,10 +149,7 @@ impl MessageHandler<FaeMessage> for TuiActor {
             }
 
             FaeMessage::UpdateSearchParams(params) => {
-                // Update search input in TUI (no toast for search operations)
-                if let Err(e) = self.tui_handle.set_search_input(params.query.clone()) {
-                    log::warn!("Failed to update TUI search input: {}", e);
-                }
+                // Don't update TUI search input - it should remain user-controlled
                 log::debug!("Search started for: '{}'", params.query);
             }
 
