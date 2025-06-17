@@ -102,8 +102,12 @@ mod tests {
         assert!(SymbolExtractor::is_supported_file(Path::new("module.mjs")));
         assert!(SymbolExtractor::is_supported_file(Path::new("config.cjs")));
         
+        // Python files (now supported)
+        assert!(SymbolExtractor::is_supported_file(Path::new("test.py")));
+        assert!(SymbolExtractor::is_supported_file(Path::new("script.pyw")));
+        assert!(SymbolExtractor::is_supported_file(Path::new("types.pyi")));
+        
         // Unsupported files
-        assert!(!SymbolExtractor::is_supported_file(Path::new("test.py")));
         assert!(!SymbolExtractor::is_supported_file(Path::new("README.md")));
         assert!(!SymbolExtractor::is_supported_file(Path::new("Cargo.toml")));
     }
@@ -275,7 +279,7 @@ function testFunction() {
     }
 
     #[test]
-    fn test_unsupported_language() {
+    fn test_python_language_support() {
         let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
 
         let python_code = r#"
@@ -288,6 +292,38 @@ class MyClass:
 
         let symbols = extractor
             .extract_symbols_from_content(python_code, "test.py".to_string())
+            .expect("Should extract from Python code");
+
+        assert!(
+            !symbols.is_empty(),
+            "Should extract symbols from Python code"
+        );
+        
+        // Check that we found the expected symbols
+        let symbol_names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(symbol_names.contains(&"hello"), "Should find 'hello' function");
+        assert!(symbol_names.contains(&"MyClass"), "Should find 'MyClass' class");
+    }
+
+    #[test]
+    fn test_unsupported_language() {
+        let mut extractor = SymbolExtractor::new().expect("Failed to create extractor");
+
+        // Use a truly unsupported language like Go
+        let go_code = r#"
+package main
+
+func main() {
+    fmt.Println("Hello")
+}
+
+type MyStruct struct {
+    name string
+}
+"#;
+
+        let symbols = extractor
+            .extract_symbols_from_content(go_code, "test.go".to_string())
             .expect("Should succeed even for unsupported languages");
 
         assert!(

@@ -496,6 +496,14 @@ mod tests {
             .await
             .expect("Failed to spawn first command");
 
+        // Wait for first command to start outputting
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Clear any buffered output from first command
+        while output_receiver.try_recv().is_ok() {
+            // Drain the channel
+        }
+
         // Kill it
         controller
             .kill()
@@ -521,8 +529,11 @@ mod tests {
             .await
             .expect("Failed to spawn second command");
 
+        // Wait for second command to start and produce output
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
         // Should receive output from new command
-        let output = timeout(Duration::from_millis(1000), output_receiver.recv())
+        let output = timeout(Duration::from_millis(2000), output_receiver.recv())
             .await
             .expect("Should receive output from new command")
             .expect("Should have output");

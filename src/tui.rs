@@ -19,7 +19,7 @@
 //! # use fae::tui::{TuiApp, StateUpdate, ToastType};
 //! # use std::time::Duration;
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut app = TuiApp::new(".").await?;
+//! let (mut app, handle) = TuiApp::new(".").await?;
 //!
 //! // Individual updates
 //! app.set_search_input("test query".to_string());

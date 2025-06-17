@@ -559,8 +559,12 @@ mod tests {
         assert!(SymbolIndexHandler::is_supported_file(Path::new("module.mjs")));
         assert!(SymbolIndexHandler::is_supported_file(Path::new("config.cjs")));
         
+        // Python files (now supported)
+        assert!(SymbolIndexHandler::is_supported_file(Path::new("test.py")));
+        assert!(SymbolIndexHandler::is_supported_file(Path::new("script.pyw")));
+        assert!(SymbolIndexHandler::is_supported_file(Path::new("types.pyi")));
+        
         // Unsupported files
-        assert!(!SymbolIndexHandler::is_supported_file(Path::new("test.py")));
         assert!(!SymbolIndexHandler::is_supported_file(Path::new(
             "README.md"
         )));
