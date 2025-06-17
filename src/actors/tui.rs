@@ -81,15 +81,21 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 symbols_found,
             } => {
                 log::debug!("TuiActor: Updating index status: {}/{} files, {} symbols", indexed_files, queued_files, symbols_found);
-                // Update index status in status bar instead of showing toast
-                if let Err(e) = self.tui_handle.update_index_status(
-                    *queued_files,
-                    *indexed_files,
-                    *symbols_found,
-                ) {
-                    log::warn!("Failed to update TUI index status: {}", e);
-                } else {
-                    log::debug!("TuiActor: Index status updated successfully");
+                // Show indexing progress as toast
+                if *queued_files > 0 {
+                    let progress_message = format!(
+                        "Indexing: {}/{} files, {} symbols",
+                        indexed_files,
+                        indexed_files + queued_files,
+                        symbols_found
+                    );
+                    if let Err(e) = self.tui_handle.show_toast(
+                        progress_message,
+                        ToastType::Info,
+                        Duration::from_secs(2),
+                    ) {
+                        log::warn!("Failed to show indexing progress toast: {}", e);
+                    }
                 }
             }
 
@@ -125,25 +131,11 @@ impl MessageHandler<FaeMessage> for TuiActor {
             }
 
             FaeMessage::NotifySearchReport { result_count } => {
-                // Show search completion with result count
-                let message = if *result_count > 0 {
-                    format!("Search completed: {} results found", result_count)
-                } else {
-                    "No results found".to_string()
-                };
-
-                let toast_type = if *result_count > 0 {
-                    ToastType::Success
-                } else {
-                    ToastType::Warning
-                };
-
-                if let Err(e) =
-                    self.tui_handle
-                        .show_toast(message, toast_type, Duration::from_secs(3))
-                {
-                    log::warn!("Failed to show search completion toast: {}", e);
-                }
+                // Log search completion but don't show toast for search operations
+                log::debug!(
+                    "Search completed: {} results found",
+                    result_count
+                );
             }
 
             FaeMessage::ClearResults => {
@@ -157,19 +149,11 @@ impl MessageHandler<FaeMessage> for TuiActor {
             }
 
             FaeMessage::UpdateSearchParams(params) => {
-                // Update search input in TUI
+                // Update search input in TUI (no toast for search operations)
                 if let Err(e) = self.tui_handle.set_search_input(params.query.clone()) {
                     log::warn!("Failed to update TUI search input: {}", e);
                 }
-
-                // Show search start notification
-                if let Err(e) = self.tui_handle.show_toast(
-                    format!("Searching for '{}'...", params.query),
-                    ToastType::Info,
-                    Duration::from_secs(2),
-                ) {
-                    log::warn!("Failed to show search start toast: {}", e);
-                }
+                log::debug!("Search started for: '{}'", params.query);
             }
 
             // Handle file change notifications

@@ -522,14 +522,10 @@ impl TuiApp {
         if !self.state.search_input.is_empty() {
             log::debug!("TuiApp: Incremental search for '{}'", self.state.search_input);
             
-            // Execute dynamic search immediately
+            // Execute dynamic search immediately (no toast notifications for search)
             if let Err(e) = self.execute_search(self.state.search_input.clone()) {
                 log::error!("Failed to execute incremental search: {}", e);
-                self.state.toast_state.show(
-                    format!("Search failed: {}", e),
-                    ToastType::Error,
-                    Duration::from_secs(2),
-                );
+                // Only log errors, don't show toast for search operations
             } else {
                 log::debug!("TuiApp: Incremental search request sent successfully");
             }
@@ -981,39 +977,13 @@ fn render_results_box(
 }
 
 /// Render the status bar with help text on left and index status on right
-fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, index_status: &IndexStatus) {
-    use ratatui::layout::{Constraint, Direction, Layout};
-
-    // Split status bar into left (help) and right (index status) parts
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(70), // Help text
-            Constraint::Percentage(30), // Index status
-        ])
-        .split(area);
-
-    // Left side: Help text  
+fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, _index_status: &IndexStatus) {
+    // Simple help text only - index status now shown as toast
     let help_text = "Modes: text | #symbol | $variable | @file | /regex | ↑↓: Navigate | Enter: Select | Esc: Quit";
     let help_status = Paragraph::new(help_text)
         .block(Block::default().borders(Borders::ALL).title("Help"))
         .style(Style::default().fg(Color::Gray));
-    f.render_widget(help_status, chunks[0]);
-
-    // Right side: Index status
-    let status_text = index_status.status_text();
-    let status_color = if index_status.is_active {
-        Color::Yellow // Indexing in progress
-    } else if index_status.is_complete() {
-        Color::Green // Indexing complete
-    } else {
-        Color::Gray // Ready/default
-    };
-
-    let index_status_widget = Paragraph::new(status_text.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Index Status"))
-        .style(Style::default().fg(status_color));
-    f.render_widget(index_status_widget, chunks[1]);
+    f.render_widget(help_status, area);
 }
 
 /// Render toast notification
