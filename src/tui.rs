@@ -371,7 +371,7 @@ impl TuiApp {
             state_receiver: Some(state_receiver),
             search_control_sender: None, // Will be set later via set_search_control_sender
             // Search debounce control
-            debounce_delay: Duration::from_millis(100), // 100ms debounce delay
+            debounce_delay: Duration::from_millis(300), // 300ms debounce delay
             pending_search_query: None,
             last_input_time: None,
             state: TuiState::new(),
@@ -403,24 +403,24 @@ impl TuiApp {
             // Parse the query and determine search mode
             let search_params = create_search_params(&query);
 
+            // Send abort search message to stop any ongoing searches
+            let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
+            if let Err(e) = sender.send(abort_message) {
+                log::warn!("Failed to send abort search message: {}", e);
+            }
+
+            // Clear previous results for empty queries
+            let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
+            if let Err(e) = sender.send(clear_message) {
+                log::warn!("Failed to send clear results message: {}", e);
+            }
+
             // Skip search if query is empty or just a prefix
             if search_params.query.trim().is_empty() {
                 log::debug!(
                     "Aborting search for empty or prefix-only query: '{}'",
                     query
                 );
-
-                // Send abort search message to stop any ongoing searches
-                let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
-                if let Err(e) = sender.send(abort_message) {
-                    log::warn!("Failed to send abort search message: {}", e);
-                }
-
-                // Clear previous results for empty queries
-                let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
-                if let Err(e) = sender.send(clear_message) {
-                    log::warn!("Failed to send clear results message: {}", e);
-                }
                 return Ok(());
             }
 
@@ -870,13 +870,33 @@ impl TuiApp {
         }
     }
 
+    /// Calculate the actual visible height of the results box
+    fn get_results_box_height(&self) -> usize {
+        // Get terminal size
+        let terminal_size = self.terminal.size().unwrap_or(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        
+        // Layout calculation: Input box (3) + Status bar (3) + borders
+        // Results box gets the remaining height
+        let input_height = 3;
+        let status_height = 3;
+        let available_height = terminal_size.height.saturating_sub(input_height + status_height);
+        
+        // Box border takes 2 lines (top + bottom), so actual content height is area.height - 2
+        available_height.saturating_sub(2) as usize
+    }
+
     /// Scroll results up half page (C-u)
     fn scroll_up_half_page(&mut self) {
         if self.state.search_results.is_empty() {
             return;
         }
         
-        let visible_height = 10; // Approximate visible results
+        let visible_height = self.get_results_box_height();
         let half_page = (visible_height / 2).max(1);
         
         if let Some(current_index) = self.state.selected_result_index {
@@ -895,7 +915,7 @@ impl TuiApp {
             return;
         }
         
-        let visible_height = 10; // Approximate visible results
+        let visible_height = self.get_results_box_height();
         let half_page = (visible_height / 2).max(1);
         
         if let Some(current_index) = self.state.selected_result_index {

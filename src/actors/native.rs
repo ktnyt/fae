@@ -34,6 +34,12 @@ impl NativeSearchHandler {
             self.search_path
         );
 
+        // Check if the query is less than 2 characters
+        if params.query.len() < 2 {
+            log::warn!("NativeSearchHandler: Query is less than 2 characters");
+            return;
+        }
+
         // Clone params for the blocking task
         let query = params.query.clone();
         let mode = params.mode;

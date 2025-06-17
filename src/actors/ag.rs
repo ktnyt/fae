@@ -108,6 +108,12 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                         }
                     }
 
+                    // Check if the query is less than 2 characters
+                    if query.query.len() < 2 {
+                        log::warn!("AgActor: Query is less than 2 characters");
+                        return;
+                    }
+
                     if let Err(e) = controller.spawn(query).await {
                         log::error!("Failed to spawn ag command: {}", e);
                         // Send completion notification on spawn failure
