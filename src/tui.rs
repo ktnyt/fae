@@ -59,7 +59,7 @@ use tokio_stream::StreamExt;
 // Import UnifiedSearchSystem and related types
 use crate::cli::parse_query_with_mode;
 use crate::unified_search::UnifiedSearchSystem;
-use crate::actors::types::SearchMode;
+use crate::actors::types::{SearchMode, SearchParams};
 use crate::core::message::Message;
 use crate::actors::messages::FaeMessage;
 
@@ -404,6 +404,12 @@ impl TuiApp {
                     }
                 }
 
+                // Handle search result messages
+                Some(message) = self.search_result_receiver.recv() => {
+                    self.handle_search_message(message);
+                    self.needs_redraw = true;
+                }
+
                 // Handle external state updates
                 Some(state_update) = async {
                     match &mut state_receiver {
@@ -491,7 +497,7 @@ impl TuiApp {
     }
 
     /// Update search results based on current input
-    /// Trigger search execution - starts async search in background
+    /// Trigger search execution - sends search request to UnifiedSearchSystem
     fn update_search_results(&mut self) {
         self.state.search_results.clear();
         self.state.selected_result_index = None;
@@ -515,15 +521,21 @@ impl TuiApp {
                 Duration::from_secs(1),
             );
 
-            // TODO: Start async search and update results via state channel
-            // For now, add a placeholder indicating the search mode
-            self.state.search_results.push(format!(
-                "[{}] Search for '{}' - Implementation in progress",
-                mode_name, query
-            ));
+            // Create search parameters and send to UnifiedSearchSystem
+            let search_params = SearchParams { 
+                query: query.clone(), 
+                mode: mode.clone() 
+            };
             
-            if !self.state.search_results.is_empty() {
-                self.state.selected_result_index = Some(0);
+            // Send search request
+            let search_message = Message::new("search", FaeMessage::UpdateSearchParams(search_params));
+            if let Err(_) = self.search_control_sender.send(search_message) {
+                // Handle send error
+                self.state.toast_state.show(
+                    "Failed to start search - system not ready".to_string(),
+                    ToastType::Error,
+                    Duration::from_secs(3),
+                );
             }
         }
     }
@@ -563,6 +575,67 @@ impl TuiApp {
                 None => {
                     self.state.selected_result_index = Some(self.state.search_results.len() - 1);
                 }
+            }
+        }
+    }
+
+    /// Handle search result messages from UnifiedSearchSystem
+    fn handle_search_message(&mut self, message: Message<FaeMessage>) {
+        match message.payload {
+            FaeMessage::PushSearchResult(search_result) => {
+                // Format result for display
+                let formatted_result = format!(
+                    "{}:{}:{}",
+                    search_result.filename,
+                    search_result.line,
+                    search_result.content.trim()
+                );
+                
+                // Add to results list
+                self.state.search_results.push(formatted_result);
+                
+                // Set cursor to first result if this is the first one
+                if self.state.selected_result_index.is_none() && !self.state.search_results.is_empty() {
+                    self.state.selected_result_index = Some(0);
+                }
+                
+                // Limit results to prevent UI overflow (keep last 100 results)
+                if self.state.search_results.len() > 100 {
+                    self.state.search_results.remove(0);
+                    // Adjust cursor position after removal
+                    if let Some(index) = self.state.selected_result_index {
+                        if index > 0 {
+                            self.state.selected_result_index = Some(index - 1);
+                        }
+                    }
+                }
+            }
+            FaeMessage::CompleteSearch => {
+                // Show completion toast
+                self.state.toast_state.show(
+                    format!(
+                        "Search completed - {} results found",
+                        self.state.search_results.len()
+                    ),
+                    ToastType::Success,
+                    Duration::from_secs(2),
+                );
+            }
+            FaeMessage::NotifySearchReport { result_count } => {
+                // Show final search report
+                self.state.toast_state.show(
+                    format!("Found {} total results", result_count),
+                    ToastType::Info,
+                    Duration::from_secs(2),
+                );
+            }
+            FaeMessage::ClearResults => {
+                // Clear current results
+                self.state.search_results.clear();
+                self.state.selected_result_index = None;
+            }
+            _ => {
+                // Ignore other message types for now
             }
         }
     }
