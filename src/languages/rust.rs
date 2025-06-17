@@ -10,7 +10,7 @@ use tree_sitter::Query;
 pub struct RustExtractor;
 
 impl LanguageExtractor for RustExtractor {
-    fn get_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
+    fn create_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
         let language = tree_sitter_rust::language();
 
         // Tree-sitter query for Rust symbols
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_rust_extractor_config_creation() {
-        let config = RustExtractor::get_config();
+        let config = RustExtractor::create_config();
         assert!(config.is_ok(), "Should create Rust config successfully");
     }
 
@@ -167,7 +167,6 @@ mod tests {
     #[test]
     fn test_rust_symbol_extraction() {
         let mut parser = Parser::new();
-        let config = RustExtractor::get_config().expect("Failed to get Rust config");
 
         let rust_code = r#"
 pub fn hello_world() {
@@ -201,7 +200,7 @@ impl User {
 }
 "#;
 
-        let symbols = RustExtractor::extract_symbols(&mut parser, &config, rust_code, "test.rs")
+        let symbols = RustExtractor::extract_symbols(&mut parser, rust_code, "test.rs")
             .expect("Failed to extract Rust symbols");
 
         assert!(!symbols.is_empty(), "Should extract some symbols");

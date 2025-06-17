@@ -10,7 +10,7 @@ use tree_sitter::Query;
 pub struct PythonExtractor;
 
 impl LanguageExtractor for PythonExtractor {
-    fn get_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
+    fn create_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
         let language = tree_sitter_python::language();
 
         // Tree-sitter query for Python symbols
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn test_python_extractor_config_creation() {
-        let config = PythonExtractor::get_config();
+        let config = PythonExtractor::create_config();
         assert!(config.is_ok(), "Should create Python config successfully");
     }
 
@@ -167,7 +167,6 @@ mod tests {
     #[test]
     fn test_python_symbol_extraction() {
         let mut parser = Parser::new();
-        let config = PythonExtractor::get_config().expect("Failed to get Python config");
 
         let python_code = r#"
 import os
@@ -193,7 +192,7 @@ def main():
     user.greet()
 "#;
 
-        let symbols = PythonExtractor::extract_symbols(&mut parser, &config, python_code, "test.py")
+        let symbols = PythonExtractor::extract_symbols(&mut parser, python_code, "test.py")
             .expect("Failed to extract Python symbols");
 
         assert!(!symbols.is_empty(), "Should extract some symbols");

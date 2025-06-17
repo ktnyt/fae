@@ -328,6 +328,7 @@ dependencies = [
  "ignore",
  "log",
  "notify",
+ "once_cell",
  "ratatui",
  "regex",
  "tempfile",

@@ -10,7 +10,7 @@ use tree_sitter::Query;
 pub struct JavaScriptExtractor;
 
 impl LanguageExtractor for JavaScriptExtractor {
-    fn get_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
+    fn create_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
         let language = tree_sitter_javascript::language();
 
         // Tree-sitter query for JavaScript symbols (enhanced)
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_javascript_extractor_config_creation() {
-        let config = JavaScriptExtractor::get_config();
+        let config = JavaScriptExtractor::create_config();
         assert!(config.is_ok(), "Should create JavaScript config successfully");
     }
 
@@ -149,7 +149,6 @@ mod tests {
     #[test]
     fn test_javascript_symbol_extraction() {
         let mut parser = Parser::new();
-        let config = JavaScriptExtractor::get_config().expect("Failed to get JavaScript config");
 
         let javascript_code = r#"
 // Function declarations
@@ -223,7 +222,7 @@ import { useState, useEffect } from 'react';
 import defaultExport from './module';
 "#;
 
-        let symbols = JavaScriptExtractor::extract_symbols(&mut parser, &config, javascript_code, "test.js")
+        let symbols = JavaScriptExtractor::extract_symbols(&mut parser, javascript_code, "test.js")
             .expect("Failed to extract JavaScript symbols");
 
         assert!(!symbols.is_empty(), "Should extract some symbols");
@@ -272,7 +271,6 @@ import defaultExport from './module';
     #[test]
     fn test_javascript_file_extensions() {
         let mut parser = Parser::new();
-        let config = JavaScriptExtractor::get_config().expect("Failed to get JavaScript config");
 
         let js_code = r#"
 function testFunction() {
@@ -281,17 +279,17 @@ function testFunction() {
 "#;
 
         // Test .js extension
-        let symbols_js = JavaScriptExtractor::extract_symbols(&mut parser, &config, js_code, "test.js")
+        let symbols_js = JavaScriptExtractor::extract_symbols(&mut parser, js_code, "test.js")
             .expect("Failed to extract from .js file");
         assert!(!symbols_js.is_empty(), "Should extract from .js files");
 
         // Test .mjs extension
-        let symbols_mjs = JavaScriptExtractor::extract_symbols(&mut parser, &config, js_code, "test.mjs")
+        let symbols_mjs = JavaScriptExtractor::extract_symbols(&mut parser, js_code, "test.mjs")
             .expect("Failed to extract from .mjs file");
         assert!(!symbols_mjs.is_empty(), "Should extract from .mjs files");
 
         // Test .cjs extension
-        let symbols_cjs = JavaScriptExtractor::extract_symbols(&mut parser, &config, js_code, "test.cjs")
+        let symbols_cjs = JavaScriptExtractor::extract_symbols(&mut parser, js_code, "test.cjs")
             .expect("Failed to extract from .cjs file");
         assert!(!symbols_cjs.is_empty(), "Should extract from .cjs files");
     }

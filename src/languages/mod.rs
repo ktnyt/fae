@@ -8,7 +8,10 @@ pub mod javascript;
 pub mod python;
 
 use crate::actors::types::{Symbol, SymbolType};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
 
 /// Configuration for a specific programming language
@@ -17,10 +20,14 @@ pub struct LanguageConfig {
     pub query: Query,
 }
 
+/// Global registry for language configurations to avoid recreation overhead
+static LANGUAGE_CONFIG_REGISTRY: Lazy<Mutex<HashMap<String, Arc<LanguageConfig>>>> = 
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 /// Common trait for language-specific symbol extractors
 pub trait LanguageExtractor: Send + Sync {
-    /// Get the language configuration (language grammar and queries)
-    fn get_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>>;
+    /// Create the language configuration (language grammar and queries)
+    fn create_config() -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Check if a file extension is supported by this language
     fn supports_extension(extension: &str) -> bool;
@@ -28,13 +35,40 @@ pub trait LanguageExtractor: Send + Sync {
     /// Get the language name for debugging/logging
     fn language_name() -> &'static str;
 
+    /// Get cached language configuration, creating it if necessary
+    fn get_config_for_language() -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>> {
+        let language_name = Self::language_name();
+        
+        // Try to get from registry first
+        {
+            let registry = LANGUAGE_CONFIG_REGISTRY.lock().unwrap();
+            if let Some(config) = registry.get(language_name) {
+                return Ok(config.clone());
+            }
+        }
+        
+        // Not found, create new config
+        let config = Self::create_config()?;
+        let arc_config = Arc::new(config);
+        
+        // Store in registry for future use
+        {
+            let mut registry = LANGUAGE_CONFIG_REGISTRY.lock().unwrap();
+            registry.insert(language_name.to_string(), arc_config.clone());
+        }
+        
+        Ok(arc_config)
+    }
+
     /// Extract symbols from source code content using this language's parser
     fn extract_symbols(
         parser: &mut Parser,
-        config: &LanguageConfig,
         content: &str,
         filepath: &str,
     ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
+        // Get cached config
+        let config = Self::get_config_for_language()?;
+        
         // Set parser language
         parser
             .set_language(&config.language)
@@ -163,7 +197,8 @@ impl LanguageRegistry {
 
 /// Dynamic trait object interface for language extractors
 pub trait LanguageExtractorDyn: Send + Sync {
-    fn get_config(&self) -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>>;
+    fn create_config(&self) -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>>;
+    fn get_config_for_language(&self) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>>;
     fn language_name(&self) -> &'static str;
     fn extract_symbols(
         &self,
@@ -175,8 +210,12 @@ pub trait LanguageExtractorDyn: Send + Sync {
 
 /// Blanket implementation for all LanguageExtractor implementors
 impl<T: LanguageExtractor> LanguageExtractorDyn for T {
-    fn get_config(&self) -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
-        T::get_config()
+    fn create_config(&self) -> Result<LanguageConfig, Box<dyn std::error::Error + Send + Sync>> {
+        T::create_config()
+    }
+
+    fn get_config_for_language(&self) -> Result<Arc<LanguageConfig>, Box<dyn std::error::Error + Send + Sync>> {
+        T::get_config_for_language()
     }
 
     fn language_name(&self) -> &'static str {
@@ -189,7 +228,6 @@ impl<T: LanguageExtractor> LanguageExtractorDyn for T {
         content: &str,
         filepath: &str,
     ) -> Result<Vec<Symbol>, Box<dyn std::error::Error + Send + Sync>> {
-        let config = self.get_config()?;
-        T::extract_symbols(parser, &config, content, filepath)
+        T::extract_symbols(parser, content, filepath)
     }
 }
