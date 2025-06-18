@@ -73,81 +73,16 @@ pub trait TuiMessageHandler {
 use crate::actors::types::SearchMode;
 use crate::cli::parse_query_with_mode;
 
-/// Input operations for unified input handling
-#[derive(Debug, Clone)]
-pub enum InputOperation {
-    InsertChar(char),
-    MoveCursorToStart,
-    MoveCursorToEnd,
-    MoveCursorLeft,
-    MoveCursorRight,
-    DeleteCharForward,
-    DeleteCharBackward,
-    KillLine,
-    Yank,
-}
+// Import modular components
+mod toast;
+pub use toast::{ToastState, ToastType};
+
+mod input;
+pub use input::{InputOperation, InputHandler};
 
 /// Type alias for TUI state update results to avoid large error types
 pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
 
-/// Toast notification state and content
-#[derive(Clone, Debug)]
-pub struct ToastState {
-    pub visible: bool,
-    pub message: String,
-    pub toast_type: ToastType,
-    pub show_until: Option<Instant>,
-}
-
-/// Type of toast notification
-#[derive(Clone, Debug, PartialEq)]
-pub enum ToastType {
-    Info,
-    Success,
-    Warning,
-    Error,
-}
-
-impl Default for ToastState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ToastState {
-    /// Create a new hidden toast
-    pub fn new() -> Self {
-        Self {
-            visible: false,
-            message: String::new(),
-            toast_type: ToastType::Info,
-            show_until: None,
-        }
-    }
-
-    /// Show a toast with specified message and type for given duration
-    pub fn show(&mut self, message: String, toast_type: ToastType, duration: Duration) {
-        self.visible = true;
-        self.message = message;
-        self.toast_type = toast_type;
-        self.show_until = Some(Instant::now() + duration);
-    }
-
-    /// Update toast state - hide if expired
-    pub fn update(&mut self) {
-        if let Some(until) = self.show_until {
-            if Instant::now() >= until {
-                self.hide();
-            }
-        }
-    }
-
-    /// Hide the toast
-    pub fn hide(&mut self) {
-        self.visible = false;
-        self.show_until = None;
-    }
-}
 
 /// Index status information for status bar display
 #[derive(Clone, Debug, Default)]
@@ -760,53 +695,12 @@ impl TuiApp {
 
     /// Handle input processing with unified InputHandler
     fn handle_input_operation(&mut self, operation: InputOperation) {
-        match operation {
-            InputOperation::InsertChar(c) => {
-                self.state.search_input.insert(self.state.cursor_position, c);
-                self.state.cursor_position += 1;
-            }
-            InputOperation::MoveCursorToStart => {
-                self.state.cursor_position = 0;
-            }
-            InputOperation::MoveCursorToEnd => {
-                self.state.cursor_position = self.state.search_input.len();
-            }
-            InputOperation::MoveCursorLeft => {
-                if self.state.cursor_position > 0 {
-                    self.state.cursor_position -= 1;
-                }
-            }
-            InputOperation::MoveCursorRight => {
-                if self.state.cursor_position < self.state.search_input.len() {
-                    self.state.cursor_position += 1;
-                }
-            }
-            InputOperation::DeleteCharForward => {
-                if self.state.cursor_position < self.state.search_input.len() {
-                    self.state.search_input.remove(self.state.cursor_position);
-                }
-            }
-            InputOperation::DeleteCharBackward => {
-                if self.state.cursor_position > 0 {
-                    self.state.cursor_position -= 1;
-                    self.state.search_input.remove(self.state.cursor_position);
-                }
-            }
-            InputOperation::KillLine => {
-                if self.state.cursor_position < self.state.search_input.len() {
-                    let killed_text = self.state.search_input[self.state.cursor_position..].to_string();
-                    self.state.kill_ring = killed_text;
-                    self.state.search_input.truncate(self.state.cursor_position);
-                }
-            }
-            InputOperation::Yank => {
-                if !self.state.kill_ring.is_empty() {
-                    let insert_text = self.state.kill_ring.clone();
-                    self.state.search_input.insert_str(self.state.cursor_position, &insert_text);
-                    self.state.cursor_position += insert_text.len();
-                }
-            }
-        }
+        InputHandler::apply_operation(
+            operation,
+            &mut self.state.search_input,
+            &mut self.state.cursor_position,
+            &mut self.state.kill_ring,
+        );
     }
 
     // ===== Search and Navigation Methods =====
@@ -1616,37 +1510,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[test]
-    fn test_toast_state_creation() {
-        let toast = ToastState::new();
-        assert!(!toast.visible);
-        assert_eq!(toast.message, "");
-    }
-
-    #[test]
-    fn test_toast_state_basic_operations() {
-        let mut toast = ToastState::new();
-
-        // Show message
-        toast.show("test".to_string(), ToastType::Info, Duration::from_secs(2));
-        assert!(toast.visible);
-        assert_eq!(toast.message, "test");
-        assert_eq!(toast.toast_type, ToastType::Info);
-
-        // Hide message
-        toast.hide();
-        assert!(!toast.visible);
-
-        // Update message with different type
-        toast.show(
-            "different".to_string(),
-            ToastType::Success,
-            Duration::from_secs(3),
-        );
-        assert!(toast.visible);
-        assert_eq!(toast.message, "different");
-        assert_eq!(toast.toast_type, ToastType::Success);
-    }
 
     #[test]
     fn test_state_update_builder() {
@@ -1772,19 +1635,6 @@ mod tests {
         assert!(calculate_wrapped_lines(long_message, 30) >= 2);
     }
 
-    #[test]
-    fn test_get_toast_display_message() {
-        let mut toast = ToastState::new();
-
-        // Test normal message
-        toast.show("Hello".to_string(), ToastType::Info, Duration::from_secs(2));
-        assert_eq!(get_toast_display_message(&toast), "Hello");
-
-        // Test repeated message
-        toast.show("Hello".to_string(), ToastType::Info, Duration::from_secs(2));
-        toast.show("Hello".to_string(), ToastType::Info, Duration::from_secs(2));
-        assert_eq!(get_toast_display_message(&toast), "Hello (3x)");
-    }
 
     #[test]
     fn test_emoji_length_debug() {
