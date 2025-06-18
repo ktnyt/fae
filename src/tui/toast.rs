@@ -1,5 +1,5 @@
 //! Toast notification system
-//! 
+//!
 //! Provides a simple toast notification system with automatic timeout handling.
 //! Supports different toast types (Info, Success, Warning, Error) with appropriate
 //! styling and configurable display duration.
@@ -106,7 +106,11 @@ mod tests {
         let mut toast = ToastState::new();
 
         // Show toast with very short duration
-        toast.show("timeout test".to_string(), ToastType::Warning, Duration::from_millis(1));
+        toast.show(
+            "timeout test".to_string(),
+            ToastType::Warning,
+            Duration::from_millis(1),
+        );
         assert!(toast.visible);
 
         // Wait for timeout
@@ -122,8 +126,17 @@ mod tests {
         let mut toast = ToastState::new();
 
         // Test all toast types
-        for toast_type in [ToastType::Info, ToastType::Success, ToastType::Warning, ToastType::Error] {
-            toast.show("test".to_string(), toast_type.clone(), Duration::from_secs(1));
+        for toast_type in [
+            ToastType::Info,
+            ToastType::Success,
+            ToastType::Warning,
+            ToastType::Error,
+        ] {
+            toast.show(
+                "test".to_string(),
+                toast_type.clone(),
+                Duration::from_secs(1),
+            );
             assert_eq!(toast.toast_type, toast_type);
         }
     }

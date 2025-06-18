@@ -129,7 +129,7 @@ fn setup_file_logging() -> Result<std::path::PathBuf, Box<dyn std::error::Error 
 
     log::info!("TUI mode started - logging to: {}", log_path.display());
     log::debug!("Log file permissions: {:?}", std::fs::metadata(&log_path));
-    
+
     Ok(log_path)
 }
 
@@ -139,7 +139,7 @@ fn check_terminal_environment() -> Result<(), Box<dyn std::error::Error + Send +
     if !atty::is(atty::Stream::Stdout) {
         return Err("TUI mode requires a proper terminal (stdout is not a TTY)".into());
     }
-    
+
     if !atty::is(atty::Stream::Stdin) {
         return Err("TUI mode requires a proper terminal (stdin is not a TTY)".into());
     }
@@ -156,7 +156,8 @@ fn check_terminal_environment() -> Result<(), Box<dyn std::error::Error + Send +
                 return Err(format!(
                     "Terminal size too small for TUI ({}x{}, minimum 40x10 required)",
                     width, height
-                ).into());
+                )
+                .into());
             }
             log::debug!("Terminal size check passed: {}x{}", width, height);
         }
@@ -208,10 +209,10 @@ mod tests {
     fn test_parse_args_no_query_returns_none() {
         // Save original args (for future mock implementation)
         let _original_args = std::env::args().collect::<Vec<_>>();
-        
+
         // Mock args with just program name (no query)
         std::env::set_var("PROGRAM", "fae");
-        
+
         // This test would need proper arg mocking to be fully effective
         // For now, just verify the function signature works
         match parse_args() {
@@ -225,7 +226,7 @@ mod tests {
                 println!("Parse error: {}", e);
             }
         }
-        
+
         // Note: In a real test environment, we'd properly mock std::env::args()
     }
 }
@@ -238,9 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(None) => {
             // TUI mode - setup file logging to avoid interfering with TUI
             let _log_path = match setup_file_logging() {
-                Ok(path) => {
-                    path
-                }
+                Ok(path) => path,
                 Err(e) => {
                     eprintln!("Warning: Failed to setup file logging: {}", e);
                     eprintln!("TUI will continue without file logging");
@@ -274,11 +273,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Create simplified TUI message handler
             struct TuiSearchHandler {
-                control_sender: tokio::sync::mpsc::UnboundedSender<fae::core::Message<fae::actors::messages::FaeMessage>>,
+                control_sender: tokio::sync::mpsc::UnboundedSender<
+                    fae::core::Message<fae::actors::messages::FaeMessage>,
+                >,
             }
-            
+
             impl fae::tui::TuiMessageHandler for TuiSearchHandler {
-                fn execute_search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                fn execute_search(
+                    &self,
+                    query: String,
+                ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     use fae::actors::messages::FaeMessage;
                     use fae::cli::create_search_params;
                     use fae::core::Message;
@@ -298,7 +302,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         },
                     );
 
-                    self.control_sender.send(search_message)
+                    self.control_sender
+                        .send(search_message)
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
                     Ok(())
@@ -307,9 +312,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 fn clear_results(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     use fae::actors::messages::FaeMessage;
                     use fae::core::Message;
-                    
+
                     let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
-                    self.control_sender.send(clear_message)
+                    self.control_sender
+                        .send(clear_message)
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
                     Ok(())
                 }
@@ -317,9 +323,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 fn abort_search(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     use fae::actors::messages::FaeMessage;
                     use fae::core::Message;
-                    
+
                     let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
-                    self.control_sender.send(abort_message)
+                    self.control_sender
+                        .send(abort_message)
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
                     Ok(())
                 }
@@ -336,7 +343,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             tokio::spawn(async move {
                 while let Some(message) = result_receiver.recv().await {
                     log::debug!("Processing search result: {}", message.method);
-                    
+
                     match &message.payload {
                         fae::actors::messages::FaeMessage::PushSearchResult { result, .. } => {
                             let formatted_result = format!(
@@ -345,8 +352,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 result.line,
                                 result.content.trim()
                             );
-                            
-                            if let Err(e) = tui_handle_for_results.append_search_results(vec![formatted_result]) {
+
+                            if let Err(e) =
+                                tui_handle_for_results.append_search_results(vec![formatted_result])
+                            {
                                 log::warn!("Failed to add search result to TUI: {}", e);
                             }
                         }

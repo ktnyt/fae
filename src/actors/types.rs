@@ -329,13 +329,13 @@ mod tests {
     #[test]
     fn test_symbol_type_hash_and_equality() {
         use std::collections::HashSet;
-        
+
         // Test that SymbolType can be used in hash collections
         let mut set = HashSet::new();
         set.insert(SymbolType::Function);
         set.insert(SymbolType::Method);
         set.insert(SymbolType::Function); // Duplicate should not increase size
-        
+
         assert_eq!(set.len(), 2);
         assert!(set.contains(&SymbolType::Function));
         assert!(set.contains(&SymbolType::Method));
@@ -359,7 +359,7 @@ mod tests {
             (SymbolType::Field, "field"),
             (SymbolType::Parameter, "param"),
         ];
-        
+
         for (symbol_type, expected_name) in test_cases {
             assert_eq!(symbol_type.display_name(), expected_name);
         }
@@ -371,7 +371,7 @@ mod tests {
         let mode1 = SearchMode::Symbol;
         let mode2 = mode1; // This should work with Copy
         assert_eq!(mode1, mode2);
-        
+
         // Original should still be usable
         assert_eq!(mode1, SearchMode::Symbol);
     }
@@ -382,7 +382,7 @@ mod tests {
         let type1 = SymbolType::Function;
         let type2 = type1; // This should work with Copy
         assert_eq!(type1, type2);
-        
+
         // Original should still be usable
         assert_eq!(type1, SymbolType::Function);
     }

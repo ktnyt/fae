@@ -50,7 +50,10 @@ impl MockTuiHandler {
 }
 
 impl TuiMessageHandler for MockTuiHandler {
-    fn execute_search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn execute_search(
+        &self,
+        query: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if self.should_fail {
             return Err("Mock search execution failed".into());
         }
@@ -83,12 +86,20 @@ struct TuiSearchHandler {
 impl TuiSearchHandler {
     fn new() -> (Self, mpsc::UnboundedReceiver<Message<FaeMessage>>) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        (Self { control_sender: sender }, receiver)
+        (
+            Self {
+                control_sender: sender,
+            },
+            receiver,
+        )
     }
 }
 
 impl TuiMessageHandler for TuiSearchHandler {
-    fn execute_search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn execute_search(
+        &self,
+        query: String,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use fae::actors::messages::FaeMessage;
         use fae::cli::create_search_params;
         use fae::core::Message;
@@ -106,7 +117,8 @@ impl TuiMessageHandler for TuiSearchHandler {
             },
         );
 
-        self.control_sender.send(search_message)
+        self.control_sender
+            .send(search_message)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
         Ok(())
@@ -114,14 +126,16 @@ impl TuiMessageHandler for TuiSearchHandler {
 
     fn clear_results(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
-        self.control_sender.send(clear_message)
+        self.control_sender
+            .send(clear_message)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         Ok(())
     }
 
     fn abort_search(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
-        self.control_sender.send(abort_message)
+        self.control_sender
+            .send(abort_message)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         Ok(())
     }
@@ -134,15 +148,15 @@ mod tests {
     #[test]
     fn test_tui_message_handler_trait() {
         let handler = MockTuiHandler::new();
-        
+
         // Test execute_search
         assert!(handler.execute_search("test query".to_string()).is_ok());
         assert_eq!(handler.get_executed_searches(), vec!["test query"]);
-        
+
         // Test clear_results
         assert!(handler.clear_results().is_ok());
         assert_eq!(handler.get_cleared_count(), 1);
-        
+
         // Test abort_search
         assert!(handler.abort_search().is_ok());
         assert_eq!(handler.get_aborted_count(), 1);
@@ -151,17 +165,17 @@ mod tests {
     #[test]
     fn test_tui_message_handler_multiple_operations() {
         let handler = MockTuiHandler::new();
-        
+
         // Execute multiple searches
         assert!(handler.execute_search("query1".to_string()).is_ok());
         assert!(handler.execute_search("query2".to_string()).is_ok());
         assert_eq!(handler.get_executed_searches(), vec!["query1", "query2"]);
-        
+
         // Multiple clears and aborts
         assert!(handler.clear_results().is_ok());
         assert!(handler.clear_results().is_ok());
         assert_eq!(handler.get_cleared_count(), 2);
-        
+
         assert!(handler.abort_search().is_ok());
         assert!(handler.abort_search().is_ok());
         assert_eq!(handler.get_aborted_count(), 2);
@@ -170,7 +184,7 @@ mod tests {
     #[test]
     fn test_tui_message_handler_error_handling() {
         let handler = MockTuiHandler::with_failure();
-        
+
         // All operations should fail
         assert!(handler.execute_search("test".to_string()).is_err());
         assert!(handler.clear_results().is_err());
@@ -180,14 +194,14 @@ mod tests {
     #[tokio::test]
     async fn test_tui_search_handler_execute_search() {
         let (handler, mut receiver) = TuiSearchHandler::new();
-        
+
         // Execute a search
         assert!(handler.execute_search("test query".to_string()).is_ok());
-        
+
         // Verify message was sent
         let message = receiver.recv().await.expect("Should receive message");
         assert_eq!(message.method, "updateSearchParams");
-        
+
         match message.payload {
             FaeMessage::UpdateSearchParams { params, request_id } => {
                 assert_eq!(params.query, "test query");
@@ -200,16 +214,16 @@ mod tests {
     #[tokio::test]
     async fn test_tui_search_handler_clear_results() {
         let (handler, mut receiver) = TuiSearchHandler::new();
-        
+
         // Clear results
         assert!(handler.clear_results().is_ok());
-        
+
         // Verify message was sent
         let message = receiver.recv().await.expect("Should receive message");
         assert_eq!(message.method, "clearResults");
-        
+
         match message.payload {
-            FaeMessage::ClearResults => {},
+            FaeMessage::ClearResults => {}
             _ => panic!("Expected ClearResults message"),
         }
     }
@@ -217,16 +231,16 @@ mod tests {
     #[tokio::test]
     async fn test_tui_search_handler_abort_search() {
         let (handler, mut receiver) = TuiSearchHandler::new();
-        
+
         // Abort search
         assert!(handler.abort_search().is_ok());
-        
+
         // Verify message was sent
         let message = receiver.recv().await.expect("Should receive message");
         assert_eq!(message.method, "abortSearch");
-        
+
         match message.payload {
-            FaeMessage::AbortSearch => {},
+            FaeMessage::AbortSearch => {}
             _ => panic!("Expected AbortSearch message"),
         }
     }
@@ -234,7 +248,7 @@ mod tests {
     #[tokio::test]
     async fn test_tui_search_handler_search_modes() {
         let (handler, mut receiver) = TuiSearchHandler::new();
-        
+
         // Test different search modes
         let test_cases = vec![
             ("normal query", fae::actors::types::SearchMode::Literal),
@@ -243,10 +257,10 @@ mod tests {
             ("@filename", fae::actors::types::SearchMode::Filepath),
             ("/regex", fae::actors::types::SearchMode::Regexp),
         ];
-        
+
         for (query, expected_mode) in test_cases {
             assert!(handler.execute_search(query.to_string()).is_ok());
-            
+
             let message = receiver.recv().await.expect("Should receive message");
             match message.payload {
                 FaeMessage::UpdateSearchParams { params, .. } => {
@@ -260,10 +274,10 @@ mod tests {
     #[tokio::test]
     async fn test_tui_search_handler_channel_failure() {
         let (handler, receiver) = TuiSearchHandler::new();
-        
+
         // Drop receiver to simulate channel failure
         drop(receiver);
-        
+
         // Operations should fail when channel is closed
         assert!(handler.execute_search("test".to_string()).is_err());
         assert!(handler.clear_results().is_err());
@@ -273,11 +287,11 @@ mod tests {
     #[tokio::test]
     async fn test_tui_search_handler_request_id_uniqueness() {
         let (handler, mut receiver) = TuiSearchHandler::new();
-        
+
         // Execute multiple searches
         assert!(handler.execute_search("query1".to_string()).is_ok());
         assert!(handler.execute_search("query2".to_string()).is_ok());
-        
+
         // Collect request IDs
         let mut request_ids = Vec::new();
         for _ in 0..2 {
@@ -289,7 +303,7 @@ mod tests {
                 _ => panic!("Expected UpdateSearchParams message"),
             }
         }
-        
+
         // Request IDs should be unique
         assert_ne!(request_ids[0], request_ids[1]);
         assert!(!request_ids[0].is_empty());

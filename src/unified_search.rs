@@ -90,17 +90,16 @@ impl UnifiedSearchSystem {
         // Create actor channels for broadcast messaging
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (filepath_search_tx, filepath_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (content_search_tx, content_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (result_handler_tx, result_handler_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (filepath_search_tx, filepath_search_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (content_search_tx, content_search_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (result_handler_tx, result_handler_rx) =
+            mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (watch_tx, watch_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
         // Collect all actor senders for broadcasting
-        let mut actor_senders = vec![
-            filepath_search_tx,
-            content_search_tx,
-            result_handler_tx,
-        ];
+        let mut actor_senders = vec![filepath_search_tx, content_search_tx, result_handler_tx];
 
         // Conditionally add symbol actor senders
         if needs_symbol_actors {

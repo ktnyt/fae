@@ -51,7 +51,7 @@ use ratatui::{
 };
 use std::{
     io::{stdout, Result, Stdout},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -60,11 +60,14 @@ use tokio_stream::StreamExt;
 /// This allows external components to handle search execution while keeping TuiApp focused on UI
 pub trait TuiMessageHandler {
     /// Execute a search with the given query
-    fn execute_search(&self, query: String) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    
+    fn execute_search(
+        &self,
+        query: String,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
     /// Clear all search results
     fn clear_results(&self) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    
+
     /// Abort current search
     fn abort_search(&self) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
@@ -78,11 +81,16 @@ mod toast;
 pub use toast::{ToastState, ToastType};
 
 mod input;
-pub use input::{InputOperation, InputHandler};
+pub use input::{InputHandler, InputOperation};
+
+mod search_debouncer;
+pub use search_debouncer::SearchDebouncer;
+
+mod rendering_controller;
+pub use rendering_controller::RenderingController;
 
 /// Type alias for TUI state update results to avoid large error types
 pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
-
 
 /// Index status information for status bar display
 #[derive(Clone, Debug, Default)]
@@ -128,33 +136,23 @@ impl IndexStatus {
     }
 }
 
-/// TUI application state (separated from terminal management)
+/// TUI application state with organized responsibility groups
 #[derive(Clone, Debug)]
 pub struct TuiState {
-    // 1. Input string state
-    pub search_input: String,
-
-    // 2. Search results array
-    pub search_results: Vec<String>,
-
-    // 3. Result cursor position information
-    pub selected_result_index: Option<usize>,
-
-    // 4. Toast state (display/hide and content)
-    pub toast_state: ToastState,
-
-    // 5. Index status for status bar
-    pub index_status: IndexStatus,
-
-    // 6. Statistics overlay state
-    pub show_stats_overlay: bool,
-
-    // 7. Emacs-style text editing state
+    // === Search Interface ===
+    pub search_input: String,   // Input string for search queries
     pub cursor_position: usize, // Cursor position in search_input
     pub kill_ring: String,      // Kill/yank buffer (emacs-style)
 
-    // 8. Result list scroll state
-    pub results_list_state: ListState, // StatefulList state for scrolling
+    // === Results Display ===
+    pub search_results: Vec<String>,          // Search results array
+    pub selected_result_index: Option<usize>, // Selected result cursor position
+    pub results_list_state: ListState,        // StatefulList scroll state
+
+    // === UI Feedback ===
+    pub toast_state: ToastState,   // Toast notification state
+    pub index_status: IndexStatus, // Index status for status bar
+    pub show_stats_overlay: bool,  // Statistics overlay visibility
 }
 
 impl TuiState {
@@ -235,29 +233,23 @@ impl TuiHandle {
     }
 }
 
-/// Simple TUI application with separated state management
+/// TUI application with organized state management
 pub struct TuiApp {
-    // Terminal management
+    // === Terminal Control ===
     terminal: Terminal<CrosstermBackend<Stdout>>,
     should_quit: bool,
 
-    // Rendering control
-    needs_redraw: bool,
-    last_draw_time: Instant,
-    draw_throttle_duration: Duration,
+    // === Rendering & UI ===
+    rendering_controller: RenderingController,
 
-    // External state updates
+    // === External Communication ===
     state_receiver: Option<mpsc::UnboundedReceiver<StateUpdate>>,
-
-    // External message handler for search operations
     message_handler: Option<Box<dyn TuiMessageHandler + Send>>,
 
-    // Search debounce control
-    debounce_delay: Duration,
-    pending_search_query: Option<String>,
-    last_input_time: Option<Instant>,
+    // === Search Control ===
+    search_debouncer: SearchDebouncer,
 
-    // Separated application state
+    // === Application State ===
     pub state: TuiState,
 }
 
@@ -292,16 +284,12 @@ impl TuiApp {
         let app = TuiApp {
             terminal,
             should_quit: false,
-            // Rendering control (60 FPS = ~16.67ms)
-            needs_redraw: true, // Initial draw needed
-            last_draw_time: Instant::now(),
-            draw_throttle_duration: Duration::from_millis(16), // 60 FPS
+            // Rendering control (60 FPS)
+            rendering_controller: RenderingController::new(),
             state_receiver: Some(state_receiver),
             message_handler: None, // Will be set later via set_message_handler
             // Search debounce control
-            debounce_delay: Duration::from_millis(100), // 100ms debounce delay
-            pending_search_query: None,
-            last_input_time: None,
+            search_debouncer: SearchDebouncer::new(),
             state: TuiState::new(),
         };
 
@@ -309,10 +297,7 @@ impl TuiApp {
     }
 
     /// Set the external message handler for search operations
-    pub fn set_message_handler(
-        &mut self,
-        handler: Box<dyn TuiMessageHandler + Send>,
-    ) {
+    pub fn set_message_handler(&mut self, handler: Box<dyn TuiMessageHandler + Send>) {
         self.message_handler = Some(handler);
     }
 
@@ -328,15 +313,23 @@ impl TuiApp {
             if let Err(e) = handler.abort_search() {
                 log::warn!("Failed to abort previous search: {}", e);
             }
-            
+
             if let Err(e) = handler.clear_results() {
                 log::warn!("Failed to clear previous results: {}", e);
             }
 
             // Skip search if query is empty or just contains search prefixes
             let trimmed_query = query.trim();
-            if trimmed_query.is_empty() || trimmed_query == "#" || trimmed_query == "$" || trimmed_query == "@" || trimmed_query == "/" {
-                log::debug!("Aborting search for empty or prefix-only query: '{}'", query);
+            if trimmed_query.is_empty()
+                || trimmed_query == "#"
+                || trimmed_query == "$"
+                || trimmed_query == "@"
+                || trimmed_query == "/"
+            {
+                log::debug!(
+                    "Aborting search for empty or prefix-only query: '{}'",
+                    query
+                );
                 return Ok(());
             }
 
@@ -358,7 +351,7 @@ impl TuiApp {
     pub async fn run(&mut self) -> Result<()> {
         // Initial render
         self.draw()?;
-        self.needs_redraw = false;
+        self.rendering_controller.mark_drawn();
 
         // Take the state receiver for the event loop
         let mut state_receiver = self.state_receiver.take();
@@ -388,36 +381,34 @@ impl TuiApp {
                 } => {
                     log::debug!("TuiApp: Received state update");
                     self.apply_state_update(state_update);
-                    self.needs_redraw = true;
+                    self.rendering_controller.request_redraw();
                 }
 
                 // Search debounce timer - execute pending search when debounce delay expires
                 _ = async {
-                    if let (Some(last_time), Some(_)) = (self.last_input_time, &self.pending_search_query) {
-                        let elapsed = last_time.elapsed();
-                        if elapsed >= self.debounce_delay {
-                            tokio::time::sleep(Duration::from_millis(0)).await // Immediate wake
+                    if self.search_debouncer.has_pending_search() {
+                        if let Some(remaining) = self.search_debouncer.time_until_ready() {
+                            tokio::time::sleep(remaining).await
                         } else {
-                            tokio::time::sleep(self.debounce_delay - elapsed).await
+                            tokio::time::sleep(Duration::from_millis(0)).await // Immediate wake
                         }
                     } else {
                         std::future::pending().await // No pending search
                     }
                 } => {
                     // Execute the pending search
-                    if let Some(query) = self.pending_search_query.take() {
+                    if let Some(query) = self.search_debouncer.check_ready_for_search() {
                         log::debug!("TuiApp: Executing debounced search for '{}'", query);
                         if let Err(e) = self.execute_search(query) {
                             log::error!("Failed to execute debounced search: {}", e);
                         }
-                        self.last_input_time = None;
                     }
                 }
 
                 // Periodic updates (toast expiration, etc.)
                 _ = tokio::time::sleep(Duration::from_millis(50)) => {
                     if self.state.update_toast() {
-                        self.needs_redraw = true;
+                        self.rendering_controller.request_redraw();
                     }
                 }
             }
@@ -428,13 +419,9 @@ impl TuiApp {
             }
 
             // Only redraw if needed and enough time has passed (throttling)
-            if self.needs_redraw {
-                let now = Instant::now();
-                if now.duration_since(self.last_draw_time) >= self.draw_throttle_duration {
-                    self.draw()?;
-                    self.needs_redraw = false;
-                    self.last_draw_time = now;
-                }
+            if self.rendering_controller.should_draw() {
+                self.draw()?;
+                self.rendering_controller.mark_drawn();
             }
         }
 
@@ -458,7 +445,7 @@ impl TuiApp {
                     // Tab: Cycle through search modes
                     self.cycle_search_mode();
                 }
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             // Emacs-style Control key bindings
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -473,15 +460,15 @@ impl TuiApp {
                     'h' => {
                         self.handle_input_operation(InputOperation::DeleteCharBackward);
                         self.execute_incremental_search();
-                    },
+                    }
                     'k' => {
                         self.handle_input_operation(InputOperation::KillLine);
                         self.execute_incremental_search();
-                    },
+                    }
                     'y' => {
                         self.handle_input_operation(InputOperation::Yank);
                         self.execute_incremental_search();
-                    },
+                    }
 
                     // Search and navigation
                     'g' => self.abort_search(),
@@ -507,69 +494,69 @@ impl TuiApp {
 
                     _ => return, // Unknown Ctrl combination, don't redraw
                 }
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
 
             // Additional Ctrl combinations that need special handling
             KeyCode::Char(',') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.goto_first_result();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::Char('.') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.goto_last_result();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
 
             // Result navigation (keep arrow key support)
             KeyCode::Down => {
                 self.move_cursor_down();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::Up => {
                 self.move_cursor_up();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
 
             // Text cursor movement (arrow keys and Home/End)
             KeyCode::Left => {
                 self.handle_input_operation(InputOperation::MoveCursorLeft);
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::Right => {
                 self.handle_input_operation(InputOperation::MoveCursorRight);
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::Home => {
                 self.handle_input_operation(InputOperation::MoveCursorToStart);
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::End => {
                 self.handle_input_operation(InputOperation::MoveCursorToEnd);
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::Delete => {
                 self.handle_input_operation(InputOperation::DeleteCharForward);
                 self.execute_incremental_search();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
 
             // Text input with incremental search
             KeyCode::Char(c) => {
                 self.handle_input_operation(InputOperation::InsertChar(c));
                 self.execute_incremental_search();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
             KeyCode::Backspace => {
                 self.handle_input_operation(InputOperation::DeleteCharBackward);
                 self.execute_incremental_search();
-                self.needs_redraw = true;
+                self.rendering_controller.request_redraw();
             }
 
             // Enter to select result
             KeyCode::Enter => {
                 if self.state.selected_result_index.is_some() {
                     self.handle_result_selection();
-                    self.needs_redraw = true;
+                    self.rendering_controller.request_redraw();
                 }
             }
 
@@ -593,16 +580,15 @@ impl TuiApp {
                 self.state.search_input
             );
 
-            // Set up debounced search - save query and timestamp
-            self.pending_search_query = Some(self.state.search_input.clone());
-            self.last_input_time = Some(Instant::now());
+            // Set up debounced search using SearchDebouncer
+            self.search_debouncer
+                .set_pending_search(self.state.search_input.clone());
         } else {
             // Clear results immediately when input is empty
             log::debug!("TuiApp: Empty search input, clearing results immediately");
 
             // Cancel any pending search
-            self.pending_search_query = None;
-            self.last_input_time = None;
+            self.search_debouncer.clear_pending_search();
 
             // Execute clear search immediately for empty query
             if let Err(e) = self.execute_search(String::new()) {
@@ -946,7 +932,7 @@ impl TuiApp {
     /// Update search input from external source
     pub fn set_search_input(&mut self, input: String) {
         self.state.search_input = input;
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     /// Add a search result from external source
@@ -960,7 +946,7 @@ impl TuiApp {
                 .results_list_state
                 .select(self.state.selected_result_index);
         }
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     /// Set all search results from external source
@@ -976,7 +962,7 @@ impl TuiApp {
         self.state
             .results_list_state
             .select(self.state.selected_result_index);
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     /// Clear all search results
@@ -987,7 +973,7 @@ impl TuiApp {
         self.state
             .results_list_state
             .select(self.state.selected_result_index);
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     /// Set cursor position from external source
@@ -1003,19 +989,19 @@ impl TuiApp {
         self.state
             .results_list_state
             .select(self.state.selected_result_index);
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     /// Show toast notification from external source
     pub fn show_toast(&mut self, message: String, toast_type: ToastType, duration: Duration) {
         self.state.toast_state.show(message, toast_type, duration);
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     /// Hide current toast
     pub fn hide_toast(&mut self) {
         self.state.toast_state.hide();
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
     }
 
     // ===== External State Access API =====
@@ -1051,7 +1037,7 @@ impl TuiApp {
 
     /// Force a UI redraw (useful after external state updates)
     pub fn force_redraw(&mut self) -> Result<()> {
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
         self.draw()
     }
 
@@ -1084,7 +1070,7 @@ impl TuiApp {
         }
 
         // Mark for redraw after batch update
-        self.needs_redraw = true;
+        self.rendering_controller.request_redraw();
         self.draw()
     }
 }
@@ -1510,7 +1496,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-
     #[test]
     fn test_state_update_builder() {
         let update = StateUpdate::new()
@@ -1634,7 +1619,6 @@ mod tests {
         let long_message = "Indexing completed: 25 files, 1200 symbols found successfully";
         assert!(calculate_wrapped_lines(long_message, 30) >= 2);
     }
-
 
     #[test]
     fn test_emoji_length_debug() {

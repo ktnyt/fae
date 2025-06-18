@@ -1,5 +1,5 @@
 //! Input handling and operations
-//! 
+//!
 //! Provides unified input processing with support for Emacs-style key bindings
 //! and text editing operations. All input operations are defined as a single
 //! enum for type safety and consistent handling.
@@ -137,12 +137,7 @@ mod tests {
 
         // Move cursor back and yank
         cursor = 5; // Before the space
-        InputHandler::apply_operation(
-            InputOperation::Yank,
-            &mut text,
-            &mut cursor,
-            &mut kill_ring,
-        );
+        InputHandler::apply_operation(InputOperation::Yank, &mut text, &mut cursor, &mut kill_ring);
         assert_eq!(text, "helloworld ");
         assert_eq!(cursor, 10); // After "helloworld"
     }
