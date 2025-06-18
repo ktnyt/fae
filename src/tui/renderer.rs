@@ -13,7 +13,7 @@ use ratatui::{
 
 use super::{IndexStatus, ToastState, ToastType};
 use crate::actors::types::SearchMode;
-use crate::cli::parse_query_with_mode;
+use crate::cli::{parse_query_with_mode, PREFIX_SYMBOL, PREFIX_VARIABLE, PREFIX_FILEPATH, PREFIX_REGEX};
 
 /// Central renderer for TUI application
 pub struct TuiRenderer;
@@ -68,10 +68,10 @@ impl TuiRenderer {
         let (mode, _) = parse_query_with_mode(search_input);
         let mode_name = match mode {
             SearchMode::Literal => "Text",
-            SearchMode::Symbol => "Symbol (#)",
-            SearchMode::Variable => "Variable ($)",
-            SearchMode::Filepath => "File (@)",
-            SearchMode::Regexp => "Regex (/)",
+            SearchMode::Symbol => &format!("Symbol ({})", PREFIX_SYMBOL),
+            SearchMode::Variable => &format!("Variable ({})", PREFIX_VARIABLE),
+            SearchMode::Filepath => &format!("File ({})", PREFIX_FILEPATH),
+            SearchMode::Regexp => &format!("Regex ({})", PREFIX_REGEX),
         };
 
         let title = format!("Search Input - {} Mode", mode_name);

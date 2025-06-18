@@ -254,7 +254,7 @@ mod tests {
             ("normal query", fae::actors::types::SearchMode::Literal),
             ("#symbol", fae::actors::types::SearchMode::Symbol),
             ("$variable", fae::actors::types::SearchMode::Variable),
-            ("@filename", fae::actors::types::SearchMode::Filepath),
+            (">filename", fae::actors::types::SearchMode::Filepath),
             ("/regex", fae::actors::types::SearchMode::Regexp),
         ];
 

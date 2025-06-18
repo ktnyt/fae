@@ -4,7 +4,7 @@
 //!   fae [query]       - Literal search (fallback: rg → ag → native)
 //!   fae #[query]      - Symbol search
 //!   fae $[query]      - Variable search
-//!   fae @[query]      - Filepath search
+//!   fae >[query]      - Filepath search
 //!   fae /[query]      - Regex search (fallback: rg → ag → native)
 
 use fae::actors::messages::FaeMessage;
@@ -82,7 +82,11 @@ fn setup_file_logging() -> Result<std::path::PathBuf, Box<dyn std::error::Error 
         // Clear existing log file on startup to prevent log file bloat
         if path.exists() {
             if let Err(e) = std::fs::remove_file(&path) {
-                eprintln!("Warning: Failed to clear existing log file {}: {}", path.display(), e);
+                eprintln!(
+                    "Warning: Failed to clear existing log file {}: {}",
+                    path.display(),
+                    e
+                );
             }
         }
 
@@ -282,11 +286,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
             // Create UnifiedSearchSystem with file watching for TUI mode
-            let (mut search_system, control_sender, mut result_receiver) = UnifiedSearchSystem::new(
-                ".",
-                true, // Enable file watching for TUI mode
-            )
-            .await?;
+            let (mut search_system, control_sender, mut result_receiver) =
+                UnifiedSearchSystem::new(
+                    ".", true, // Enable file watching for TUI mode
+                )
+                .await?;
 
             // Create simplified TUI message handler
             struct TuiSearchHandler {
@@ -395,24 +399,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 log::warn!("Failed to show search report toast: {}", e);
                             }
                         }
-                        fae::actors::messages::FaeMessage::ReportSymbolIndex { 
-                            remaining_files, 
-                            processed_files, 
-                            symbols_found 
+                        fae::actors::messages::FaeMessage::ReportSymbolIndex {
+                            remaining_files,
+                            processed_files,
+                            symbols_found,
                         } => {
                             let total_files = remaining_files + processed_files;
                             let progress_percentage = if total_files > 0 {
-                                (*processed_files as f64 / total_files as f64 * 100.0).round() as u32
+                                (*processed_files as f64 / total_files as f64 * 100.0).round()
+                                    as u32
                             } else {
                                 100
                             };
 
                             let progress_message = format!(
                                 "Indexing: {}% ({}/{} files, {} symbols)",
-                                progress_percentage,
-                                processed_files,
-                                total_files,
-                                symbols_found
+                                progress_percentage, processed_files, total_files, symbols_found
                             );
 
                             if let Err(e) = tui_handle_for_results.show_toast(
@@ -479,12 +481,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Create unified search system (CLI mode doesn't need file watching)
     // Pass search mode for optimization (skip symbol actors for non-symbol searches)
-    let (mut search_system, control_sender, mut result_receiver) = UnifiedSearchSystem::new_with_mode(
-        &config.search_path,
-        false,
-        Some(search_params.mode),
-    )
-    .await?;
+    let (mut search_system, control_sender, mut result_receiver) =
+        UnifiedSearchSystem::new_with_mode(&config.search_path, false, Some(search_params.mode))
+            .await?;
 
     // Initialize symbol indexing
     let init_message = Message::new("initialize", FaeMessage::ClearResults); // Dummy payload for initialize

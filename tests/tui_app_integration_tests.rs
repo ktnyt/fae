@@ -214,7 +214,7 @@ mod tests {
             "normal search",
             "#symbol_search",
             "$variable_search",
-            "@file.rs",
+            ">file.rs",
             "/regex.*pattern",
             "query with spaces",
             "CamelCaseQuery",

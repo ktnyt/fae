@@ -2,6 +2,12 @@
 
 use crate::actors::types::{SearchMode, SearchParams};
 
+/// Search mode prefixes for consistent use across the application
+pub const PREFIX_SYMBOL: char = '#';
+pub const PREFIX_VARIABLE: char = '$';
+pub const PREFIX_FILEPATH: char = '>';
+pub const PREFIX_REGEX: char = '/';
+
 /// Parse CLI query argument and determine search mode based on prefix
 ///
 /// # Arguments
@@ -36,13 +42,13 @@ use crate::actors::types::{SearchMode, SearchParams};
 /// assert_eq!(query, "fn \\w+");
 /// ```
 pub fn parse_query_with_mode(query: &str) -> (SearchMode, String) {
-    if let Some(stripped) = query.strip_prefix('#') {
+    if let Some(stripped) = query.strip_prefix(PREFIX_SYMBOL) {
         (SearchMode::Symbol, stripped.to_string())
-    } else if let Some(stripped) = query.strip_prefix('$') {
+    } else if let Some(stripped) = query.strip_prefix(PREFIX_VARIABLE) {
         (SearchMode::Variable, stripped.to_string())
-    } else if let Some(stripped) = query.strip_prefix('@') {
+    } else if let Some(stripped) = query.strip_prefix(PREFIX_FILEPATH) {
         (SearchMode::Filepath, stripped.to_string())
-    } else if let Some(stripped) = query.strip_prefix('/') {
+    } else if let Some(stripped) = query.strip_prefix(PREFIX_REGEX) {
         (SearchMode::Regexp, stripped.to_string())
     } else {
         (SearchMode::Literal, query.to_string())

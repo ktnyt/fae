@@ -19,7 +19,7 @@ High-performance code search tool with beautiful TUI and real-time capabilities
 - **Content Search** (default) - Blazing-fast full-text search powered by ripgrep/ag
 - **Symbol Search** (`#prefix`) - Tree-sitter-based function, class, variable discovery
 - **Variable Search** (`$prefix`) - Focused variable and constant search
-- **File Search** (`@prefix`) - File names and paths with fuzzy matching
+- **File Search** (`>prefix`) - File names and paths with fuzzy matching
 - **Regex Search** (`/prefix`) - Advanced pattern matching with full regex support
 
 ### ✨ Key Features
@@ -85,8 +85,8 @@ fae  # Launch interactive TUI
 - **Adaptive UI** - Auto-sizing toasts and responsive layout
 
 **Key Bindings:**
-- `Tab` - Cycle search modes forward (Literal → Symbol → Variable → File → Regex)
-- `Shift+Tab` - Cycle search modes backward (Literal ← Symbol ← Variable ← File ← Regex)
+- `Tab` - Cycle search modes forward (Literal → Symbol(#) → Variable($) → File(>) → Regex(/))
+- `Shift+Tab` - Cycle search modes backward (Literal ← Symbol(#) ← Variable($) ← File(>) ← Regex(/))
 - `Enter` - Copy selected result to clipboard
 - `Ctrl+C` / `Esc` - Exit
 - `Ctrl+S` - Toggle statistics overlay
@@ -101,7 +101,7 @@ For scripting and pipeline integration:
 fae "search_query"           # Content search (default)
 fae "#function_name"         # Symbol search 
 fae "$variable_name"         # Variable search
-fae "@file_name"             # File search
+fae ">file_name"             # File search
 fae "/regex_pattern"         # Regex search
 
 # Pipeline support
@@ -153,7 +153,7 @@ let hits = coordinator.search_symbols("handleClick", 10);
 # Symbol search: symbols containing "handle"
 #handle
 
-# File search: files containing "component"
+# File search: files containing "component"  
 >component
 
 # Regex search: import statements
@@ -180,7 +180,7 @@ error
 - **Smart State Management**: Race condition prevention, graceful error handling
 
 **🔍 Advanced Search Capabilities**
-- **5 Search Modes**: Content, Symbol (#), Variable ($), File (@), Regex (/) 
+- **5 Search Modes**: Content, Symbol (#), Variable ($), File (>), Regex (/) 
 - **Tree-sitter Integration**: 4+ languages with optimized S-expression queries
 - **High-Performance Backends**: ripgrep/ag integration with intelligent fallback
 - **Smart Caching**: 281x performance improvement with content-based caching

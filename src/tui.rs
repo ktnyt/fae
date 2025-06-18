@@ -68,7 +68,7 @@ pub trait TuiMessageHandler {
 
 // Import search-related types
 use crate::actors::types::SearchMode;
-use crate::cli::parse_query_with_mode;
+use crate::cli::{parse_query_with_mode, PREFIX_SYMBOL, PREFIX_VARIABLE, PREFIX_FILEPATH, PREFIX_REGEX};
 
 // Import modular components
 mod toast;
@@ -665,11 +665,11 @@ impl TuiApp {
         let old_prefix_len = self.get_prefix_length(current_mode);
 
         let next_prefix = match current_mode {
-            SearchMode::Literal => "#",  // none -> #symbol
-            SearchMode::Symbol => "$",   // # -> $variable
-            SearchMode::Variable => "@", // $ -> @file
-            SearchMode::Filepath => "/", // @ -> /regex
-            SearchMode::Regexp => "",    // / -> none (literal)
+            SearchMode::Literal => PREFIX_SYMBOL.to_string(),     // none -> #symbol
+            SearchMode::Symbol => PREFIX_VARIABLE.to_string(),    // # -> $variable
+            SearchMode::Variable => PREFIX_FILEPATH.to_string(),  // $ -> >file
+            SearchMode::Filepath => PREFIX_REGEX.to_string(),     // > -> /regex
+            SearchMode::Regexp => "".to_string(),                 // / -> none (literal)
         };
 
         // Update search input with new prefix
@@ -697,11 +697,11 @@ impl TuiApp {
         let old_prefix_len = self.get_prefix_length(current_mode);
 
         let next_prefix = match current_mode {
-            SearchMode::Literal => "/",  // none <- /regex
-            SearchMode::Regexp => "@",   // / <- @file
-            SearchMode::Filepath => "$", // @ <- $variable
-            SearchMode::Variable => "#", // $ <- #symbol
-            SearchMode::Symbol => "",    // # <- none (literal)
+            SearchMode::Literal => PREFIX_REGEX.to_string(),      // none <- /regex
+            SearchMode::Regexp => PREFIX_FILEPATH.to_string(),    // / <- >file
+            SearchMode::Filepath => PREFIX_VARIABLE.to_string(),  // > <- $variable
+            SearchMode::Variable => PREFIX_SYMBOL.to_string(),    // $ <- #symbol
+            SearchMode::Symbol => "".to_string(),                 // # <- none (literal)
         };
 
         // Update search input with new prefix
@@ -729,7 +729,7 @@ impl TuiApp {
             SearchMode::Literal => 0,
             SearchMode::Symbol => 1,    // "#"
             SearchMode::Variable => 1,  // "$"
-            SearchMode::Filepath => 1,  // "@"
+            SearchMode::Filepath => 1,  // ">"
             SearchMode::Regexp => 1,    // "/"
         }
     }
