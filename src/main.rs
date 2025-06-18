@@ -79,9 +79,17 @@ fn setup_file_logging() -> Result<std::path::PathBuf, Box<dyn std::error::Error 
 
     // Try each location until one works
     for path in possible_paths {
+        // Clear existing log file on startup to prevent log file bloat
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                eprintln!("Warning: Failed to clear existing log file {}: {}", path.display(), e);
+            }
+        }
+
         match std::fs::OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
+            .truncate(true) // Start with a fresh log file
             .open(&path)
         {
             Ok(_) => {
@@ -104,14 +112,17 @@ fn setup_file_logging() -> Result<std::path::PathBuf, Box<dyn std::error::Error 
         )
     })?;
 
-    // Create the logger with improved error handling
+    // Open log file for appending (after truncation above)
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)
         .map_err(|e| format!("Failed to open log file {}: {}", log_path.display(), e))?;
 
-    env_logger::Builder::from_default_env()
+    // Determine log level - default to DEBUG for comprehensive logging
+    let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_string());
+
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&log_level))
         .target(env_logger::Target::Pipe(Box::new(log_file)))
         .format(|buf, record| {
             use chrono::{DateTime, Utc};
@@ -127,8 +138,13 @@ fn setup_file_logging() -> Result<std::path::PathBuf, Box<dyn std::error::Error 
         })
         .init();
 
+    // Log startup information with session ID for tracking
+    let session_id = tiny_id::ShortCodeGenerator::new_alphanumeric(8).next_string();
+    log::info!("=== TUI SESSION START (ID: {}) ===", session_id);
     log::info!("TUI mode started - logging to: {}", log_path.display());
+    log::info!("Log level: {}", log_level);
     log::debug!("Log file permissions: {:?}", std::fs::metadata(&log_path));
+    log::debug!("Process ID: {}", std::process::id());
 
     Ok(log_path)
 }
