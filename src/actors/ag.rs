@@ -109,7 +109,13 @@ impl CommandHandler<FaeMessage, SearchParams> for AgHandler {
                                 "Ag skipping search for unsupported mode: {:?}",
                                 query.mode
                             );
-                            // Don't send completion notification for skipped modes
+                            // Send completion notification for skipped modes so ResultHandlerActor can complete
+                            if let Err(e) = controller
+                                .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)
+                                .await
+                            {
+                                log::warn!("Failed to send completion notification for skipped mode: {}", e);
+                            }
                             return;
                         }
                         SearchMode::Literal | SearchMode::Regexp => {

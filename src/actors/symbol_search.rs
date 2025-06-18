@@ -227,7 +227,7 @@ impl SymbolSearchHandler {
         {
             log::error!("Failed to send completeSearch message: {}", e);
         } else {
-            log::trace!("Successfully sent completeSearch notification");
+            log::info!("SymbolSearchActor: Successfully sent completeSearch notification");
         }
     }
 

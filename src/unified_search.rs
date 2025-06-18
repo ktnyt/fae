@@ -48,31 +48,26 @@ impl ContentSearchActor {
 }
 
 impl UnifiedSearchSystem {
-    /// Create a new unified search system with single unified channel
+    /// Create a new unified search system with internally managed channels
     pub async fn new(
         search_path: &str,
         watch_files: bool,
-        external_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-        external_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_with_mode(
-            search_path,
-            watch_files,
-            external_sender,
-            external_receiver,
-            None,
-        )
-        .await
+    ) -> Result<(Self, mpsc::UnboundedSender<Message<FaeMessage>>, mpsc::UnboundedReceiver<Message<FaeMessage>>), Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_with_mode(search_path, watch_files, None).await
     }
 
-    /// Create a new unified search system with direct message passing architecture
+    /// Create a new unified search system with internally managed channels and search mode
     pub async fn new_with_mode(
         search_path: &str,
         watch_files: bool,
-        external_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-        external_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         search_mode: Option<SearchMode>,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(Self, mpsc::UnboundedSender<Message<FaeMessage>>, mpsc::UnboundedReceiver<Message<FaeMessage>>), Box<dyn std::error::Error + Send + Sync>> {
+        // Create unified result channel - this will be returned to external users
+        let (result_sender, result_receiver) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        
+        // Create control channel for sending commands to the system
+        let (control_sender, control_receiver) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+
         // Determine if symbol-related actors are needed
         let needs_symbol_actors = search_mode
             .is_none_or(|mode| matches!(mode, SearchMode::Symbol | SearchMode::Variable));
@@ -84,7 +79,7 @@ impl UnifiedSearchSystem {
             );
         }
 
-        // Create simple actor channels for inline broadcasting
+        // Create simple actor channels
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (filepath_search_tx, filepath_search_rx) =
@@ -95,80 +90,60 @@ impl UnifiedSearchSystem {
             mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (watch_tx, watch_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Simplified approach: All actors use external_sender directly
-        // No internal message routing or coordination needed
+        // All actors will send results to the unified result_sender
 
-        // Create all actors - ALL actors use external_sender directly (no coordination complexity)
-        let symbol_index_actor = if needs_symbol_actors {
-            log::debug!("Creating SymbolIndexActor for symbol search");
-
-            Some(SymbolIndexActor::new_symbol_index_actor(
-                symbol_index_rx,
-                external_sender.clone(),
-                search_path,
-            )?)
+        // Handle coordination between SymbolIndexActor and SymbolSearchActor
+        // Create a special coordination sender for SymbolIndexActor
+        let symbol_index_coordination_sender = if needs_symbol_actors {
+            let result_sender_clone = result_sender.clone();
+            let symbol_search_tx_clone = symbol_search_tx.clone();
+            
+            let (coord_tx, mut coord_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+            
+            tokio::spawn(async move {
+                while let Some(message) = coord_rx.recv().await {
+                    // Forward to external result stream
+                    let _ = result_sender_clone.send(message.clone());
+                    
+                    // Forward symbol-related coordination messages to SymbolSearchActor
+                    match &message.payload {
+                        FaeMessage::CompleteInitialIndexing => {
+                            log::debug!("Forwarding completeInitialIndexing to SymbolSearchActor");
+                            let _ = symbol_search_tx_clone.send(message);
+                        },
+                        FaeMessage::PushSymbolIndex { .. } => {
+                            log::debug!("Forwarding pushSymbolIndex to SymbolSearchActor");
+                            let _ = symbol_search_tx_clone.send(message);
+                        },
+                        FaeMessage::NotifySearchReport { .. } => {
+                            log::debug!("NotifySearchReport - letting it go to external only");
+                            // Don't forward to SymbolSearchActor, only to external
+                        },
+                        _ => {
+                            // Other messages don't need to be forwarded to SymbolSearchActor
+                        }
+                    }
+                }
+            });
+            
+            coord_tx
         } else {
-            log::debug!("Skipping SymbolIndexActor creation for non-symbol search");
-            // Drop unused receiver
-            drop(symbol_index_rx);
-            None
+            result_sender.clone()
         };
 
-        let symbol_search_actor = if needs_symbol_actors {
-            log::debug!("Creating SymbolSearchActor for symbol search");
-
-            Some(SymbolSearchActor::new_symbol_search_actor(
-                symbol_search_rx,
-                external_sender.clone(),
-            ))
-        } else {
-            log::debug!("Skipping SymbolSearchActor creation for non-symbol search");
-            // Drop unused receiver
-            drop(symbol_search_rx);
-            None
-        };
-
-        let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
-            filepath_search_rx,
-            external_sender.clone(),
-            search_path,
-        );
-
-        let content_search_actor =
-            Self::create_content_search_actor(content_search_rx, external_sender.clone(), search_path)
-                .await;
-
-        let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
-            result_handler_rx,
-            external_sender.clone(),
-        );
-
-        // Conditionally create watch actor
-        let watch_actor = if watch_files {
-            log::info!("Creating WatchActor for real-time file monitoring");
-
-            Some(WatchActor::new_watch_actor(
-                watch_rx,
-                external_sender.clone(),
-                search_path,
-            )?)
-        } else {
-            log::debug!("File watching disabled, skipping WatchActor creation");
-            // Drop unused receiver
-            drop(watch_rx);
-            None
-        };
-
-        // Simple external message distribution to all actors
+        // Simple control message distribution to all actors
         let needs_symbol_actors_clone = needs_symbol_actors;
         let watch_files_clone = watch_files;
+        let symbol_search_tx_for_control = if needs_symbol_actors { Some(symbol_search_tx.clone()) } else { None };
+        let result_handler_tx_for_control = result_handler_tx.clone();
+        
         tokio::spawn(async move {
-            let mut external_receiver = external_receiver;
-            while let Some(message) = external_receiver.recv().await {
-                log::debug!("Distributing external message to all actors: {}", message.method);
+            let mut control_receiver = control_receiver;
+            while let Some(message) = control_receiver.recv().await {
+                log::debug!("Distributing control message to all actors: {}", message.method);
                 
                 // Send to result handler for all messages
-                let _ = result_handler_tx.send(message.clone());
+                let _ = result_handler_tx_for_control.send(message.clone());
                 
                 // Send to content and filepath search for all messages  
                 let _ = content_search_tx.send(message.clone());
@@ -177,7 +152,9 @@ impl UnifiedSearchSystem {
                 // Conditionally send to symbol actors
                 if needs_symbol_actors_clone {
                     let _ = symbol_index_tx.send(message.clone());
-                    let _ = symbol_search_tx.send(message.clone());
+                    if let Some(ref symbol_search_tx) = symbol_search_tx_for_control {
+                        let _ = symbol_search_tx.send(message.clone());
+                    }
                 }
                 
                 // Conditionally send to watch actor
@@ -187,12 +164,69 @@ impl UnifiedSearchSystem {
             }
         });
 
+        // Create all actors with unified result sender
+        let symbol_index_actor = if needs_symbol_actors {
+            log::debug!("Creating SymbolIndexActor for symbol search with coordination");
+
+            Some(SymbolIndexActor::new_symbol_index_actor(
+                symbol_index_rx,
+                symbol_index_coordination_sender,
+                search_path,
+            )?)
+        } else {
+            log::debug!("Skipping SymbolIndexActor creation for non-symbol search");
+            drop(symbol_index_rx);
+            None
+        };
+
+        let symbol_search_actor = if needs_symbol_actors {
+            log::debug!("Creating SymbolSearchActor for symbol search");
+
+            Some(SymbolSearchActor::new_symbol_search_actor(
+                symbol_search_rx,
+                result_handler_tx.clone(),
+            ))
+        } else {
+            log::debug!("Skipping SymbolSearchActor creation for non-symbol search");
+            drop(symbol_search_rx);
+            None
+        };
+
+        let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
+            filepath_search_rx,
+            result_handler_tx.clone(),
+            search_path,
+        );
+
+        let content_search_actor =
+            Self::create_content_search_actor(content_search_rx, result_handler_tx.clone(), search_path)
+                .await;
+
+        let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
+            result_handler_rx,
+            result_sender.clone(),
+        );
+
+        let watch_actor = if watch_files {
+            log::info!("Creating WatchActor for real-time file monitoring");
+
+            Some(WatchActor::new_watch_actor(
+                watch_rx,
+                result_sender.clone(),
+                search_path,
+            )?)
+        } else {
+            log::debug!("File watching disabled, skipping WatchActor creation");
+            drop(watch_rx);
+            None
+        };
+
         // Start watching if watch actor was created
         if let Some(ref _actor) = watch_actor {
             log::info!("Starting file system monitoring for path: {}", search_path);
         }
 
-        Ok(Self {
+        let system = Self {
             watch_files,
             symbol_index_actor,
             symbol_search_actor,
@@ -200,7 +234,9 @@ impl UnifiedSearchSystem {
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
             watch_actor,
-        })
+        };
+
+        Ok((system, control_sender, result_receiver))
     }
 
     /// Create content search actor with fallback strategy (rg → ag → native)
@@ -294,10 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_search_system_creation() {
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let result =
-            UnifiedSearchSystem::new("./src", false, result_sender, control_receiver).await;
+        let result = UnifiedSearchSystem::new("./src", false).await;
         assert!(
             result.is_ok(),
             "Should create unified search system successfully"
@@ -306,9 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_search_execution() {
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 

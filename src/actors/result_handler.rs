@@ -88,6 +88,16 @@ impl ResultHandler {
             return; // Already completed
         }
 
+        // Only complete if we've actually received search results (search_started = true)
+        // This prevents premature completion from actors that skip unsupported modes
+        if !self.search_started {
+            log::info!(
+                "ResultHandler: Ignoring completion notification - no search results received yet ({} results)",
+                self.result_count
+            );
+            return;
+        }
+
         log::info!(
             "Search completed notification received, {} results collected so far",
             self.result_count
@@ -197,6 +207,7 @@ impl MessageHandler<FaeMessage> for ResultHandler {
                 }
             }
             "completeSearch" => {
+                log::info!("ResultHandler: Received completeSearch message");
                 if let FaeMessage::CompleteSearch = message.payload {
                     self.handle_search_completion(controller).await;
                 } else {

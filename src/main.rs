@@ -265,11 +265,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-            // Create simplified channels for UnifiedSearchSystem
-            let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel::<
-                fae::core::Message<fae::actors::messages::FaeMessage>,
-            >();
+            // Create UnifiedSearchSystem with file watching for TUI mode
+            let (mut search_system, control_sender, mut result_receiver) = UnifiedSearchSystem::new(
+                ".",
+                true, // Enable file watching for TUI mode
+            )
+            .await?;
 
             // Create simplified TUI message handler
             struct TuiSearchHandler {
@@ -386,15 +387,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 log::debug!("Result processing ended");
             });
 
-            // Create UnifiedSearchSystem with file watching for TUI mode
-            let mut search_system = UnifiedSearchSystem::new(
-                ".",
-                true, // Enable file watching for TUI mode
-                result_sender,
-                control_receiver,
-            )
-            .await?;
-
             // Initialize symbol indexing
             let init_message = fae::core::Message::new(
                 "initialize",
@@ -431,17 +423,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         search_params.mode
     );
 
-    // Create control channels for external communication
-    let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel();
-
     // Create unified search system (CLI mode doesn't need file watching)
     // Pass search mode for optimization (skip symbol actors for non-symbol searches)
-    let mut search_system = UnifiedSearchSystem::new_with_mode(
+    let (mut search_system, control_sender, mut result_receiver) = UnifiedSearchSystem::new_with_mode(
         &config.search_path,
         false,
-        result_sender,
-        control_receiver,
         Some(search_params.mode),
     )
     .await?;
