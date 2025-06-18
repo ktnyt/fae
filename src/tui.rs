@@ -73,6 +73,20 @@ pub trait TuiMessageHandler {
 use crate::actors::types::SearchMode;
 use crate::cli::parse_query_with_mode;
 
+/// Input operations for unified input handling
+#[derive(Debug, Clone)]
+pub enum InputOperation {
+    InsertChar(char),
+    MoveCursorToStart,
+    MoveCursorToEnd,
+    MoveCursorLeft,
+    MoveCursorRight,
+    DeleteCharForward,
+    DeleteCharBackward,
+    KillLine,
+    Yank,
+}
+
 /// Type alias for TUI state update results to avoid large error types
 pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
 
@@ -83,10 +97,6 @@ pub struct ToastState {
     pub message: String,
     pub toast_type: ToastType,
     pub show_until: Option<Instant>,
-    // Auto-close tracking
-    last_message: String,
-    last_change_time: Instant,
-    pub same_message_count: u32,
 }
 
 /// Type of toast notification
@@ -112,49 +122,23 @@ impl ToastState {
             message: String::new(),
             toast_type: ToastType::Info,
             show_until: None,
-            last_message: String::new(),
-            last_change_time: Instant::now(),
-            same_message_count: 0,
         }
     }
 
     /// Show a toast with specified message and type for given duration
     pub fn show(&mut self, message: String, toast_type: ToastType, duration: Duration) {
-        // Check if this is the same message as before
-        if self.last_message == message {
-            self.same_message_count += 1;
-            // If same message appears 3+ times, reduce display duration
-            let adjusted_duration = if self.same_message_count >= 3 {
-                Duration::from_millis(500) // Very short duration for repeated messages
-            } else {
-                duration
-            };
-            self.show_until = Some(Instant::now() + adjusted_duration);
-        } else {
-            // New message - reset tracking
-            self.same_message_count = 1;
-            self.last_message = message.clone();
-            self.last_change_time = Instant::now();
-            self.show_until = Some(Instant::now() + duration);
-        }
-
         self.visible = true;
         self.message = message;
         self.toast_type = toast_type;
+        self.show_until = Some(Instant::now() + duration);
     }
 
-    /// Update toast state - hide if expired or stale
+    /// Update toast state - hide if expired
     pub fn update(&mut self) {
         if let Some(until) = self.show_until {
             if Instant::now() >= until {
                 self.hide();
-                return;
             }
-        }
-
-        // Auto-close if same state for too long (30 seconds without change)
-        if self.visible && self.last_change_time.elapsed() > Duration::from_secs(30) {
-            self.hide();
         }
     }
 
@@ -162,9 +146,6 @@ impl ToastState {
     pub fn hide(&mut self) {
         self.visible = false;
         self.show_until = None;
-        // Reset tracking when hiding
-        self.same_message_count = 0;
-        self.last_change_time = Instant::now();
     }
 }
 
@@ -550,13 +531,22 @@ impl TuiApp {
                     'c' => self.should_quit = true,
 
                     // Text editing (emacs-style)
-                    'a' => self.move_cursor_to_start(),
-                    'b' => self.move_cursor_left(),
-                    'e' => self.move_cursor_to_end(),
-                    'f' => self.move_cursor_right(),
-                    'h' => self.delete_char_backward(),
-                    'k' => self.kill_line(),
-                    'y' => self.yank(),
+                    'a' => self.handle_input_operation(InputOperation::MoveCursorToStart),
+                    'b' => self.handle_input_operation(InputOperation::MoveCursorLeft),
+                    'e' => self.handle_input_operation(InputOperation::MoveCursorToEnd),
+                    'f' => self.handle_input_operation(InputOperation::MoveCursorRight),
+                    'h' => {
+                        self.handle_input_operation(InputOperation::DeleteCharBackward);
+                        self.execute_incremental_search();
+                    },
+                    'k' => {
+                        self.handle_input_operation(InputOperation::KillLine);
+                        self.execute_incremental_search();
+                    },
+                    'y' => {
+                        self.handle_input_operation(InputOperation::Yank);
+                        self.execute_incremental_search();
+                    },
 
                     // Search and navigation
                     'g' => self.abort_search(),
@@ -571,7 +561,8 @@ impl TuiApp {
                             self.scroll_down_half_page();
                         } else {
                             // Otherwise, delete character forward
-                            self.delete_char_forward();
+                            self.handle_input_operation(InputOperation::DeleteCharForward);
+                            self.execute_incremental_search();
                         }
                     }
 
@@ -606,34 +597,35 @@ impl TuiApp {
 
             // Text cursor movement (arrow keys and Home/End)
             KeyCode::Left => {
-                self.move_cursor_left();
+                self.handle_input_operation(InputOperation::MoveCursorLeft);
                 self.needs_redraw = true;
             }
             KeyCode::Right => {
-                self.move_cursor_right();
+                self.handle_input_operation(InputOperation::MoveCursorRight);
                 self.needs_redraw = true;
             }
             KeyCode::Home => {
-                self.move_cursor_to_start();
+                self.handle_input_operation(InputOperation::MoveCursorToStart);
                 self.needs_redraw = true;
             }
             KeyCode::End => {
-                self.move_cursor_to_end();
+                self.handle_input_operation(InputOperation::MoveCursorToEnd);
                 self.needs_redraw = true;
             }
             KeyCode::Delete => {
-                self.delete_char_forward();
+                self.handle_input_operation(InputOperation::DeleteCharForward);
+                self.execute_incremental_search();
                 self.needs_redraw = true;
             }
 
             // Text input with incremental search
             KeyCode::Char(c) => {
-                self.insert_char(c);
+                self.handle_input_operation(InputOperation::InsertChar(c));
                 self.execute_incremental_search();
                 self.needs_redraw = true;
             }
             KeyCode::Backspace => {
-                self.delete_char_backward();
+                self.handle_input_operation(InputOperation::DeleteCharBackward);
                 self.execute_incremental_search();
                 self.needs_redraw = true;
             }
@@ -764,72 +756,56 @@ impl TuiApp {
         self.execute_incremental_search();
     }
 
-    // ===== Emacs-style Text Editing Methods =====
+    // ===== Input Processing Integration =====
 
-    /// Insert character at cursor position (C-f, Right Arrow)
-    fn insert_char(&mut self, c: char) {
-        self.state
-            .search_input
-            .insert(self.state.cursor_position, c);
-        self.state.cursor_position += 1;
-    }
-
-    /// Move cursor to start of line (C-a, Home)
-    fn move_cursor_to_start(&mut self) {
-        self.state.cursor_position = 0;
-    }
-
-    /// Move cursor to end of line (C-e, End)
-    fn move_cursor_to_end(&mut self) {
-        self.state.cursor_position = self.state.search_input.len();
-    }
-
-    /// Move cursor left one character (C-b, Left Arrow)
-    fn move_cursor_left(&mut self) {
-        if self.state.cursor_position > 0 {
-            self.state.cursor_position -= 1;
-        }
-    }
-
-    /// Move cursor right one character (C-f, Right Arrow)
-    fn move_cursor_right(&mut self) {
-        if self.state.cursor_position < self.state.search_input.len() {
-            self.state.cursor_position += 1;
-        }
-    }
-
-    /// Delete character forward at cursor (C-d, Delete)
-    fn delete_char_forward(&mut self) {
-        if self.state.cursor_position < self.state.search_input.len() {
-            self.state.search_input.remove(self.state.cursor_position);
-        }
-    }
-
-    /// Delete character backward from cursor (C-h, Backspace)
-    fn delete_char_backward(&mut self) {
-        if self.state.cursor_position > 0 {
-            self.state.cursor_position -= 1;
-            self.state.search_input.remove(self.state.cursor_position);
-        }
-    }
-
-    /// Kill text from cursor to end of line (C-k)
-    fn kill_line(&mut self) {
-        if self.state.cursor_position < self.state.search_input.len() {
-            let killed_text = self.state.search_input[self.state.cursor_position..].to_string();
-            self.state.kill_ring = killed_text;
-            self.state.search_input.truncate(self.state.cursor_position);
-        }
-    }
-
-    /// Yank (paste) text from kill ring (C-y)
-    fn yank(&mut self) {
-        if !self.state.kill_ring.is_empty() {
-            let insert_text = self.state.kill_ring.clone();
-            self.state
-                .search_input
-                .insert_str(self.state.cursor_position, &insert_text);
-            self.state.cursor_position += insert_text.len();
+    /// Handle input processing with unified InputHandler
+    fn handle_input_operation(&mut self, operation: InputOperation) {
+        match operation {
+            InputOperation::InsertChar(c) => {
+                self.state.search_input.insert(self.state.cursor_position, c);
+                self.state.cursor_position += 1;
+            }
+            InputOperation::MoveCursorToStart => {
+                self.state.cursor_position = 0;
+            }
+            InputOperation::MoveCursorToEnd => {
+                self.state.cursor_position = self.state.search_input.len();
+            }
+            InputOperation::MoveCursorLeft => {
+                if self.state.cursor_position > 0 {
+                    self.state.cursor_position -= 1;
+                }
+            }
+            InputOperation::MoveCursorRight => {
+                if self.state.cursor_position < self.state.search_input.len() {
+                    self.state.cursor_position += 1;
+                }
+            }
+            InputOperation::DeleteCharForward => {
+                if self.state.cursor_position < self.state.search_input.len() {
+                    self.state.search_input.remove(self.state.cursor_position);
+                }
+            }
+            InputOperation::DeleteCharBackward => {
+                if self.state.cursor_position > 0 {
+                    self.state.cursor_position -= 1;
+                    self.state.search_input.remove(self.state.cursor_position);
+                }
+            }
+            InputOperation::KillLine => {
+                if self.state.cursor_position < self.state.search_input.len() {
+                    let killed_text = self.state.search_input[self.state.cursor_position..].to_string();
+                    self.state.kill_ring = killed_text;
+                    self.state.search_input.truncate(self.state.cursor_position);
+                }
+            }
+            InputOperation::Yank => {
+                if !self.state.kill_ring.is_empty() {
+                    let insert_text = self.state.kill_ring.clone();
+                    self.state.search_input.insert_str(self.state.cursor_position, &insert_text);
+                    self.state.cursor_position += insert_text.len();
+                }
+            }
         }
     }
 
@@ -1511,16 +1487,9 @@ fn centered_rect(
         .split(popup_layout[1])[1]
 }
 
-/// Get the display message for a toast (with repeat count if applicable)
+/// Get the display message for a toast
 fn get_toast_display_message(toast_state: &ToastState) -> String {
-    if toast_state.same_message_count > 1 {
-        format!(
-            "{} ({}x)",
-            toast_state.message, toast_state.same_message_count
-        )
-    } else {
-        toast_state.message.clone()
-    }
+    toast_state.message.clone()
 }
 
 /// Calculate optimal toast size in absolute dimensions (characters and lines)
@@ -1651,28 +1620,32 @@ mod tests {
     fn test_toast_state_creation() {
         let toast = ToastState::new();
         assert!(!toast.visible);
-        assert_eq!(toast.same_message_count, 0);
+        assert_eq!(toast.message, "");
     }
 
     #[test]
-    fn test_toast_state_duplicate_messages() {
+    fn test_toast_state_basic_operations() {
         let mut toast = ToastState::new();
 
-        // First message
+        // Show message
         toast.show("test".to_string(), ToastType::Info, Duration::from_secs(2));
-        assert_eq!(toast.same_message_count, 1);
+        assert!(toast.visible);
+        assert_eq!(toast.message, "test");
+        assert_eq!(toast.toast_type, ToastType::Info);
 
-        // Same message again
-        toast.show("test".to_string(), ToastType::Info, Duration::from_secs(2));
-        assert_eq!(toast.same_message_count, 2);
+        // Hide message
+        toast.hide();
+        assert!(!toast.visible);
 
-        // Different message
+        // Update message with different type
         toast.show(
             "different".to_string(),
-            ToastType::Info,
-            Duration::from_secs(2),
+            ToastType::Success,
+            Duration::from_secs(3),
         );
-        assert_eq!(toast.same_message_count, 1);
+        assert!(toast.visible);
+        assert_eq!(toast.message, "different");
+        assert_eq!(toast.toast_type, ToastType::Success);
     }
 
     #[test]
