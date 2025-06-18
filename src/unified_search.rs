@@ -1,7 +1,8 @@
-//! Unified search system using broadcast messaging and ChannelIntegrator for actor coordination
+//! Unified search system using ChannelIntegrator/Multiplexer for simplified actor coordination
 //!
 //! This module provides a simplified search interface that coordinates
-//! multiple search actors through broadcast messaging for maximum flexibility.
+//! multiple search actors through the core ChannelIntegrator/Multiplexer system,
+//! eliminating the need for complex internal broadcasting.
 
 use crate::actors::messages::FaeMessage;
 use crate::actors::types::SearchMode;
@@ -9,12 +10,11 @@ use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
     SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
-use crate::core::{ChannelIntegratorBuilder, Message};
+use crate::core::{Broadcaster, ChannelIntegratorBuilder, Message};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
 /// Unified search system that coordinates all search actors
-/// Now designed for external control via message passing with broadcast messaging
+/// Now uses ChannelIntegrator/Multiplexer for simplified message passing
 pub struct UnifiedSearchSystem {
     watch_files: bool,
 
@@ -27,9 +27,8 @@ pub struct UnifiedSearchSystem {
     result_handler_actor: Option<ResultHandlerActor>,
     watch_actor: Option<WatchActor>,
 
-    // Task handles for message forwarding
-    message_forwarding_handle: Option<JoinHandle<()>>,
-    result_forwarding_handle: Option<JoinHandle<()>>,
+    // Broadcaster for distributing control messages to all actors
+    broadcaster: Option<Broadcaster<FaeMessage>>,
 }
 
 /// Enum for different content search actors
@@ -51,29 +50,29 @@ impl ContentSearchActor {
 }
 
 impl UnifiedSearchSystem {
-    /// Create a new unified search system with external control channels
+    /// Create a new unified search system with single unified channel
     pub async fn new(
         search_path: &str,
         watch_files: bool,
-        result_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-        control_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+        external_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+        external_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Self::new_with_mode(
             search_path,
             watch_files,
-            result_sender,
-            control_receiver,
+            external_sender,
+            external_receiver,
             None,
         )
         .await
     }
 
-    /// Create a new unified search system with external control channels and optional search mode optimization
+    /// Create a new unified search system with ChannelIntegrator/Multiplexer architecture
     pub async fn new_with_mode(
         search_path: &str,
         watch_files: bool,
-        result_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
-        control_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
+        external_sender: mpsc::UnboundedSender<Message<FaeMessage>>,
+        external_receiver: mpsc::UnboundedReceiver<Message<FaeMessage>>,
         search_mode: Option<SearchMode>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Determine if symbol-related actors are needed
@@ -87,7 +86,7 @@ impl UnifiedSearchSystem {
             );
         }
 
-        // Create actor channels for broadcast messaging
+        // Create actor channels for Broadcaster
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (filepath_search_tx, filepath_search_rx) =
@@ -98,7 +97,7 @@ impl UnifiedSearchSystem {
             mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (watch_tx, watch_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Collect all actor senders for broadcasting
+        // Collect all actor senders for the Broadcaster
         let mut actor_senders = vec![filepath_search_tx, content_search_tx, result_handler_tx];
 
         // Conditionally add symbol actor senders
@@ -112,7 +111,10 @@ impl UnifiedSearchSystem {
             actor_senders.push(watch_tx);
         }
 
-        // Create actor result senders for ChannelIntegrator
+        // Create Broadcaster for distributing control messages to all actors
+        let (broadcaster, control_sender) = Broadcaster::new(actor_senders);
+
+        // Create actor result receivers for ChannelIntegrator
         let mut result_receivers = Vec::new();
 
         // Create all actors and collect their result receivers
@@ -188,73 +190,51 @@ impl UnifiedSearchSystem {
             None
         };
 
-        // Create ChannelIntegrator for outgoing result messages
+        // Create ChannelIntegrator for collecting all actor results
         let mut result_integrator = ChannelIntegratorBuilder::new();
         for rx in result_receivers {
             result_integrator = result_integrator.add_receiver(rx);
         }
         let mut result_integrator = result_integrator.build();
 
-        // Clone actor_senders for both tasks before moving
-        let actor_senders_for_control = actor_senders.clone();
-        let actor_senders_for_internal = actor_senders;
-
-        // Start message broadcasting task
-        let message_forwarding_handle = tokio::spawn(async move {
-            let mut control_receiver = control_receiver;
-            while let Some(message) = control_receiver.recv().await {
-                log::debug!("Broadcasting message: {}", message.method);
-
-                // Send message to all active actors
-                for sender in &actor_senders_for_control {
-                    if let Err(e) = sender.send(message.clone()) {
-                        log::debug!("Failed to send message to actor: {}", e);
-                    }
-                }
-            }
-            log::debug!("Message broadcasting task ended gracefully");
-        });
-
-        // Start result forwarding task with selective message broadcasting
-        let result_sender_clone = result_sender.clone();
-        let result_forwarding_handle = tokio::spawn(async move {
-            while let Some(message) = result_integrator.recv().await {
-                log::debug!("Processing actor result message: {}", message.method);
-
-                // Only broadcast specific internal coordination messages, NOT search results
-                match message.method.as_str() {
-                    "pushSearchResult" => {
-                        // Search results should only go to external receiver, not broadcast internally
-                        // This prevents duplicate processing by ResultHandler
-                        log::trace!("Forwarding search result to external receiver only");
-                    }
-                    "completeSearch" | "notifySearchReport" => {
-                        // Internal coordination messages should be broadcast to all actors
-                        log::debug!("Broadcasting coordination message to all actors: {}", message.method);
-                        for sender in &actor_senders_for_internal {
-                            if let Err(e) = sender.send(message.clone()) {
-                                log::debug!("Failed to broadcast coordination message to actor: {}", e);
-                            }
-                        }
-                    }
-                    _ => {
-                        // Other messages broadcast for compatibility
-                        log::debug!("Broadcasting message to all actors: {}", message.method);
-                        for sender in &actor_senders_for_internal {
-                            if let Err(e) = sender.send(message.clone()) {
-                                log::debug!("Failed to broadcast message to actor: {}", e);
-                            }
-                        }
-                    }
-                }
-
-                // Always forward all messages to external result receiver
-                if let Err(e) = result_sender_clone.send(message) {
-                    log::debug!("Result forwarding stopped (receiver closed): {}", e);
+        // Forward external messages to broadcaster
+        let control_sender_clone = control_sender.clone();
+        tokio::spawn(async move {
+            let mut external_receiver = external_receiver;
+            while let Some(message) = external_receiver.recv().await {
+                log::debug!("Forwarding external message to broadcaster: {}", message.method);
+                if let Err(e) = control_sender_clone.send(message) {
+                    log::debug!("External message forwarding stopped: {}", e);
                     break;
                 }
             }
-            log::debug!("Result forwarding task ended gracefully");
+        });
+
+        // Forward actor results to external sender with coordination message loopback
+        let external_sender_clone = external_sender.clone();
+        let control_sender_for_loopback = control_sender.clone();
+        tokio::spawn(async move {
+            while let Some(message) = result_integrator.recv().await {
+                log::debug!("Processing actor message: {}", message.method);
+                
+                // Check if this is a coordination message that should be looped back
+                match message.method.as_str() {
+                    "completeInitialIndexing" | "completeSearch" | "notifySearchReport" | "pushSymbolIndex" => {
+                        log::debug!("Looping back coordination message to broadcaster: {}", message.method);
+                        // Send to broadcaster for distribution to all actors
+                        if let Err(e) = control_sender_for_loopback.send(message.clone()) {
+                            log::debug!("Coordination message loopback failed: {}", e);
+                        }
+                    }
+                    _ => {}
+                }
+                
+                // Always forward to external receiver
+                if let Err(e) = external_sender_clone.send(message) {
+                    log::debug!("External forwarding stopped (receiver closed): {}", e);
+                    break;
+                }
+            }
         });
 
         // Start watching if watch actor was created
@@ -270,8 +250,7 @@ impl UnifiedSearchSystem {
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
             watch_actor,
-            message_forwarding_handle: Some(message_forwarding_handle),
-            result_forwarding_handle: Some(result_forwarding_handle),
+            broadcaster: Some(broadcaster),
         })
     }
 
@@ -329,19 +308,13 @@ impl UnifiedSearchSystem {
     pub fn shutdown(&mut self) {
         log::info!("Shutting down unified search system");
 
-        // Phase 1: Stop message forwarding task
-        if let Some(handle) = self.message_forwarding_handle.take() {
-            log::debug!("Terminating message forwarding task");
-            handle.abort();
+        // Phase 1: Shutdown broadcaster
+        if let Some(mut broadcaster) = self.broadcaster.take() {
+            log::debug!("Shutting down broadcaster");
+            broadcaster.shutdown();
         }
 
-        // Phase 2: Stop result forwarding task
-        if let Some(handle) = self.result_forwarding_handle.take() {
-            log::debug!("Terminating result forwarding task");
-            handle.abort();
-        }
-
-        // Phase 3: Shutdown all actors
+        // Phase 2: Shutdown all actors
         if let Some(mut actor) = self.symbol_index_actor.take() {
             actor.shutdown();
         }
