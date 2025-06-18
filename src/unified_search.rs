@@ -1,8 +1,8 @@
-//! Unified search system using ChannelIntegrator/Multiplexer for simplified actor coordination
+//! Unified search system with direct actor communication
 //!
 //! This module provides a simplified search interface that coordinates
-//! multiple search actors through the core ChannelIntegrator/Multiplexer system,
-//! eliminating the need for complex internal broadcasting.
+//! multiple search actors through direct message passing, eliminating
+//! the need for complex channel integration and broadcasting.
 
 use crate::actors::messages::FaeMessage;
 use crate::actors::types::SearchMode;
@@ -10,11 +10,11 @@ use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
     SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
-use crate::core::{ChannelIntegratorBuilder, Message};
+use crate::core::Message;
 use tokio::sync::mpsc;
 
 /// Unified search system that coordinates all search actors
-/// Now uses ChannelIntegrator/Multiplexer for simplified message passing
+/// Uses direct message passing with unified result handling
 pub struct UnifiedSearchSystem {
     watch_files: bool,
 
@@ -65,7 +65,7 @@ impl UnifiedSearchSystem {
         .await
     }
 
-    /// Create a new unified search system with ChannelIntegrator/Multiplexer architecture
+    /// Create a new unified search system with direct message passing architecture
     pub async fn new_with_mode(
         search_path: &str,
         watch_files: bool,
@@ -95,32 +95,16 @@ impl UnifiedSearchSystem {
             mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (watch_tx, watch_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Collect all actor senders for inline broadcasting
-        let mut actor_senders = vec![filepath_search_tx, content_search_tx, result_handler_tx];
+        // Simplified approach: All actors use external_sender directly
+        // No internal message routing or coordination needed
 
-        // Conditionally add symbol actor senders
-        if needs_symbol_actors {
-            actor_senders.push(symbol_index_tx);
-            actor_senders.push(symbol_search_tx);
-        }
-
-        // Conditionally add watch actor sender
-        if watch_files {
-            actor_senders.push(watch_tx);
-        }
-
-        // Create actor result receivers for ChannelIntegrator
-        let mut result_receivers = Vec::new();
-
-        // Create all actors and collect their result receivers
+        // Create all actors - ALL actors use external_sender directly (no coordination complexity)
         let symbol_index_actor = if needs_symbol_actors {
             log::debug!("Creating SymbolIndexActor for symbol search");
-            let (actor_result_tx, actor_result_rx) = mpsc::unbounded_channel();
-            result_receivers.push(actor_result_rx);
 
             Some(SymbolIndexActor::new_symbol_index_actor(
                 symbol_index_rx,
-                actor_result_tx,
+                external_sender.clone(),
                 search_path,
             )?)
         } else {
@@ -132,12 +116,10 @@ impl UnifiedSearchSystem {
 
         let symbol_search_actor = if needs_symbol_actors {
             log::debug!("Creating SymbolSearchActor for symbol search");
-            let (actor_result_tx, actor_result_rx) = mpsc::unbounded_channel();
-            result_receivers.push(actor_result_rx);
 
             Some(SymbolSearchActor::new_symbol_search_actor(
                 symbol_search_rx,
-                actor_result_tx,
+                external_sender.clone(),
             ))
         } else {
             log::debug!("Skipping SymbolSearchActor creation for non-symbol search");
@@ -146,36 +128,28 @@ impl UnifiedSearchSystem {
             None
         };
 
-        let (filepath_result_tx, filepath_result_rx) = mpsc::unbounded_channel();
-        result_receivers.push(filepath_result_rx);
         let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
             filepath_search_rx,
-            filepath_result_tx,
+            external_sender.clone(),
             search_path,
         );
 
-        let (content_result_tx, content_result_rx) = mpsc::unbounded_channel();
-        result_receivers.push(content_result_rx);
         let content_search_actor =
-            Self::create_content_search_actor(content_search_rx, content_result_tx, search_path)
+            Self::create_content_search_actor(content_search_rx, external_sender.clone(), search_path)
                 .await;
 
-        let (result_handler_result_tx, result_handler_result_rx) = mpsc::unbounded_channel();
-        result_receivers.push(result_handler_result_rx);
         let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
             result_handler_rx,
-            result_handler_result_tx,
+            external_sender.clone(),
         );
 
         // Conditionally create watch actor
         let watch_actor = if watch_files {
             log::info!("Creating WatchActor for real-time file monitoring");
-            let (watch_result_tx, watch_result_rx) = mpsc::unbounded_channel();
-            result_receivers.push(watch_result_rx);
 
             Some(WatchActor::new_watch_actor(
                 watch_rx,
-                watch_result_tx,
+                external_sender.clone(),
                 search_path,
             )?)
         } else {
@@ -185,49 +159,30 @@ impl UnifiedSearchSystem {
             None
         };
 
-        // Create ChannelIntegrator for collecting all actor results
-        let mut result_integrator = ChannelIntegratorBuilder::new();
-        for rx in result_receivers {
-            result_integrator = result_integrator.add_receiver(rx);
-        }
-        let mut result_integrator = result_integrator.build();
-
-        // Simple inline broadcast implementation
-        let actor_senders_clone = actor_senders.clone();
+        // Simple external message distribution to all actors
+        let needs_symbol_actors_clone = needs_symbol_actors;
+        let watch_files_clone = watch_files;
         tokio::spawn(async move {
             let mut external_receiver = external_receiver;
             while let Some(message) = external_receiver.recv().await {
-                log::debug!("Broadcasting external message to all actors: {}", message.method);
-                // Simple broadcast: send to all actors
-                for sender in &actor_senders_clone {
-                    let _ = sender.send(message.clone());
-                }
-            }
-        });
-
-        // Forward actor results to external sender with coordination message loopback
-        let external_sender_clone = external_sender.clone();
-        let actor_senders_for_loopback = actor_senders.clone();
-        tokio::spawn(async move {
-            while let Some(message) = result_integrator.recv().await {
-                log::debug!("Processing actor message: {}", message.method);
+                log::debug!("Distributing external message to all actors: {}", message.method);
                 
-                // Check if this is a coordination message that should be looped back
-                match message.method.as_str() {
-                    "completeInitialIndexing" | "completeSearch" | "notifySearchReport" | "pushSymbolIndex" => {
-                        log::debug!("Looping back coordination message to all actors: {}", message.method);
-                        // Simple broadcast: send to all actors
-                        for sender in &actor_senders_for_loopback {
-                            let _ = sender.send(message.clone());
-                        }
-                    }
-                    _ => {}
+                // Send to result handler for all messages
+                let _ = result_handler_tx.send(message.clone());
+                
+                // Send to content and filepath search for all messages  
+                let _ = content_search_tx.send(message.clone());
+                let _ = filepath_search_tx.send(message.clone());
+                
+                // Conditionally send to symbol actors
+                if needs_symbol_actors_clone {
+                    let _ = symbol_index_tx.send(message.clone());
+                    let _ = symbol_search_tx.send(message.clone());
                 }
                 
-                // Always forward to external receiver
-                if let Err(e) = external_sender_clone.send(message) {
-                    log::debug!("External forwarding stopped (receiver closed): {}", e);
-                    break;
+                // Conditionally send to watch actor
+                if watch_files_clone {
+                    let _ = watch_tx.send(message.clone());
                 }
             }
         });
