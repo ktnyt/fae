@@ -289,4 +289,101 @@ mod tests {
         assert_eq!(cloned_symbol.content, "fn clone_symbol(&self) { ... }");
         assert_eq!(cloned_symbol.symbol_type, SymbolType::Method);
     }
+
+    #[test]
+    fn test_search_mode_debug_format() {
+        // Test Debug implementation for SearchMode
+        assert_eq!(format!("{:?}", SearchMode::Literal), "Literal");
+        assert_eq!(format!("{:?}", SearchMode::Regexp), "Regexp");
+        assert_eq!(format!("{:?}", SearchMode::Filepath), "Filepath");
+        assert_eq!(format!("{:?}", SearchMode::Symbol), "Symbol");
+        assert_eq!(format!("{:?}", SearchMode::Variable), "Variable");
+    }
+
+    #[test]
+    fn test_search_params_debug_format() {
+        let params = SearchParams {
+            query: "test_query".to_string(),
+            mode: SearchMode::Regexp,
+        };
+        let debug_output = format!("{:?}", params);
+        assert!(debug_output.contains("test_query"));
+        assert!(debug_output.contains("Regexp"));
+    }
+
+    #[test]
+    fn test_search_result_debug_format() {
+        let result = SearchResult {
+            filename: "test.rs".to_string(),
+            line: 42,
+            column: 10,
+            content: "fn test_function()".to_string(),
+        };
+        let debug_output = format!("{:?}", result);
+        assert!(debug_output.contains("test.rs"));
+        assert!(debug_output.contains("42"));
+        assert!(debug_output.contains("10"));
+        assert!(debug_output.contains("fn test_function()"));
+    }
+
+    #[test]
+    fn test_symbol_type_hash_and_equality() {
+        use std::collections::HashSet;
+        
+        // Test that SymbolType can be used in hash collections
+        let mut set = HashSet::new();
+        set.insert(SymbolType::Function);
+        set.insert(SymbolType::Method);
+        set.insert(SymbolType::Function); // Duplicate should not increase size
+        
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&SymbolType::Function));
+        assert!(set.contains(&SymbolType::Method));
+        assert!(!set.contains(&SymbolType::Class));
+    }
+
+    #[test]
+    fn test_symbol_type_all_display_names_complete() {
+        // Test all SymbolType display names to ensure complete coverage
+        let test_cases = vec![
+            (SymbolType::Function, "fn"),
+            (SymbolType::Method, "method"),
+            (SymbolType::Class, "class"),
+            (SymbolType::Struct, "struct"),
+            (SymbolType::Enum, "enum"),
+            (SymbolType::Interface, "interface"),
+            (SymbolType::Variable, "var"),
+            (SymbolType::Constant, "const"),
+            (SymbolType::Module, "mod"),
+            (SymbolType::Type, "type"),
+            (SymbolType::Field, "field"),
+            (SymbolType::Parameter, "param"),
+        ];
+        
+        for (symbol_type, expected_name) in test_cases {
+            assert_eq!(symbol_type.display_name(), expected_name);
+        }
+    }
+
+    #[test]
+    fn test_search_mode_copy_trait() {
+        // Test that SearchMode implements Copy
+        let mode1 = SearchMode::Symbol;
+        let mode2 = mode1; // This should work with Copy
+        assert_eq!(mode1, mode2);
+        
+        // Original should still be usable
+        assert_eq!(mode1, SearchMode::Symbol);
+    }
+
+    #[test]
+    fn test_symbol_type_copy_trait() {
+        // Test that SymbolType implements Copy
+        let type1 = SymbolType::Function;
+        let type2 = type1; // This should work with Copy
+        assert_eq!(type1, type2);
+        
+        // Original should still be usable
+        assert_eq!(type1, SymbolType::Function);
+    }
 }

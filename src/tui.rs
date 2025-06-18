@@ -419,7 +419,7 @@ impl TuiApp {
 
             // Skip search if query is empty or just contains search prefixes
             let trimmed_query = query.trim();
-            if trimmed_query.is_empty() || trimmed_query == "#" || trimmed_query == ">" || trimmed_query == "/" {
+            if trimmed_query.is_empty() || trimmed_query == "#" || trimmed_query == "$" || trimmed_query == "@" || trimmed_query == "/" {
                 log::debug!("Aborting search for empty or prefix-only query: '{}'", query);
                 return Ok(());
             }
