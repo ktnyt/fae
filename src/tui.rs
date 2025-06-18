@@ -56,6 +56,19 @@ use std::{
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
+/// Trait for handling TUI messages and search operations
+/// This allows external components to handle search execution while keeping TuiApp focused on UI
+pub trait TuiMessageHandler {
+    /// Execute a search with the given query
+    fn execute_search(&self, query: String) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    
+    /// Clear all search results
+    fn clear_results(&self) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    
+    /// Abort current search
+    fn abort_search(&self) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
 // Import search-related types
 use crate::actors::types::SearchMode;
 use crate::cli::parse_query_with_mode;
@@ -320,13 +333,8 @@ pub struct TuiApp {
     // External state updates
     state_receiver: Option<mpsc::UnboundedReceiver<StateUpdate>>,
 
-    // Search control channel for dynamic search execution
-    search_control_sender:
-        Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
-    
-    // TUI actor channel for request ID synchronization
-    tui_actor_sender:
-        Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
+    // External message handler for search operations
+    message_handler: Option<Box<dyn TuiMessageHandler + Send>>,
 
     // Search debounce control
     debounce_delay: Duration,
@@ -373,8 +381,7 @@ impl TuiApp {
             last_draw_time: Instant::now(),
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
             state_receiver: Some(state_receiver),
-            search_control_sender: None, // Will be set later via set_search_control_sender
-            tui_actor_sender: None, // Will be set later via set_tui_actor_sender
+            message_handler: None, // Will be set later via set_message_handler
             // Search debounce control
             debounce_delay: Duration::from_millis(100), // 100ms debounce delay
             pending_search_query: None,
@@ -385,109 +392,44 @@ impl TuiApp {
         Ok((app, handle))
     }
 
-    /// Set the search control sender for dynamic search execution
-    pub fn set_search_control_sender(
+    /// Set the external message handler for search operations
+    pub fn set_message_handler(
         &mut self,
-        sender: mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>,
+        handler: Box<dyn TuiMessageHandler + Send>,
     ) {
-        self.search_control_sender = Some(sender);
+        self.message_handler = Some(handler);
     }
 
-    /// Set the TUI actor sender for request ID synchronization
-    pub fn set_tui_actor_sender(
-        &mut self,
-        sender: mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>,
-    ) {
-        self.tui_actor_sender = Some(sender);
-    }
-
-    /// Execute a dynamic search by sending a request to the UnifiedSearchSystem
+    /// Execute a dynamic search via external message handler
     pub fn execute_search(
         &self,
         query: String,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref sender) = self.search_control_sender {
-            use crate::actors::messages::FaeMessage;
-            use crate::cli::create_search_params;
-            use crate::core::Message;
-
+        if let Some(ref handler) = self.message_handler {
             log::debug!("TuiApp executing search: '{}'", query);
 
-            // Parse the query and determine search mode
-            let search_params = create_search_params(&query);
-
-            // Send abort search message to stop any ongoing searches
-            let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
-            if let Err(e) = sender.send(abort_message) {
-                log::warn!("Failed to send abort search message: {}", e);
+            // Abort any ongoing search and clear results before starting new search
+            if let Err(e) = handler.abort_search() {
+                log::warn!("Failed to abort previous search: {}", e);
+            }
+            
+            if let Err(e) = handler.clear_results() {
+                log::warn!("Failed to clear previous results: {}", e);
             }
 
-            // Clear previous results for empty queries
-            let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
-            if let Err(e) = sender.send(clear_message) {
-                log::warn!("Failed to send clear results message: {}", e);
-            }
-
-            // Skip search if query is empty or just a prefix
-            if search_params.query.trim().is_empty() {
-                log::debug!(
-                    "Aborting search for empty or prefix-only query: '{}'",
-                    query
-                );
+            // Skip search if query is empty or just contains search prefixes
+            let trimmed_query = query.trim();
+            if trimmed_query.is_empty() || trimmed_query == "#" || trimmed_query == ">" || trimmed_query == "/" {
+                log::debug!("Aborting search for empty or prefix-only query: '{}'", query);
                 return Ok(());
             }
 
-            // Abort any ongoing search before starting new one
-            let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
-            if let Err(e) = sender.send(abort_message) {
-                log::warn!("Failed to send abort search message: {}", e);
-            }
-
-            // Clear previous results first
-            let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
-            if let Err(e) = sender.send(clear_message) {
-                log::warn!("Failed to send clear results message: {}", e);
-            }
-
-            // Generate request ID and send search request
-            let request_id = tiny_id::ShortCodeGenerator::new_alphanumeric(8).next_string();
-            let search_message = Message::new(
-                "updateSearchParams",
-                FaeMessage::UpdateSearchParams {
-                    params: search_params.clone(),
-                    request_id: request_id.clone(),
-                },
-            );
-
-            if let Err(e) = sender.send(search_message) {
-                let error_msg = format!("Failed to send search request: {}", e);
-                log::error!("{}", error_msg);
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    error_msg,
-                )));
-            }
-
-            // Also notify TuiActor about the new request ID
-            if let Some(ref tui_sender) = self.tui_actor_sender {
-                let tui_message = Message::new(
-                    "updateSearchParams",
-                    FaeMessage::UpdateSearchParams {
-                        params: search_params,
-                        request_id: request_id.clone(),
-                    },
-                );
-                
-                if let Err(e) = tui_sender.send(tui_message) {
-                    log::warn!("Failed to notify TuiActor about search request: {}", e);
-                    // Don't fail the entire search for this
-                }
-            }
-
-            log::debug!("Search request sent successfully with request_id: {}", request_id);
+            // Execute the search
+            handler.execute_search(query)?;
+            log::debug!("Search request sent successfully");
             Ok(())
         } else {
-            let error_msg = "Search control sender not initialized";
+            let error_msg = "Message handler not initialized";
             log::error!("{}", error_msg);
             Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,

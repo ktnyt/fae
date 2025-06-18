@@ -261,43 +261,120 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 std::process::exit(1);
             }
 
-            // Launch TUI mode with UnifiedSearchSystem integration
+            // Launch TUI mode with simplified UnifiedSearchSystem integration
             let (mut app, tui_handle) = TuiApp::new(".")
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-            // Create channels for UnifiedSearchSystem
+            // Create simplified channels for UnifiedSearchSystem
             let (control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
             let (result_sender, mut result_receiver) = tokio::sync::mpsc::unbounded_channel::<
                 fae::core::Message<fae::actors::messages::FaeMessage>,
             >();
 
-            // Create TuiActor to handle search system messages
-            let (tui_actor_tx, tui_actor_rx) = tokio::sync::mpsc::unbounded_channel();
-            let _tui_actor = fae::actors::TuiActor::new_tui_actor(
-                tui_actor_rx,
-                tui_actor_tx.clone(),
-                tui_handle,
-                control_sender.clone(), // Pass control_sender for dynamic search
-            );
-
-            // Set search control sender for dynamic search execution
-            app.set_search_control_sender(control_sender.clone());
+            // Create simplified TUI message handler
+            struct TuiSearchHandler {
+                control_sender: tokio::sync::mpsc::UnboundedSender<fae::core::Message<fae::actors::messages::FaeMessage>>,
+            }
             
-            // Set TUI actor sender for request ID synchronization
-            app.set_tui_actor_sender(tui_actor_tx.clone());
+            impl fae::tui::TuiMessageHandler for TuiSearchHandler {
+                fn execute_search(&self, query: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                    use fae::actors::messages::FaeMessage;
+                    use fae::cli::create_search_params;
+                    use fae::core::Message;
 
-            // Connect TuiActor to result stream by forwarding messages
-            let tui_message_sender = tui_actor_tx.clone();
+                    log::debug!("TuiSearchHandler executing search: '{}'", query);
+
+                    // Parse the query and determine search mode
+                    let search_params = create_search_params(&query);
+
+                    // Generate request ID and send search request
+                    let request_id = tiny_id::ShortCodeGenerator::new_alphanumeric(8).next_string();
+                    let search_message = Message::new(
+                        "updateSearchParams",
+                        FaeMessage::UpdateSearchParams {
+                            params: search_params,
+                            request_id,
+                        },
+                    );
+
+                    self.control_sender.send(search_message)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+                    Ok(())
+                }
+
+                fn clear_results(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                    use fae::actors::messages::FaeMessage;
+                    use fae::core::Message;
+                    
+                    let clear_message = Message::new("clearResults", FaeMessage::ClearResults);
+                    self.control_sender.send(clear_message)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                    Ok(())
+                }
+
+                fn abort_search(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                    use fae::actors::messages::FaeMessage;
+                    use fae::core::Message;
+                    
+                    let abort_message = Message::new("abortSearch", FaeMessage::AbortSearch);
+                    self.control_sender.send(abort_message)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                    Ok(())
+                }
+            }
+
+            // Set the simplified message handler
+            let handler = TuiSearchHandler {
+                control_sender: control_sender.clone(),
+            };
+            app.set_message_handler(Box::new(handler));
+
+            // Handle search results by directly updating TUI state
+            let tui_handle_for_results = tui_handle.clone();
             tokio::spawn(async move {
                 while let Some(message) = result_receiver.recv().await {
-                    log::debug!("Forwarding message to TuiActor: {}", message.method);
-                    if let Err(e) = tui_message_sender.send(message) {
-                        log::warn!("Failed to forward message to TuiActor: {}", e);
-                        break;
+                    log::debug!("Processing search result: {}", message.method);
+                    
+                    match &message.payload {
+                        fae::actors::messages::FaeMessage::PushSearchResult { result, .. } => {
+                            let formatted_result = format!(
+                                "{}:{} - {}",
+                                result.filename,
+                                result.line,
+                                result.content.trim()
+                            );
+                            
+                            if let Err(e) = tui_handle_for_results.append_search_results(vec![formatted_result]) {
+                                log::warn!("Failed to add search result to TUI: {}", e);
+                            }
+                        }
+                        fae::actors::messages::FaeMessage::CompleteSearch => {
+                            if let Err(e) = tui_handle_for_results.show_toast(
+                                "Search completed".to_string(),
+                                fae::tui::ToastType::Success,
+                                std::time::Duration::from_secs(2),
+                            ) {
+                                log::warn!("Failed to show completion toast: {}", e);
+                            }
+                        }
+                        fae::actors::messages::FaeMessage::NotifySearchReport { result_count } => {
+                            if let Err(e) = tui_handle_for_results.show_toast(
+                                format!("Search completed: {} results found", result_count),
+                                fae::tui::ToastType::Success,
+                                std::time::Duration::from_secs(3),
+                            ) {
+                                log::warn!("Failed to show search report toast: {}", e);
+                            }
+                        }
+                        _ => {
+                            // Handle other message types as needed
+                            log::debug!("Unhandled message type: {}", message.method);
+                        }
                     }
                 }
-                log::debug!("Message forwarding to TuiActor ended");
+                log::debug!("Result processing ended");
             });
 
             // Create UnifiedSearchSystem with file watching for TUI mode
