@@ -42,13 +42,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Frame, Terminal,
-};
+use ratatui::{backend::CrosstermBackend, widgets::ListState, Terminal};
 use std::{
     io::{stdout, Result, Stdout},
     time::Duration,
@@ -88,6 +82,9 @@ pub use search_debouncer::SearchDebouncer;
 
 mod rendering_controller;
 pub use rendering_controller::RenderingController;
+
+mod renderer;
+pub use renderer::TuiRenderer;
 
 /// Type alias for TUI state update results to avoid large error types
 pub type TuiResult<T = ()> = std::result::Result<T, Box<mpsc::error::SendError<StateUpdate>>>;
@@ -803,47 +800,18 @@ impl TuiApp {
 
     /// Draw the UI
     fn draw(&mut self) -> Result<()> {
-        // 🔧 Fix: Remove duplicate toast update logic (now handled in run() method)
-        // Toast state is already updated in the main event loop
-
-        let search_input = self.state.search_input.clone();
-        let search_results = self.state.search_results.clone();
-        let selected_index = self.state.selected_result_index;
-        let toast_state = self.state.toast_state.clone();
-        let index_status = self.state.index_status.clone();
-        let show_stats_overlay = self.state.show_stats_overlay;
-        let cursor_position = self.state.cursor_position;
-
-        self.terminal.draw(|f| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Input box
-                    Constraint::Min(1),    // Results box
-                    Constraint::Length(3), // Status bar
-                ])
-                .split(f.size());
-
-            // 1. Input box
-            render_input_box(f, chunks[0], &search_input, cursor_position);
-
-            // 2. Results box
-            render_results_box(f, chunks[1], &search_results, selected_index);
-
-            // 3. Status bar
-            render_status_bar(f, chunks[2], &index_status);
-
-            // 4. Toast (if visible)
-            if toast_state.visible {
-                render_toast(f, &toast_state);
-            }
-
-            // 5. Statistics overlay (if visible)
-            if show_stats_overlay {
-                render_stats_overlay(f, &index_status);
-            }
-        })?;
-        Ok(())
+        // Use centralized renderer for all UI components
+        TuiRenderer::render(
+            &mut self.terminal,
+            &self.state.search_input,
+            self.state.cursor_position,
+            &self.state.search_results,
+            self.state.selected_result_index,
+            &self.state.toast_state,
+            &self.state.index_status,
+            self.state.show_stats_overlay,
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
     }
 
     /// Cleanup terminal on exit
@@ -1168,329 +1136,6 @@ impl StateUpdate {
     }
 }
 
-/// Render the input box with search mode indicator and cursor
-fn render_input_box(
-    f: &mut Frame,
-    area: ratatui::layout::Rect,
-    search_input: &str,
-    cursor_pos: usize,
-) {
-    // Detect current search mode
-    let (mode, _) = parse_query_with_mode(search_input);
-    let mode_name = match mode {
-        SearchMode::Literal => "Text",
-        SearchMode::Symbol => "Symbol (#)",
-        SearchMode::Variable => "Variable ($)",
-        SearchMode::Filepath => "File (@)",
-        SearchMode::Regexp => "Regex (/)",
-    };
-
-    let title = format!("Search Input - {} Mode", mode_name);
-
-    // Create input string with visible cursor
-    let display_text = if search_input.is_empty() {
-        if cursor_pos == 0 {
-            "█".to_string() // Block cursor at position 0
-        } else {
-            search_input.to_string()
-        }
-    } else {
-        let mut chars: Vec<char> = search_input.chars().collect();
-        if cursor_pos < chars.len() {
-            // Insert cursor before the character at cursor_pos
-            chars.insert(cursor_pos, '█');
-        } else if cursor_pos == chars.len() {
-            // Cursor at end of string
-            chars.push('█');
-        }
-        chars.into_iter().collect()
-    };
-
-    let input = Paragraph::new(display_text)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .style(Style::default().fg(Color::White));
-    f.render_widget(input, area);
-}
-
-/// Render the results box with cursor highlighting and automatic scrolling
-fn render_results_box(
-    f: &mut Frame,
-    area: ratatui::layout::Rect,
-    search_results: &[String],
-    selected_index: Option<usize>,
-) {
-    let items: Vec<ListItem> = search_results
-        .iter()
-        .map(|result| ListItem::new(result.as_str()))
-        .collect();
-
-    let title = if let Some(index) = selected_index {
-        format!("Search Results ({}/{})", index + 1, search_results.len())
-    } else {
-        "Search Results".to_string()
-    };
-
-    let results_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::White));
-
-    // Create a temporary ListState for rendering with current selection
-    let mut list_state = ListState::default();
-    list_state.select(selected_index);
-
-    f.render_stateful_widget(results_list, area, &mut list_state);
-}
-
-/// Render the status bar with help text on left and index status on right
-fn render_status_bar(f: &mut Frame, area: ratatui::layout::Rect, _index_status: &IndexStatus) {
-    // Updated help text to include emacs-style bindings
-    let help_text = "↑↓/C-p/C-n: Navigate | Enter: Select | Tab: Cycle modes | C-a/e: Start/End | C-k/y: Kill/Yank | C-g: Abort | Esc: Quit";
-    let help_status = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::ALL).title("Help"))
-        .style(Style::default().fg(Color::Gray));
-    f.render_widget(help_status, area);
-}
-
-/// Render toast notification
-fn render_toast(f: &mut Frame, toast_state: &ToastState) {
-    use ratatui::{layout::Alignment, widgets::Clear};
-
-    // Calculate optimal size in absolute dimensions
-    let (width_chars, height_lines) = calculate_toast_size_absolute(toast_state, f.size());
-
-    // Create a top-right positioned popup area with exact dimensions
-    let popup_area = top_right_rect_absolute(width_chars, height_lines, f.size());
-
-    // Clear the area first
-    f.render_widget(Clear, popup_area);
-
-    // Choose color and title based on toast type
-    let (border_color, text_color, title) = match toast_state.toast_type {
-        ToastType::Info => (Color::Blue, Color::White, "🔔 Info"),
-        ToastType::Success => (Color::Green, Color::White, "✅ Success"),
-        ToastType::Warning => (Color::Yellow, Color::Black, "⚠️ Warning"),
-        ToastType::Error => (Color::Red, Color::White, "❌ Error"),
-    };
-
-    // Get the display message (with repeat count if applicable)
-    let display_message = get_toast_display_message(toast_state);
-
-    let toast_widget = Paragraph::new(display_message.as_str())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(border_color)),
-        )
-        .style(Style::default().fg(text_color))
-        .alignment(Alignment::Left)
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-    f.render_widget(toast_widget, popup_area);
-}
-
-/// Render statistics overlay in the center of the screen
-fn render_stats_overlay(f: &mut Frame, index_status: &IndexStatus) {
-    // Calculate the size for the stats overlay
-    let area = f.size();
-    let popup_area = centered_rect(60, 40, area);
-
-    // Create stats content
-    let stats_text = format!(
-        "📊 Index Statistics\n\n\
-        📁 Files indexed: {}\n\
-        🔍 Symbols found: {}\n\
-        📋 Queued files: {}\n\
-        ✅ Status: {}\n\n\
-        Press Shift+Tab to close",
-        index_status.indexed_files,
-        index_status.symbols_found,
-        index_status.queued_files,
-        if index_status.is_complete() {
-            "Complete"
-        } else if index_status.is_active {
-            "Indexing..."
-        } else {
-            "Idle"
-        }
-    );
-
-    // Create the overlay widget
-    let stats_widget = Paragraph::new(stats_text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("📊 Statistics")
-                .border_style(Style::default().fg(Color::Cyan)),
-        )
-        .style(Style::default().fg(Color::White).bg(Color::Black))
-        .alignment(Alignment::Left)
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-    // Clear the background area
-    f.render_widget(
-        Block::default()
-            .style(Style::default().bg(Color::Black))
-            .borders(Borders::NONE),
-        popup_area,
-    );
-
-    // Render the stats overlay
-    f.render_widget(stats_widget, popup_area);
-}
-
-/// Create a centered rectangle with the given percentage of the parent area
-fn centered_rect(
-    percent_x: u16,
-    percent_y: u16,
-    r: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    use ratatui::layout::{Constraint, Direction, Layout};
-
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
-
-/// Get the display message for a toast
-fn get_toast_display_message(toast_state: &ToastState) -> String {
-    toast_state.message.clone()
-}
-
-/// Calculate optimal toast size in absolute dimensions (characters and lines)
-fn calculate_toast_size_absolute(
-    toast_state: &ToastState,
-    terminal_size: ratatui::layout::Rect,
-) -> (u16, u16) {
-    let display_message = get_toast_display_message(toast_state);
-
-    // Calculate required width based on message length
-    // Use visual width approximation instead of byte length for emojis
-    let title_visual_width = match toast_state.toast_type {
-        ToastType::Info => 7,    // "🔔 Info" visual width
-        ToastType::Success => 9, // "✅ Success" visual width
-        ToastType::Warning => 9, // "⚠️ Warning" visual width
-        ToastType::Error => 7,   // "❌ Error" visual width
-    };
-
-    // Consider the longer of title or message for width calculation
-    let content_width = std::cmp::max(display_message.len(), title_visual_width) + 4; // +4 for borders and padding
-
-    // Set absolute width bounds
-    let min_width = 20;
-    let max_width = (terminal_size.width as f32 * 0.7) as usize; // 70% of terminal width
-    let actual_width = content_width.clamp(min_width, max_width) as u16;
-
-    // Calculate height based on actual text wrapping with the exact width
-    let available_content_width = actual_width.saturating_sub(4) as usize; // -4 for borders
-    let content_lines = if available_content_width > 0 {
-        calculate_wrapped_lines(&display_message, available_content_width)
-    } else {
-        1 // Fallback for very narrow terminals
-    };
-
-    // Total lines = content lines + top/bottom borders
-    let total_lines = content_lines + 2; // +2 for top/bottom borders only
-
-    // Set absolute height bounds
-    let min_height = 3; // Minimum viable toast height
-    let max_height = (terminal_size.height as f32 * 0.4) as usize; // 40% of terminal height
-    let actual_height = total_lines.clamp(min_height, max_height) as u16;
-
-    (actual_width, actual_height)
-}
-
-/// Calculate how many lines text will take when wrapped to given width
-fn calculate_wrapped_lines(text: &str, width: usize) -> usize {
-    if text.is_empty() {
-        return 1;
-    }
-
-    if width == 0 {
-        return text.len(); // Each character gets its own line in worst case
-    }
-
-    let mut lines = 0;
-    let mut current_line_len = 0;
-
-    // Split by whitespace and handle word wrapping
-    for word in text.split_whitespace() {
-        let word_len = word.len();
-
-        // If adding this word would exceed the width
-        if current_line_len + word_len + (if current_line_len > 0 { 1 } else { 0 }) > width {
-            // If the word itself is longer than width, it needs to be broken
-            if word_len > width {
-                // First finish the current line if it has content
-                if current_line_len > 0 {
-                    lines += 1;
-                }
-                // Calculate how many lines the long word needs
-                lines += word_len.div_ceil(width); // Ceiling division
-                current_line_len = word_len % width;
-                if current_line_len == 0 {
-                    current_line_len = 0; // Full lines consumed
-                }
-            } else {
-                // Start new line with this word
-                lines += 1;
-                current_line_len = word_len;
-            }
-        } else {
-            // Add word to current line
-            if current_line_len > 0 {
-                current_line_len += 1; // Add space before word
-            }
-            current_line_len += word_len;
-        }
-    }
-
-    // If we have content on the last line, count it
-    if current_line_len > 0 {
-        lines += 1;
-    }
-
-    // Ensure at least 1 line
-    lines.max(1)
-}
-
-/// Create a rect in top right corner with exact dimensions (width in chars, height in lines)
-fn top_right_rect_absolute(
-    width_chars: u16,
-    height_lines: u16,
-    r: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    // Ensure dimensions don't exceed available space
-    let actual_width = width_chars.min(r.width);
-    let actual_height = height_lines.min(r.height);
-
-    // Calculate position for top-right corner
-    let x = r.x + r.width.saturating_sub(actual_width);
-    let y = r.y;
-
-    ratatui::layout::Rect {
-        x,
-        y,
-        width: actual_width,
-        height: actual_height,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1524,7 +1169,7 @@ mod tests {
             height: 100,
         };
 
-        let top_right = top_right_rect_absolute(30, 20, full_rect);
+        let top_right = TuiRenderer::top_right_rect_absolute(30, 20, full_rect);
 
         // Should be in the top-right corner
         assert!(top_right.x > 50); // Right side
@@ -1564,7 +1209,7 @@ mod tests {
         // Debug specific case: short message that should fit in one line
         let message = "Ready";
         let width = 16; // Typical available width for a small toast
-        let result = calculate_wrapped_lines(message, width);
+        let result = TuiRenderer::calculate_wrapped_lines(message, width);
         println!(
             "Message: '{}' (len={}), width: {}, result: {}",
             message,
@@ -1581,7 +1226,7 @@ mod tests {
         // Test realistic toast message
         let message = "Indexing: 3/8 files, 120 symbols";
         let width = 25;
-        let result = calculate_wrapped_lines(message, width);
+        let result = TuiRenderer::calculate_wrapped_lines(message, width);
         println!(
             "Message: '{}' (len={}), width: {}, result: {}",
             message,
@@ -1595,29 +1240,29 @@ mod tests {
     #[test]
     fn test_calculate_wrapped_lines() {
         // Test empty string
-        assert_eq!(calculate_wrapped_lines("", 10), 1);
+        assert_eq!(TuiRenderer::calculate_wrapped_lines("", 10), 1);
 
         // Test single word that fits
-        assert_eq!(calculate_wrapped_lines("hello", 10), 1);
+        assert_eq!(TuiRenderer::calculate_wrapped_lines("hello", 10), 1);
 
         // Test multiple words that fit on one line
-        assert_eq!(calculate_wrapped_lines("hello world", 15), 1);
+        assert_eq!(TuiRenderer::calculate_wrapped_lines("hello world", 15), 1);
 
         // Test text that needs wrapping
-        assert_eq!(calculate_wrapped_lines("hello world test", 10), 2);
+        assert_eq!(TuiRenderer::calculate_wrapped_lines("hello world test", 10), 2);
 
         // Test very long word that needs breaking
         // "verylongwordthatdoesnotfit" = 26 chars, with width 10 = ceil(26/10) = 3 lines
         // But since we add +1 for current line and calculate separately, adjust expectation
-        let result = calculate_wrapped_lines("verylongwordthatdoesnotfit", 10);
+        let result = TuiRenderer::calculate_wrapped_lines("verylongwordthatdoesnotfit", 10);
         assert!(result >= 3, "Expected at least 3 lines, got {}", result);
 
         // Test zero width (edge case)
-        assert!(calculate_wrapped_lines("test", 0) > 0);
+        assert!(TuiRenderer::calculate_wrapped_lines("test", 0) > 0);
 
         // Test realistic toast message
         let long_message = "Indexing completed: 25 files, 1200 symbols found successfully";
-        assert!(calculate_wrapped_lines(long_message, 30) >= 2);
+        assert!(TuiRenderer::calculate_wrapped_lines(long_message, 30) >= 2);
     }
 
     #[test]
@@ -1643,7 +1288,7 @@ mod tests {
         let mut toast = ToastState::new();
         toast.show("Test".to_string(), ToastType::Info, Duration::from_secs(2));
 
-        let (width, height) = calculate_toast_size_absolute(&toast, terminal_size);
+        let (width, height) = TuiRenderer::calculate_toast_size_absolute(&toast, terminal_size);
         println!(
             "Toast size for 'Test' with Info emoji: width={}%, height={}%",
             width, height
@@ -1664,7 +1309,7 @@ mod tests {
             width: 100,
             height: 30,
         };
-        let display_message = get_toast_display_message(&toast);
+        let display_message = TuiRenderer::get_toast_display_message(&toast);
         println!("Display message: '{}'", display_message);
 
         // Calculate width manually to debug
@@ -1685,7 +1330,7 @@ mod tests {
             (terminal_size.width as usize * width_percent as usize / 100).saturating_sub(4);
         println!("Available width for text: {}", available_width);
 
-        let content_lines = calculate_wrapped_lines(&display_message, available_width);
+        let content_lines = TuiRenderer::calculate_wrapped_lines(&display_message, available_width);
         println!("Content lines: {}", content_lines);
 
         let total_lines = content_lines + 2;
@@ -1696,7 +1341,7 @@ mod tests {
         println!("Height percent: {}", height_percent);
 
         // Now test the actual function
-        let (actual_width, actual_height) = calculate_toast_size_absolute(&toast, terminal_size);
+        let (actual_width, actual_height) = TuiRenderer::calculate_toast_size_absolute(&toast, terminal_size);
         println!(
             "Actual result: width={}%, height={}%",
             actual_width, actual_height
@@ -1717,7 +1362,7 @@ mod tests {
             width: 100,
             height: 30,
         };
-        let (width, height) = calculate_toast_size_absolute(&toast, terminal_size);
+        let (width, height) = TuiRenderer::calculate_toast_size_absolute(&toast, terminal_size);
 
         // Short message should use minimum width and height
         assert_eq!(width, 20);
@@ -1731,7 +1376,7 @@ mod tests {
             Duration::from_secs(3),
         );
 
-        let (width, height) = calculate_toast_size_absolute(&toast, terminal_size);
+        let (width, height) = TuiRenderer::calculate_toast_size_absolute(&toast, terminal_size);
 
         // Long message should use more width and height but stay within limits
         assert!(width > 20);
@@ -1747,7 +1392,7 @@ mod tests {
             Duration::from_secs(5),
         );
 
-        let (_width2, height2) = calculate_toast_size_absolute(&toast, terminal_size);
+        let (_width2, height2) = TuiRenderer::calculate_toast_size_absolute(&toast, terminal_size);
         assert!(
             height2 > height,
             "Very long message should be taller than medium message"
@@ -1760,7 +1405,7 @@ mod tests {
             width: 50,
             height: 20,
         };
-        let (width_small, height_small) = calculate_toast_size_absolute(&toast, small_terminal);
+        let (width_small, height_small) = TuiRenderer::calculate_toast_size_absolute(&toast, small_terminal);
 
         let large_terminal = Rect {
             x: 0,
@@ -1768,7 +1413,7 @@ mod tests {
             width: 200,
             height: 60,
         };
-        let (width_large, height_large) = calculate_toast_size_absolute(&toast, large_terminal);
+        let (width_large, height_large) = TuiRenderer::calculate_toast_size_absolute(&toast, large_terminal);
 
         // On larger terminal, width percentage might be smaller (same content takes less percentage)
         // But absolute width should be larger or equal

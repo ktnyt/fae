@@ -215,19 +215,40 @@ impl UnifiedSearchSystem {
             log::debug!("Message broadcasting task ended gracefully");
         });
 
-        // Start result forwarding task with internal message broadcasting
+        // Start result forwarding task with selective message broadcasting
         let result_sender_clone = result_sender.clone();
         let result_forwarding_handle = tokio::spawn(async move {
             while let Some(message) = result_integrator.recv().await {
-                // Broadcast all messages to all actors for maximum flexibility
-                log::debug!("Broadcasting message to all actors: {}", message.method);
-                for sender in &actor_senders_for_internal {
-                    if let Err(e) = sender.send(message.clone()) {
-                        log::debug!("Failed to broadcast message to actor: {}", e);
+                log::debug!("Processing actor result message: {}", message.method);
+
+                // Only broadcast specific internal coordination messages, NOT search results
+                match message.method.as_str() {
+                    "pushSearchResult" => {
+                        // Search results should only go to external receiver, not broadcast internally
+                        // This prevents duplicate processing by ResultHandler
+                        log::trace!("Forwarding search result to external receiver only");
+                    }
+                    "completeSearch" | "notifySearchReport" => {
+                        // Internal coordination messages should be broadcast to all actors
+                        log::debug!("Broadcasting coordination message to all actors: {}", message.method);
+                        for sender in &actor_senders_for_internal {
+                            if let Err(e) = sender.send(message.clone()) {
+                                log::debug!("Failed to broadcast coordination message to actor: {}", e);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Other messages broadcast for compatibility
+                        log::debug!("Broadcasting message to all actors: {}", message.method);
+                        for sender in &actor_senders_for_internal {
+                            if let Err(e) = sender.send(message.clone()) {
+                                log::debug!("Failed to broadcast message to actor: {}", e);
+                            }
+                        }
                     }
                 }
 
-                // Also forward all messages to external result receiver
+                // Always forward all messages to external result receiver
                 if let Err(e) = result_sender_clone.send(message) {
                     log::debug!("Result forwarding stopped (receiver closed): {}", e);
                     break;

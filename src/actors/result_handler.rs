@@ -10,6 +10,7 @@ use crate::actors::messages::FaeMessage;
 use crate::actors::types::SearchResult;
 use crate::core::{Actor, ActorController, Message, MessageHandler};
 use async_trait::async_trait;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
 
 /// Result handler that collects and outputs search results
@@ -20,6 +21,8 @@ pub struct ResultHandler {
     search_completed: bool,
     /// Whether any search has started (first result received)
     search_started: bool,
+    /// Duplicate detection: request_id -> set of result signatures
+    seen_results: HashMap<String, HashSet<String>>,
 }
 
 impl ResultHandler {
@@ -29,10 +32,11 @@ impl ResultHandler {
             result_count: 0,
             search_completed: false,
             search_started: false,
+            seen_results: HashMap::new(),
         }
     }
 
-    /// Handle a search result
+    /// Handle a search result with duplicate detection
     async fn handle_search_result(
         &mut self,
         result: SearchResult,
@@ -43,10 +47,28 @@ impl ResultHandler {
             return; // Don't process more results after completion
         }
 
+        // Create unique signature for this result
+        let result_signature = format!("{}:{}:{}", result.filename, result.line, result.content.trim());
+        
+        // Check for duplicates within this request
+        let seen_set = self.seen_results.entry(request_id.clone()).or_insert_with(HashSet::new);
+        
+        if !seen_set.insert(result_signature.clone()) {
+            // This result has already been seen for this request ID
+            log::debug!(
+                "Duplicate result detected for request {}: {}:{}",
+                request_id,
+                result.filename,
+                result.line
+            );
+            return;
+        }
+
+        // This is a new unique result
         self.search_started = true;
         self.result_count += 1;
 
-        log::info!("Result #{}: {}", self.result_count, result.content);
+        log::info!("Result #{} (request: {}): {}", self.result_count, request_id, result.content);
 
         // Send result to external consumers (CLI/TUI) via broadcaster
         if let Err(e) = controller
@@ -88,6 +110,26 @@ impl ResultHandler {
         } else {
             log::info!("Search finished with {} results", self.result_count);
         }
+    }
+
+    /// Clear results for a specific request ID to free memory
+    pub fn clear_request_results(&mut self, request_id: &str) {
+        if let Some(removed_set) = self.seen_results.remove(request_id) {
+            log::debug!(
+                "Cleared {} duplicate tracking entries for request {}",
+                removed_set.len(),
+                request_id
+            );
+        }
+    }
+
+    /// Clear all tracking data for new search session
+    pub fn reset_for_new_search(&mut self) {
+        self.result_count = 0;
+        self.search_completed = false;
+        self.search_started = false;
+        self.seen_results.clear();
+        log::debug!("Reset ResultHandler for new search session");
     }
 
     /// Get current result count
