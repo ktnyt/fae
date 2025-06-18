@@ -233,13 +233,14 @@ impl MessageHandler<FaeMessage> for TuiActor {
                 log::debug!("TuiActor: Search result counter reset");
             }
 
-            FaeMessage::UpdateSearchParams {
-                params,
-                request_id,
-            } => {
+            FaeMessage::UpdateSearchParams { params, request_id } => {
                 // Update the current request ID to match the search being executed
                 self.current_request_id = Some(request_id.clone());
-                log::debug!("Search started for: '{}' with request_id: {}", params.query, self.current_request_id.as_ref().unwrap());
+                log::debug!(
+                    "Search started for: '{}' with request_id: {}",
+                    params.query,
+                    self.current_request_id.as_ref().unwrap()
+                );
 
                 // Reset search result counter for new search
                 self.current_search_result_count = 0;

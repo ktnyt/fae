@@ -61,25 +61,34 @@ impl WatchHandler {
 
         self._watcher = Some(watcher);
 
-        // Spawn task to handle file system events
-        tokio::task::spawn(async move {
-            Self::handle_watch_events(rx, watch_path, controller_clone).await;
+        // Spawn blocking task to handle file system events (sync mpsc receiver)
+        tokio::task::spawn_blocking(move || {
+            Self::handle_watch_events_blocking(rx, watch_path, controller_clone);
         });
 
         log::info!("File system watcher started successfully");
         Ok(())
     }
 
-    /// Handle file system events from notify
-    async fn handle_watch_events(
+    /// Handle file system events from notify (blocking version for sync mpsc)
+    fn handle_watch_events_blocking(
         rx: mpsc::Receiver<Result<Event, notify::Error>>,
         watch_path: PathBuf,
         controller: ActorController<FaeMessage>,
     ) {
+        log::debug!("Starting blocking watch event handler");
         for result in rx {
             match result {
                 Ok(event) => {
-                    if let Err(e) = Self::process_event(event, &watch_path, &controller).await {
+                    log::debug!("Received file system event: {:?}", event);
+                    // Use blocking_in_place for async operations within spawn_blocking
+                    let controller_ref = &controller;
+                    let watch_path_ref = &watch_path;
+                    if let Err(e) = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            Self::process_event(event, watch_path_ref, controller_ref).await
+                        })
+                    }) {
                         log::warn!("Error processing file system event: {}", e);
                     }
                 }

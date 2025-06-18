@@ -3,6 +3,10 @@ name = "fae"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "test_notify"
+path = "test_notify.rs"
+
 [dependencies]
 # Core dependencies actually used
 async-trait = "0.1"
