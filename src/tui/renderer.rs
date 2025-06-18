@@ -76,32 +76,39 @@ impl TuiRenderer {
 
         let title = format!("Search Input - {} Mode", mode_name);
 
-        // Create input string with visible cursor
-        let display_text = if search_input.is_empty() {
-            if cursor_pos == 0 {
-                "█".to_string() // Block cursor at position 0
-            } else {
-                search_input.to_string()
-            }
+        // Create input text with background-highlighted cursor (no width occupation)
+        use ratatui::text::{Line, Span};
+        
+        let input_spans = if search_input.is_empty() {
+            // Empty input: show a space with highlighted background as cursor
+            vec![Span::styled(" ", Style::default().bg(Color::Cyan).fg(Color::Black))]
         } else {
-            let mut chars: Vec<char> = search_input.chars().collect();
-            match cursor_pos.cmp(&chars.len()) {
-                std::cmp::Ordering::Less => {
-                    // Insert cursor before the character at cursor_pos
-                    chars.insert(cursor_pos, '█');
-                }
-                std::cmp::Ordering::Equal => {
-                    // Cursor at end of string
-                    chars.push('█');
-                }
-                std::cmp::Ordering::Greater => {
-                    // Cursor beyond string (shouldn't happen, but handle gracefully)
+            let chars: Vec<char> = search_input.chars().collect();
+            let mut spans = Vec::new();
+            
+            for (i, &ch) in chars.iter().enumerate() {
+                if i == cursor_pos {
+                    // Highlight this character as cursor position
+                    spans.push(Span::styled(
+                        ch.to_string(),
+                        Style::default().bg(Color::Cyan).fg(Color::Black)
+                    ));
+                } else {
+                    // Normal character
+                    spans.push(Span::raw(ch.to_string()));
                 }
             }
-            chars.into_iter().collect()
+            
+            // If cursor is at the end of string, add a space with highlighted background
+            if cursor_pos >= chars.len() {
+                spans.push(Span::styled(" ", Style::default().bg(Color::Cyan).fg(Color::Black)));
+            }
+            
+            spans
         };
 
-        let input = Paragraph::new(display_text)
+        // Create styled input with highlighted cursor
+        let input = Paragraph::new(Line::from(input_spans))
             .block(Block::default().borders(Borders::ALL).title(title))
             .style(Style::default().fg(Color::White));
         f.render_widget(input, area);
