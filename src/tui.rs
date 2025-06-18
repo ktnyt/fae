@@ -436,11 +436,11 @@ impl TuiApp {
             // Tab cycles through search modes, Shift+Tab shows statistics
             KeyCode::Tab => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    // Shift+Tab: Toggle statistics overlay
-                    self.state.show_stats_overlay = !self.state.show_stats_overlay;
+                    // Shift+Tab: Cycle through search modes in reverse
+                    self.cycle_search_mode_reverse();
                 } else {
-                    // Tab: Cycle through search modes
-                    self.cycle_search_mode();
+                    // Tab: Cycle through search modes forward
+                    self.cycle_search_mode_forward();
                 }
                 self.rendering_controller.request_redraw();
             }
@@ -469,6 +469,10 @@ impl TuiApp {
 
                     // Search and navigation
                     'g' => self.abort_search(),
+                    's' => {
+                        // Ctrl+S: Toggle statistics overlay
+                        self.state.show_stats_overlay = !self.state.show_stats_overlay;
+                    },
                     'u' => self.scroll_up_half_page(),
 
                     // Handle Ctrl+D separately based on context
@@ -655,9 +659,10 @@ impl TuiApp {
         }
     }
 
-    /// Cycle through search modes: none -> # -> $ -> @ -> / -> none
-    fn cycle_search_mode(&mut self) {
+    /// Cycle through search modes forward: none -> # -> $ -> @ -> / -> none
+    fn cycle_search_mode_forward(&mut self) {
         let (current_mode, base_query) = parse_query_with_mode(&self.state.search_input);
+        let old_prefix_len = self.get_prefix_length(current_mode);
 
         let next_prefix = match current_mode {
             SearchMode::Literal => "#",  // none -> #symbol
@@ -670,8 +675,63 @@ impl TuiApp {
         // Update search input with new prefix
         self.state.search_input = format!("{}{}", next_prefix, base_query);
 
+        // Adjust cursor position: if we added a prefix, move cursor right; if removed, move left
+        let new_prefix_len = next_prefix.len();
+        if old_prefix_len == 0 && new_prefix_len > 0 {
+            // Added prefix: move cursor right by 1
+            self.state.cursor_position = self.state.cursor_position.saturating_add(1);
+        } else if old_prefix_len > 0 && new_prefix_len == 0 {
+            // Removed prefix: move cursor left by 1
+            self.state.cursor_position = self.state.cursor_position.saturating_sub(1);
+        }
+        // Ensure cursor doesn't go beyond string length
+        self.state.cursor_position = self.state.cursor_position.min(self.state.search_input.len());
+
         // Execute search with new mode
         self.execute_incremental_search();
+    }
+
+    /// Cycle through search modes in reverse: none <- # <- $ <- @ <- / <- none
+    fn cycle_search_mode_reverse(&mut self) {
+        let (current_mode, base_query) = parse_query_with_mode(&self.state.search_input);
+        let old_prefix_len = self.get_prefix_length(current_mode);
+
+        let next_prefix = match current_mode {
+            SearchMode::Literal => "/",  // none <- /regex
+            SearchMode::Regexp => "@",   // / <- @file
+            SearchMode::Filepath => "$", // @ <- $variable
+            SearchMode::Variable => "#", // $ <- #symbol
+            SearchMode::Symbol => "",    // # <- none (literal)
+        };
+
+        // Update search input with new prefix
+        self.state.search_input = format!("{}{}", next_prefix, base_query);
+
+        // Adjust cursor position: if we added a prefix, move cursor right; if removed, move left
+        let new_prefix_len = next_prefix.len();
+        if old_prefix_len == 0 && new_prefix_len > 0 {
+            // Added prefix: move cursor right by 1
+            self.state.cursor_position = self.state.cursor_position.saturating_add(1);
+        } else if old_prefix_len > 0 && new_prefix_len == 0 {
+            // Removed prefix: move cursor left by 1
+            self.state.cursor_position = self.state.cursor_position.saturating_sub(1);
+        }
+        // Ensure cursor doesn't go beyond string length
+        self.state.cursor_position = self.state.cursor_position.min(self.state.search_input.len());
+
+        // Execute search with new mode
+        self.execute_incremental_search();
+    }
+
+    /// Get the length of the prefix for a given search mode
+    fn get_prefix_length(&self, mode: SearchMode) -> usize {
+        match mode {
+            SearchMode::Literal => 0,
+            SearchMode::Symbol => 1,    // "#"
+            SearchMode::Variable => 1,  // "$"
+            SearchMode::Filepath => 1,  // "@"
+            SearchMode::Regexp => 1,    // "/"
+        }
     }
 
     // ===== Input Processing Integration =====
