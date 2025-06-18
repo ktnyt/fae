@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # Core dependencies actually used
 async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] } # タイムスタンプ処理
 dirs = "5.0"                                     # ホームディレクトリ検索
 env_logger = "0.10"                              # ログ出力
 futures = "0.3"                                  # 並行処理用
@@ -30,6 +31,7 @@ crossterm = { version = "0.27", features = [
     "event-stream",
 ] } # Cross-platform terminal functionality
 arboard = "3.3" # Clipboard access
+atty = "0.2" # TTY detection for terminal environment validation  
 tiny_id = "0.1" # ID generation for request tracking
 
 [dev-dependencies]

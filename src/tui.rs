@@ -323,6 +323,10 @@ pub struct TuiApp {
     // Search control channel for dynamic search execution
     search_control_sender:
         Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
+    
+    // TUI actor channel for request ID synchronization
+    tui_actor_sender:
+        Option<mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>>,
 
     // Search debounce control
     debounce_delay: Duration,
@@ -370,6 +374,7 @@ impl TuiApp {
             draw_throttle_duration: Duration::from_millis(16), // 60 FPS
             state_receiver: Some(state_receiver),
             search_control_sender: None, // Will be set later via set_search_control_sender
+            tui_actor_sender: None, // Will be set later via set_tui_actor_sender
             // Search debounce control
             debounce_delay: Duration::from_millis(100), // 100ms debounce delay
             pending_search_query: None,
@@ -386,6 +391,14 @@ impl TuiApp {
         sender: mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>,
     ) {
         self.search_control_sender = Some(sender);
+    }
+
+    /// Set the TUI actor sender for request ID synchronization
+    pub fn set_tui_actor_sender(
+        &mut self,
+        sender: mpsc::UnboundedSender<crate::core::Message<crate::actors::messages::FaeMessage>>,
+    ) {
+        self.tui_actor_sender = Some(sender);
     }
 
     /// Execute a dynamic search by sending a request to the UnifiedSearchSystem
@@ -441,8 +454,8 @@ impl TuiApp {
             let search_message = Message::new(
                 "updateSearchParams",
                 FaeMessage::UpdateSearchParams {
-                    params: search_params,
-                    request_id,
+                    params: search_params.clone(),
+                    request_id: request_id.clone(),
                 },
             );
 
@@ -455,7 +468,23 @@ impl TuiApp {
                 )));
             }
 
-            log::debug!("Search request sent successfully");
+            // Also notify TuiActor about the new request ID
+            if let Some(ref tui_sender) = self.tui_actor_sender {
+                let tui_message = Message::new(
+                    "updateSearchParams",
+                    FaeMessage::UpdateSearchParams {
+                        params: search_params,
+                        request_id: request_id.clone(),
+                    },
+                );
+                
+                if let Err(e) = tui_sender.send(tui_message) {
+                    log::warn!("Failed to notify TuiActor about search request: {}", e);
+                    // Don't fail the entire search for this
+                }
+            }
+
+            log::debug!("Search request sent successfully with request_id: {}", request_id);
             Ok(())
         } else {
             let error_msg = "Search control sender not initialized";

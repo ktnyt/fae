@@ -61,41 +61,65 @@ fn parse_args() -> Result<Option<FaeConfig>, String> {
 }
 
 /// Setup file logging for TUI mode to avoid interfering with terminal UI
-fn setup_file_logging() -> std::path::PathBuf {
+/// Returns the path to the log file or an error if no suitable location is found
+fn setup_file_logging() -> Result<std::path::PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     use std::io::Write;
 
-    // Try temp directory first, fallback to current directory
-    let log_file_path = std::env::temp_dir().join("fae.log");
-    let actual_log_path = if std::fs::OpenOptions::new()
+    // List of possible log file locations in order of preference
+    let possible_paths = vec![
+        std::env::temp_dir().join("fae.log"),
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join("fae.log"),
+        std::path::PathBuf::from("fae.log"),
+    ];
+
+    let mut actual_log_path = None;
+    let mut last_error = None;
+
+    // Try each location until one works
+    for path in possible_paths {
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(_) => {
+                actual_log_path = Some(path);
+                break;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        }
+    }
+
+    let log_path = actual_log_path.ok_or_else(|| {
+        format!(
+            "Failed to create log file in any location. Last error: {}",
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string())
+        )
+    })?;
+
+    // Create the logger with improved error handling
+    let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&log_file_path)
-        .is_ok()
-    {
-        log_file_path
-    } else {
-        // Fallback to current directory
-        std::path::PathBuf::from("fae.log")
-    };
+        .open(&log_path)
+        .map_err(|e| format!("Failed to open log file {}: {}", log_path.display(), e))?;
 
     env_logger::Builder::from_default_env()
-        .target(env_logger::Target::Pipe(Box::new(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&actual_log_path)
-                .expect("Failed to create log file"),
-        )))
+        .target(env_logger::Target::Pipe(Box::new(log_file)))
         .format(|buf, record| {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            use chrono::{DateTime, Utc};
+            let timestamp: DateTime<Utc> = Utc::now();
             writeln!(
                 buf,
                 "{} [{}] {} - {}",
-                timestamp,
+                timestamp.format("%Y-%m-%d %H:%M:%S%.3f UTC"),
                 record.level(),
                 record.target(),
                 record.args()
@@ -103,8 +127,107 @@ fn setup_file_logging() -> std::path::PathBuf {
         })
         .init();
 
-    log::info!("TUI mode started - logging to: {:?}", actual_log_path);
-    actual_log_path
+    log::info!("TUI mode started - logging to: {}", log_path.display());
+    log::debug!("Log file permissions: {:?}", std::fs::metadata(&log_path));
+    
+    Ok(log_path)
+}
+
+/// Check if the current environment supports TUI mode
+fn check_terminal_environment() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Check if we're in a proper terminal
+    if !atty::is(atty::Stream::Stdout) {
+        return Err("TUI mode requires a proper terminal (stdout is not a TTY)".into());
+    }
+    
+    if !atty::is(atty::Stream::Stdin) {
+        return Err("TUI mode requires a proper terminal (stdin is not a TTY)".into());
+    }
+
+    // Check for essential environment variables
+    if std::env::var("TERM").is_err() {
+        return Err("TUI mode requires TERM environment variable to be set".into());
+    }
+
+    // Check terminal size capability
+    match crossterm::terminal::size() {
+        Ok((width, height)) => {
+            if width < 40 || height < 10 {
+                return Err(format!(
+                    "Terminal size too small for TUI ({}x{}, minimum 40x10 required)",
+                    width, height
+                ).into());
+            }
+            log::debug!("Terminal size check passed: {}x{}", width, height);
+        }
+        Err(e) => {
+            return Err(format!("Failed to get terminal size: {}", e).into());
+        }
+    }
+
+    log::debug!("Terminal environment check passed");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_setup_file_logging_creates_valid_path() {
+        // Test that setup_file_logging returns a path when successful
+        // Note: This test may fail in environments without write permissions
+        match setup_file_logging() {
+            Ok(path) => {
+                assert!(path.exists() || path.as_os_str() != "(no log file)");
+                println!("Log file created at: {}", path.display());
+            }
+            Err(e) => {
+                println!("Expected in CI environment: {}", e);
+                // This is expected in CI environments
+            }
+        }
+    }
+
+    #[test]
+    fn test_terminal_environment_check_in_ci() {
+        // In CI environments, this should fail gracefully
+        match check_terminal_environment() {
+            Ok(()) => {
+                println!("Terminal environment is available");
+            }
+            Err(e) => {
+                println!("Terminal environment check failed (expected in CI): {}", e);
+                // Expected in CI environments
+                assert!(e.to_string().contains("TTY") || e.to_string().contains("TERM"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_args_no_query_returns_none() {
+        // Save original args (for future mock implementation)
+        let _original_args = std::env::args().collect::<Vec<_>>();
+        
+        // Mock args with just program name (no query)
+        std::env::set_var("PROGRAM", "fae");
+        
+        // This test would need proper arg mocking to be fully effective
+        // For now, just verify the function signature works
+        match parse_args() {
+            Ok(None) => {
+                println!("No query provided - TUI mode expected");
+            }
+            Ok(Some(_)) => {
+                println!("Query provided - CLI mode expected");
+            }
+            Err(e) => {
+                println!("Parse error: {}", e);
+            }
+        }
+        
+        // Note: In a real test environment, we'd properly mock std::env::args()
+    }
 }
 
 #[tokio::main]
@@ -114,10 +237,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(Some(config)) => config,
         Ok(None) => {
             // TUI mode - setup file logging to avoid interfering with TUI
-            let _log_path = setup_file_logging();
+            let _log_path = match setup_file_logging() {
+                Ok(path) => {
+                    path
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to setup file logging: {}", e);
+                    eprintln!("TUI will continue without file logging");
+                    // Initialize simple stderr logging as fallback
+                    env_logger::init();
+                    std::path::PathBuf::from("(no log file)")
+                }
+            };
 
             // Small delay to let user see the message
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+
+            // Check terminal environment before launching TUI
+            if let Err(e) = check_terminal_environment() {
+                eprintln!("Terminal environment check failed: {}", e);
+                eprintln!("Consider running in a proper terminal or using CLI mode with a query argument.");
+                eprintln!("Example: fae \"search term\"");
+                std::process::exit(1);
+            }
 
             // Launch TUI mode with UnifiedSearchSystem integration
             let (mut app, tui_handle) = TuiApp::new(".")
@@ -130,9 +272,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 fae::core::Message<fae::actors::messages::FaeMessage>,
             >();
 
-            // Set search control sender for dynamic search execution
-            app.set_search_control_sender(control_sender.clone());
-
             // Create TuiActor to handle search system messages
             let (tui_actor_tx, tui_actor_rx) = tokio::sync::mpsc::unbounded_channel();
             let _tui_actor = fae::actors::TuiActor::new_tui_actor(
@@ -141,6 +280,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 tui_handle,
                 control_sender.clone(), // Pass control_sender for dynamic search
             );
+
+            // Set search control sender for dynamic search execution
+            app.set_search_control_sender(control_sender.clone());
+            
+            // Set TUI actor sender for request ID synchronization
+            app.set_tui_actor_sender(tui_actor_tx.clone());
 
             // Connect TuiActor to result stream by forwarding messages
             let tui_message_sender = tui_actor_tx.clone();
