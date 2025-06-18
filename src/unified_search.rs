@@ -102,25 +102,34 @@ impl UnifiedSearchSystem {
             
             tokio::spawn(async move {
                 while let Some(message) = coord_rx.recv().await {
-                    // Forward to external result stream
-                    let _ = result_sender_clone.send(message.clone());
-                    
                     // Forward symbol-related coordination messages to SymbolSearchActor
                     match &message.payload {
                         FaeMessage::CompleteInitialIndexing => {
                             log::debug!("Forwarding completeInitialIndexing to SymbolSearchActor");
-                            let _ = symbol_search_tx_clone.send(message);
+                            let _ = symbol_search_tx_clone.send(message.clone());
+                            // Also send to external for TUI coordination
+                            let _ = result_sender_clone.send(message);
                         },
                         FaeMessage::PushSymbolIndex { .. } => {
                             log::debug!("Forwarding pushSymbolIndex to SymbolSearchActor");
                             let _ = symbol_search_tx_clone.send(message);
+                            // Don't send internal symbol indexing messages to TUI
                         },
                         FaeMessage::NotifySearchReport { .. } => {
-                            log::debug!("NotifySearchReport - letting it go to external only");
-                            // Don't forward to SymbolSearchActor, only to external
+                            log::debug!("NotifySearchReport - sending to external only");
+                            let _ = result_sender_clone.send(message);
+                        },
+                        FaeMessage::PushSearchResult { .. } => {
+                            log::debug!("PushSearchResult - sending to external");
+                            let _ = result_sender_clone.send(message);
+                        },
+                        FaeMessage::CompleteSearch => {
+                            log::debug!("CompleteSearch - sending to external");
+                            let _ = result_sender_clone.send(message);
                         },
                         _ => {
-                            // Other messages don't need to be forwarded to SymbolSearchActor
+                            // Other messages don't need to be forwarded
+                            log::trace!("Not forwarding message type: {}", message.method);
                         }
                     }
                 }
@@ -350,9 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_symbol_search_via_unified_system() {
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -390,9 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_timeout_handling() {
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -403,9 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_different_modes() {
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -416,9 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_with_different_max_results() {
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -430,9 +431,7 @@ mod tests {
     #[tokio::test]
     async fn test_drop_behavior() {
         // Test that Drop trait works correctly
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -444,19 +443,15 @@ mod tests {
     #[tokio::test]
     async fn test_system_creation_error_handling() {
         // Test with invalid path
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
         let result = UnifiedSearchSystem::new(
             "/non/existent/path/12345",
             false,
-            result_sender,
-            control_receiver,
         )
         .await;
         // This might succeed or fail depending on the implementation
         // The test ensures the system handles it gracefully either way
         match result {
-            Ok(mut system) => {
+            Ok((mut system, _control_sender, _result_receiver)) => {
                 system.shutdown();
             }
             Err(_) => {
@@ -468,15 +463,13 @@ mod tests {
     #[tokio::test]
     async fn test_unified_search_system_with_watch_actor() {
         // Test creation with watch files enabled
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let result = UnifiedSearchSystem::new("./src", true, result_sender, control_receiver).await;
+        let result = UnifiedSearchSystem::new("./src", true).await;
         assert!(
             result.is_ok(),
             "Should create unified search system with WatchActor successfully"
         );
 
-        if let Ok(mut system) = result {
+        if let Ok((mut system, _control_sender, _result_receiver)) = result {
             // Verify watch actor was created
             assert!(system.watch_files, "watch_files should be true");
             assert!(system.watch_actor.is_some(), "WatchActor should be created");
@@ -488,9 +481,7 @@ mod tests {
     #[tokio::test]
     async fn test_unified_search_system_without_watch_actor() {
         // Test creation with watch files disabled
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system = UnifiedSearchSystem::new("./src", false, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) = UnifiedSearchSystem::new("./src", false)
             .await
             .expect("Failed to create unified search system");
 
@@ -515,10 +506,8 @@ mod tests {
         let temp_path = temp_dir.path().to_string_lossy().to_string();
 
         // Create system with file watching enabled
-        let (_control_sender, control_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let (result_sender, _result_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let mut system =
-            UnifiedSearchSystem::new(&temp_path, true, result_sender, control_receiver)
+        let (mut system, _control_sender, _result_receiver) =
+            UnifiedSearchSystem::new(&temp_path, true)
                 .await
                 .expect("Failed to create unified search system with WatchActor");
 

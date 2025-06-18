@@ -53,3 +53,4 @@ path = "examples/smart_search.rs"
 [[example]]
 name = "filepath_search"
 path = "examples/filepath_search.rs"
+

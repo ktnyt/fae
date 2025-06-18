@@ -220,6 +220,9 @@ impl SymbolSearchHandler {
             results_to_send
         );
 
+        // Small delay to ensure ResultHandlerActor processes all results before completion
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
         // Send completion notification
         if let Err(e) = controller
             .send_message("completeSearch".to_string(), FaeMessage::CompleteSearch)

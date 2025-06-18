@@ -71,6 +71,7 @@ impl ResultHandler {
         log::info!("Result #{} (request: {}): {}", self.result_count, request_id, result.content);
 
         // Send result to external consumers (CLI/TUI) via broadcaster
+        log::debug!("ResultHandler: Forwarding search result to external consumers");
         if let Err(e) = controller
             .send_message(
                 "pushSearchResult".to_string(),
@@ -79,6 +80,8 @@ impl ResultHandler {
             .await
         {
             log::error!("Failed to send PushSearchResult message: {}", e);
+        } else {
+            log::debug!("ResultHandler: Successfully forwarded search result to external");
         }
     }
 
@@ -197,6 +200,7 @@ impl MessageHandler<FaeMessage> for ResultHandler {
         message: Message<FaeMessage>,
         controller: &ActorController<FaeMessage>,
     ) {
+        log::debug!("ResultHandler: Received message: {}", message.method);
         match message.method.as_str() {
             "pushSearchResult" => {
                 if let FaeMessage::PushSearchResult { result, request_id } = message.payload {
@@ -212,6 +216,25 @@ impl MessageHandler<FaeMessage> for ResultHandler {
                     self.handle_search_completion(controller).await;
                 } else {
                     log::warn!("completeSearch received unexpected payload");
+                }
+            }
+            "clearResults" => {
+                log::debug!("ResultHandler: Received clearResults message");
+                if let FaeMessage::ClearResults = message.payload {
+                    self.reset_for_new_search();
+                    log::debug!("ResultHandler: Search state reset for new session");
+                } else {
+                    log::warn!("clearResults received unexpected payload");
+                }
+            }
+            "abortSearch" => {
+                log::debug!("ResultHandler: Received abortSearch message");
+                if let FaeMessage::AbortSearch = message.payload {
+                    // Reset state when search is aborted to prevent stale results
+                    self.reset_for_new_search();
+                    log::debug!("ResultHandler: Search state reset due to abort");
+                } else {
+                    log::warn!("abortSearch received unexpected payload");
                 }
             }
             "reportSymbolIndex" => {

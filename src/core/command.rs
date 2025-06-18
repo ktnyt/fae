@@ -217,6 +217,7 @@ impl<T: Send + Sync + 'static, Args: Send + 'static> CommandController<T, Args> 
         });
 
         log::info!("Command spawned successfully with output processing");
+        log::debug!("Command details: {:?} with args: {:?}", command.as_std().get_program(), command.as_std().get_args().collect::<Vec<_>>());
         Ok(())
     }
 

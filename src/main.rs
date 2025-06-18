@@ -342,8 +342,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             // Handle search results by directly updating TUI state
             let tui_handle_for_results = tui_handle.clone();
             tokio::spawn(async move {
+                log::debug!("TUI result processing task started, waiting for messages...");
                 while let Some(message) = result_receiver.recv().await {
-                    log::debug!("Processing search result: {}", message.method);
+                    log::debug!("TUI Processing search result: {}", message.method);
 
                     match &message.payload {
                         fae::actors::messages::FaeMessage::PushSearchResult { result, .. } => {

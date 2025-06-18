@@ -99,6 +99,15 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
                         query.mode,
                         request_id
                     );
+                    
+                    // Debug: Log the command that will be executed
+                    let factory = create_ripgrep_command_factory(".".to_string());
+                    let debug_cmd = factory(query.clone());
+                    log::debug!(
+                        "Ripgrep command: {:?} with args: {:?}",
+                        debug_cmd.as_std().get_program(),
+                        debug_cmd.as_std().get_args().collect::<Vec<_>>()
+                    );
                     let _ = controller
                         .send_message("clearResults".to_string(), FaeMessage::ClearResults)
                         .await;
@@ -166,17 +175,22 @@ impl CommandHandler<FaeMessage, SearchParams> for RipgrepHandler {
         line: String,
         controller: &CommandController<FaeMessage, SearchParams>,
     ) {
+        log::debug!("Ripgrep stdout received: '{}'", line);
         if let Some(result) = self.parse_ripgrep_line(&line) {
+            log::debug!("Successfully parsed result: {}:{} - {}", result.filename, result.line, result.content.chars().take(50).collect::<String>());
             if let Some(request_id) = &self.current_request_id {
                 let message = FaeMessage::PushSearchResult {
                     result,
                     request_id: request_id.clone(),
                 };
+                log::debug!("Sending search result with request_id: {}", request_id);
                 if let Err(e) = controller
                     .send_message("pushSearchResult".to_string(), message)
                     .await
                 {
                     log::error!("Failed to send search result: {}", e);
+                } else {
+                    log::debug!("Successfully sent search result");
                 }
             } else {
                 log::warn!("No request_id available for search result");
