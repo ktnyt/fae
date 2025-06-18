@@ -395,6 +395,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 log::warn!("Failed to show search report toast: {}", e);
                             }
                         }
+                        fae::actors::messages::FaeMessage::ReportSymbolIndex { 
+                            remaining_files, 
+                            processed_files, 
+                            symbols_found 
+                        } => {
+                            let total_files = remaining_files + processed_files;
+                            let progress_percentage = if total_files > 0 {
+                                (*processed_files as f64 / total_files as f64 * 100.0).round() as u32
+                            } else {
+                                100
+                            };
+
+                            let progress_message = format!(
+                                "Indexing: {}% ({}/{} files, {} symbols)",
+                                progress_percentage,
+                                processed_files,
+                                total_files,
+                                symbols_found
+                            );
+
+                            if let Err(e) = tui_handle_for_results.show_toast(
+                                progress_message,
+                                fae::tui::ToastType::Info,
+                                std::time::Duration::from_millis(800),
+                            ) {
+                                log::warn!("Failed to show indexing progress toast: {}", e);
+                            }
+                        }
+                        fae::actors::messages::FaeMessage::CompleteInitialIndexing => {
+                            if let Err(e) = tui_handle_for_results.show_toast(
+                                "Symbol indexing completed".to_string(),
+                                fae::tui::ToastType::Success,
+                                std::time::Duration::from_secs(2),
+                            ) {
+                                log::warn!("Failed to show indexing completion toast: {}", e);
+                            }
+                        }
                         _ => {
                             // Handle other message types as needed
                             log::debug!("Unhandled message type: {}", message.method);

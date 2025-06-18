@@ -224,12 +224,26 @@ impl TuiRenderer {
         let max_width = screen_size.width.saturating_sub(4); // Leave margins
         let min_width = 20; // Minimum readable width
 
+        // Calculate title width for different toast types
+        let title_width: u16 = match toast_state.toast_type {
+            crate::tui::ToastType::Info => 9,      // "🔔 Info" = 9 chars
+            crate::tui::ToastType::Success => 11,  // "✅ Success" = 11 chars  
+            crate::tui::ToastType::Warning => 11,  // "⚠️ Warning" = 11 chars
+            crate::tui::ToastType::Error => 9,     // "❌ Error" = 9 chars
+        };
+
         // Calculate optimal width based on content and constraints
+        // Add extra space for borders and padding: +4 (2 for borders, 2 for padding)
         let content_width = display_message.chars().count() as u16;
-        let width = content_width.max(min_width).min(max_width);
+        let required_width_content = content_width.saturating_add(4); // Account for borders and padding
+        let required_width_title = title_width.saturating_add(4); // Title also needs borders and padding
+        let required_width = required_width_content.max(required_width_title);
+        let width = required_width.max(min_width).min(max_width);
 
         // Calculate height based on content wrapping
-        let height = Self::calculate_wrapped_lines(&display_message, width as usize) as u16 + 2; // +2 for borders
+        // Use content_width for wrapping calculation (without borders/padding)
+        let text_area_width = width.saturating_sub(4); // Subtract borders and padding for text area
+        let height = Self::calculate_wrapped_lines(&display_message, text_area_width as usize) as u16 + 2; // +2 for borders
 
         (width, height)
     }

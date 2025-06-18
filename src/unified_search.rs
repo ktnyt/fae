@@ -127,6 +127,10 @@ impl UnifiedSearchSystem {
                             log::debug!("CompleteSearch - sending to external");
                             let _ = result_sender_clone.send(message);
                         },
+                        FaeMessage::ReportSymbolIndex { .. } => {
+                            log::debug!("ReportSymbolIndex - sending to external for progress display");
+                            let _ = result_sender_clone.send(message);
+                        },
                         _ => {
                             // Other messages don't need to be forwarded
                             log::trace!("Not forwarding message type: {}", message.method);
