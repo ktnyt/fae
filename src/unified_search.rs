@@ -10,7 +10,7 @@ use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
     SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
-use crate::core::{Broadcaster, ChannelIntegratorBuilder, Message};
+use crate::core::{ChannelIntegratorBuilder, Message};
 use tokio::sync::mpsc;
 
 /// Unified search system that coordinates all search actors
@@ -27,8 +27,6 @@ pub struct UnifiedSearchSystem {
     result_handler_actor: Option<ResultHandlerActor>,
     watch_actor: Option<WatchActor>,
 
-    // Broadcaster for distributing control messages to all actors
-    broadcaster: Option<Broadcaster<FaeMessage>>,
 }
 
 /// Enum for different content search actors
@@ -86,7 +84,7 @@ impl UnifiedSearchSystem {
             );
         }
 
-        // Create actor channels for Broadcaster
+        // Create simple actor channels for inline broadcasting
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (filepath_search_tx, filepath_search_rx) =
@@ -97,7 +95,7 @@ impl UnifiedSearchSystem {
             mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (watch_tx, watch_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Collect all actor senders for the Broadcaster
+        // Collect all actor senders for inline broadcasting
         let mut actor_senders = vec![filepath_search_tx, content_search_tx, result_handler_tx];
 
         // Conditionally add symbol actor senders
@@ -110,9 +108,6 @@ impl UnifiedSearchSystem {
         if watch_files {
             actor_senders.push(watch_tx);
         }
-
-        // Create Broadcaster for distributing control messages to all actors
-        let (broadcaster, control_sender) = Broadcaster::new(actor_senders);
 
         // Create actor result receivers for ChannelIntegrator
         let mut result_receivers = Vec::new();
@@ -197,22 +192,22 @@ impl UnifiedSearchSystem {
         }
         let mut result_integrator = result_integrator.build();
 
-        // Forward external messages to broadcaster
-        let control_sender_clone = control_sender.clone();
+        // Simple inline broadcast implementation
+        let actor_senders_clone = actor_senders.clone();
         tokio::spawn(async move {
             let mut external_receiver = external_receiver;
             while let Some(message) = external_receiver.recv().await {
-                log::debug!("Forwarding external message to broadcaster: {}", message.method);
-                if let Err(e) = control_sender_clone.send(message) {
-                    log::debug!("External message forwarding stopped: {}", e);
-                    break;
+                log::debug!("Broadcasting external message to all actors: {}", message.method);
+                // Simple broadcast: send to all actors
+                for sender in &actor_senders_clone {
+                    let _ = sender.send(message.clone());
                 }
             }
         });
 
         // Forward actor results to external sender with coordination message loopback
         let external_sender_clone = external_sender.clone();
-        let control_sender_for_loopback = control_sender.clone();
+        let actor_senders_for_loopback = actor_senders.clone();
         tokio::spawn(async move {
             while let Some(message) = result_integrator.recv().await {
                 log::debug!("Processing actor message: {}", message.method);
@@ -220,10 +215,10 @@ impl UnifiedSearchSystem {
                 // Check if this is a coordination message that should be looped back
                 match message.method.as_str() {
                     "completeInitialIndexing" | "completeSearch" | "notifySearchReport" | "pushSymbolIndex" => {
-                        log::debug!("Looping back coordination message to broadcaster: {}", message.method);
-                        // Send to broadcaster for distribution to all actors
-                        if let Err(e) = control_sender_for_loopback.send(message.clone()) {
-                            log::debug!("Coordination message loopback failed: {}", e);
+                        log::debug!("Looping back coordination message to all actors: {}", message.method);
+                        // Simple broadcast: send to all actors
+                        for sender in &actor_senders_for_loopback {
+                            let _ = sender.send(message.clone());
                         }
                     }
                     _ => {}
@@ -250,7 +245,6 @@ impl UnifiedSearchSystem {
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
             watch_actor,
-            broadcaster: Some(broadcaster),
         })
     }
 
@@ -308,13 +302,7 @@ impl UnifiedSearchSystem {
     pub fn shutdown(&mut self) {
         log::info!("Shutting down unified search system");
 
-        // Phase 1: Shutdown broadcaster
-        if let Some(mut broadcaster) = self.broadcaster.take() {
-            log::debug!("Shutting down broadcaster");
-            broadcaster.shutdown();
-        }
-
-        // Phase 2: Shutdown all actors
+        // Phase 1: Shutdown all actors (no separate broadcaster to shutdown)
         if let Some(mut actor) = self.symbol_index_actor.take() {
             actor.shutdown();
         }
