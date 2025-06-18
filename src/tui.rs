@@ -371,7 +371,7 @@ impl TuiApp {
             state_receiver: Some(state_receiver),
             search_control_sender: None, // Will be set later via set_search_control_sender
             // Search debounce control
-            debounce_delay: Duration::from_millis(300), // 300ms debounce delay
+            debounce_delay: Duration::from_millis(100), // 100ms debounce delay
             pending_search_query: None,
             last_input_time: None,
             state: TuiState::new(),

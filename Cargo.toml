@@ -3,40 +3,38 @@ name = "fae"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "test_notify"
-path = "test_notify.rs"
-
 [dependencies]
 # Core dependencies actually used
 async-trait = "0.1"
-dirs = "5.0"          # ホームディレクトリ検索
-env_logger = "0.10"   # ログ出力
-futures = "0.3"       # 並行処理用
-fuzzy-matcher = "0.3"  # ファジー検索
-ignore = "0.4"        # .gitignore対応
+dirs = "5.0"                                     # ホームディレクトリ検索
+env_logger = "0.10"                              # ログ出力
+futures = "0.3"                                  # 並行処理用
+fuzzy-matcher = "0.3"                            # ファジー検索
+ignore = "0.4"                                   # .gitignore対応
 log = "0.4"
-notify = "6.1"        # ファイルシステム監視
-once_cell = "1.19"    # Lazy initialization for config caching
+notify = "6.1"                                   # ファイルシステム監視
+once_cell = "1.19"                               # Lazy initialization for config caching
 regex = "1.10"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
-tokio-stream = "0.1"   # Stream utilities for tokio
-tree-sitter = "0.22"  # AST解析
-tree-sitter-rust = "0.21"  # Rust言語サポート
-tree-sitter-javascript = "0.21"  # JavaScript言語サポート
-tree-sitter-python = "0.21"  # Python言語サポート
+tokio-stream = "0.1"                             # Stream utilities for tokio
+tree-sitter = "0.22"                             # AST解析
+tree-sitter-rust = "0.21"                        # Rust言語サポート
+tree-sitter-javascript = "0.21"                  # JavaScript言語サポート
+tree-sitter-python = "0.21"                      # Python言語サポート
 walkdir = "2.4"
 
 # TUI dependencies
-ratatui = "0.26"      # Terminal UI framework
-crossterm = { version = "0.27", features = ["event-stream"] }    # Cross-platform terminal functionality
-arboard = "3.3"       # Clipboard access
-tiny_id = "0.1"       # ID generation for request tracking
+ratatui = "0.26" # Terminal UI framework
+crossterm = { version = "0.27", features = [
+    "event-stream",
+] } # Cross-platform terminal functionality
+arboard = "3.3" # Clipboard access
+tiny_id = "0.1" # ID generation for request tracking
 
 [dev-dependencies]
 # For tests and examples only
-tempfile = "3.8"      # 一時ディレクトリ/ファイル作成
+tempfile = "3.8" # 一時ディレクトリ/ファイル作成
 
 [[example]]
 name = "search_comparison"

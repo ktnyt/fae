@@ -1,7 +1,7 @@
-//! Unified search system using Broadcaster for actor coordination
+//! Unified search system using broadcast messaging and ChannelIntegrator for actor coordination
 //!
 //! This module provides a simplified search interface that coordinates
-//! multiple search actors through a broadcaster pattern.
+//! multiple search actors through broadcast messaging for maximum flexibility.
 
 use crate::actors::messages::FaeMessage;
 use crate::actors::types::SearchMode;
@@ -9,14 +9,13 @@ use crate::actors::{
     AgActor, FilepathSearchActor, NativeSearchActor, ResultHandlerActor, RipgrepActor,
     SymbolIndexActor, SymbolSearchActor, WatchActor,
 };
-use crate::core::{Broadcaster, Message};
+use crate::core::{ChannelIntegratorBuilder, Message};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 /// Unified search system that coordinates all search actors
-/// Now designed for external control via message passing
+/// Now designed for external control via message passing with broadcast messaging
 pub struct UnifiedSearchSystem {
-    broadcaster: Broadcaster<FaeMessage>,
     watch_files: bool,
 
     // Keep actor instances to manage their lifecycle
@@ -28,8 +27,9 @@ pub struct UnifiedSearchSystem {
     result_handler_actor: Option<ResultHandlerActor>,
     watch_actor: Option<WatchActor>,
 
-    // Control message forwarding task handle for graceful shutdown
-    control_forwarding_handle: Option<JoinHandle<()>>,
+    // Task handles for message forwarding
+    message_forwarding_handle: Option<JoinHandle<()>>,
+    result_forwarding_handle: Option<JoinHandle<()>>,
 }
 
 /// Enum for different content search actors
@@ -87,145 +87,162 @@ impl UnifiedSearchSystem {
             );
         }
 
-        // Create actor channels
+        // Create actor channels for broadcast messaging
         let (symbol_index_tx, symbol_index_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
         let (symbol_search_tx, symbol_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (filepath_search_tx, filepath_search_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (content_search_tx, content_search_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
-        let (result_handler_tx, result_handler_rx) =
-            mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (filepath_search_tx, filepath_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (content_search_tx, content_search_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (result_handler_tx, result_handler_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
+        let (watch_tx, watch_rx) = mpsc::unbounded_channel::<Message<FaeMessage>>();
 
-        // Conditionally create watch actor channel
-        let watch_channel = if watch_files {
-            Some(mpsc::unbounded_channel::<Message<FaeMessage>>())
-        } else {
-            None
-        };
-        let (watch_tx, watch_rx) = if let Some((tx, rx)) = watch_channel {
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-
-        // Create broadcaster with all actor senders + result sender (conditionally including symbol actors)
+        // Collect all actor senders for broadcasting
         let mut actor_senders = vec![
             filepath_search_tx,
             content_search_tx,
             result_handler_tx,
-            result_sender.clone(), // Include result sender for broadcasting
         ];
 
-        // Only add symbol actors if they are needed
+        // Conditionally add symbol actor senders
         if needs_symbol_actors {
             actor_senders.push(symbol_index_tx);
             actor_senders.push(symbol_search_tx);
         }
 
-        if let Some(tx) = watch_tx {
-            actor_senders.push(tx);
+        // Conditionally add watch actor sender
+        if watch_files {
+            actor_senders.push(watch_tx);
         }
 
-        let (broadcaster, shared_sender) = Broadcaster::new(actor_senders);
+        // Create actor result senders for ChannelIntegrator
+        let mut result_receivers = Vec::new();
 
-        // Create all actors using the shared sender (via Broadcaster)
-        // Conditionally create symbol actors based on search mode
+        // Create all actors and collect their result receivers
         let symbol_index_actor = if needs_symbol_actors {
             log::debug!("Creating SymbolIndexActor for symbol search");
+            let (actor_result_tx, actor_result_rx) = mpsc::unbounded_channel();
+            result_receivers.push(actor_result_rx);
+
             Some(SymbolIndexActor::new_symbol_index_actor(
                 symbol_index_rx,
-                shared_sender.clone(),
+                actor_result_tx,
                 search_path,
             )?)
         } else {
             log::debug!("Skipping SymbolIndexActor creation for non-symbol search");
-            // Drop the receiver to prevent channel warnings
+            // Drop unused receiver
             drop(symbol_index_rx);
             None
         };
 
         let symbol_search_actor = if needs_symbol_actors {
             log::debug!("Creating SymbolSearchActor for symbol search");
+            let (actor_result_tx, actor_result_rx) = mpsc::unbounded_channel();
+            result_receivers.push(actor_result_rx);
+
             Some(SymbolSearchActor::new_symbol_search_actor(
                 symbol_search_rx,
-                shared_sender.clone(),
+                actor_result_tx,
             ))
         } else {
             log::debug!("Skipping SymbolSearchActor creation for non-symbol search");
-            // Drop the receiver to prevent channel warnings
+            // Drop unused receiver
             drop(symbol_search_rx);
             None
         };
 
+        let (filepath_result_tx, filepath_result_rx) = mpsc::unbounded_channel();
+        result_receivers.push(filepath_result_rx);
         let filepath_search_actor = FilepathSearchActor::new_filepath_search_actor(
             filepath_search_rx,
-            shared_sender.clone(),
+            filepath_result_tx,
             search_path,
         );
 
-        let content_search_actor = Self::create_content_search_actor(
-            content_search_rx,
-            shared_sender.clone(),
-            search_path,
-        )
-        .await;
+        let (content_result_tx, content_result_rx) = mpsc::unbounded_channel();
+        result_receivers.push(content_result_rx);
+        let content_search_actor =
+            Self::create_content_search_actor(content_search_rx, content_result_tx, search_path)
+                .await;
 
+        let (result_handler_result_tx, result_handler_result_rx) = mpsc::unbounded_channel();
+        result_receivers.push(result_handler_result_rx);
         let result_handler_actor = ResultHandlerActor::new_result_handler_actor(
             result_handler_rx,
-            result_sender.clone(), // ResultHandler sends results to external receiver
+            result_handler_result_tx,
         );
 
         // Conditionally create watch actor
         let watch_actor = if watch_files {
-            if let Some(rx) = watch_rx {
-                log::info!("Creating WatchActor for real-time file monitoring");
-                Some(WatchActor::new_watch_actor(
-                    rx,
-                    shared_sender.clone(),
-                    search_path,
-                )?)
-            } else {
-                None
-            }
+            log::info!("Creating WatchActor for real-time file monitoring");
+            let (watch_result_tx, watch_result_rx) = mpsc::unbounded_channel();
+            result_receivers.push(watch_result_rx);
+
+            Some(WatchActor::new_watch_actor(
+                watch_rx,
+                watch_result_tx,
+                search_path,
+            )?)
         } else {
             log::debug!("File watching disabled, skipping WatchActor creation");
+            // Drop unused receiver
+            drop(watch_rx);
             None
         };
+
+        // Create ChannelIntegrator for outgoing result messages
+        let mut result_integrator = ChannelIntegratorBuilder::new();
+        for rx in result_receivers {
+            result_integrator = result_integrator.add_receiver(rx);
+        }
+        let mut result_integrator = result_integrator.build();
+
+        // Clone actor_senders for both tasks before moving
+        let actor_senders_for_control = actor_senders.clone();
+        let actor_senders_for_internal = actor_senders;
+
+        // Start message broadcasting task
+        let message_forwarding_handle = tokio::spawn(async move {
+            let mut control_receiver = control_receiver;
+            while let Some(message) = control_receiver.recv().await {
+                log::debug!("Broadcasting message: {}", message.method);
+
+                // Send message to all active actors
+                for sender in &actor_senders_for_control {
+                    if let Err(e) = sender.send(message.clone()) {
+                        log::debug!("Failed to send message to actor: {}", e);
+                    }
+                }
+            }
+            log::debug!("Message broadcasting task ended gracefully");
+        });
+
+        // Start result forwarding task with internal message broadcasting
+        let result_sender_clone = result_sender.clone();
+        let result_forwarding_handle = tokio::spawn(async move {
+            while let Some(message) = result_integrator.recv().await {
+                // Broadcast all messages to all actors for maximum flexibility
+                log::debug!("Broadcasting message to all actors: {}", message.method);
+                for sender in &actor_senders_for_internal {
+                    if let Err(e) = sender.send(message.clone()) {
+                        log::debug!("Failed to broadcast message to actor: {}", e);
+                    }
+                }
+
+                // Also forward all messages to external result receiver
+                if let Err(e) = result_sender_clone.send(message) {
+                    log::debug!("Result forwarding stopped (receiver closed): {}", e);
+                    break;
+                }
+            }
+            log::debug!("Result forwarding task ended gracefully");
+        });
 
         // Start watching if watch actor was created
         if let Some(ref _actor) = watch_actor {
             log::info!("Starting file system monitoring for path: {}", search_path);
-            // Note: WatchActor starts monitoring automatically when created
         }
 
-        // Start control message forwarding task with proper handle management
-        let shared_sender_clone = shared_sender.clone();
-        let control_forwarding_handle = tokio::spawn(async move {
-            let mut control_receiver = control_receiver;
-            while let Some(message) = control_receiver.recv().await {
-                log::debug!("Forwarding control message: {}", message.method);
-
-                // Check if shared_sender is still open before sending
-                if shared_sender_clone.is_closed() {
-                    log::debug!("Shared sender closed, stopping control message forwarding");
-                    break;
-                }
-
-                if let Err(e) = shared_sender_clone.send(message) {
-                    // During shutdown, this is expected behavior - log as debug, not error
-                    log::debug!(
-                        "Control message forwarding stopped (receiver closed): {}",
-                        e
-                    );
-                    break;
-                }
-            }
-            log::debug!("Control message forwarding task ended gracefully");
-        });
-
         Ok(Self {
-            broadcaster,
             watch_files,
             symbol_index_actor,
             symbol_search_actor,
@@ -233,7 +250,8 @@ impl UnifiedSearchSystem {
             content_search_actor: Some(content_search_actor),
             result_handler_actor: Some(result_handler_actor),
             watch_actor,
-            control_forwarding_handle: Some(control_forwarding_handle),
+            message_forwarding_handle: Some(message_forwarding_handle),
+            result_forwarding_handle: Some(result_forwarding_handle),
         })
     }
 
@@ -291,20 +309,17 @@ impl UnifiedSearchSystem {
     pub fn shutdown(&mut self) {
         log::info!("Shutting down unified search system");
 
-        // Phase 1: Stop control message forwarding first to prevent new messages
-        if let Some(handle) = self.control_forwarding_handle.take() {
-            log::debug!("Terminating control message forwarding task");
-            handle.abort(); // Forcefully abort the task
-
-            // Note: We use abort() instead of waiting for graceful shutdown here because:
-            // 1. The control_receiver will be dropped when main exits
-            // 2. This will naturally terminate the forwarding loop
-            // 3. Abort ensures immediate termination even if there are pending messages
+        // Phase 1: Stop message forwarding task
+        if let Some(handle) = self.message_forwarding_handle.take() {
+            log::debug!("Terminating message forwarding task");
+            handle.abort();
         }
 
-        // Phase 2: Shutdown broadcaster to stop message broadcasting
-        // This prevents WARN logs from actors trying to send to closed channels
-        self.broadcaster.shutdown();
+        // Phase 2: Stop result forwarding task
+        if let Some(handle) = self.result_forwarding_handle.take() {
+            log::debug!("Terminating result forwarding task");
+            handle.abort();
+        }
 
         // Phase 3: Shutdown all actors
         if let Some(mut actor) = self.symbol_index_actor.take() {

@@ -6,11 +6,13 @@
 
 pub mod actor;
 pub mod broadcaster;
+pub mod channel;
 pub mod command;
 pub mod message;
 
 // Re-exports for convenience
 pub use actor::{Actor, ActorController, ActorSendError, MessageHandler};
 pub use broadcaster::Broadcaster;
+pub use channel::{ChannelIntegrator, ChannelIntegratorBuilder, ChannelMultiplexer};
 pub use command::{CommandActor, CommandController, CommandFactory, CommandHandler, CommandOutput};
 pub use message::Message;
